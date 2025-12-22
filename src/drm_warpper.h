@@ -32,20 +32,18 @@ typedef struct {
 
 typedef struct{
     buffer_object_t buf[2];
-    uint32_t fb_prop_id;
     bool used;
     queue_t ready_queue;
     sem_t free_sem;
 } plane_t;
 
-// 这一次Atomic commit操作，有那些buffer需要被display，那些buffer是原来display现在换下来的
 typedef struct {
-    int display_cnt;
-    buffer_object_t* display_buf[16];
-    int free_cnt;
-    buffer_object_t* free_buf[16];
-} buffer_object_display_list_t;
-
+    uint8_t *ch0_addr;
+    uint8_t *ch1_addr;
+    uint8_t *ch2_addr;
+    int layer_id;
+    sem_t direct_commit_sem;
+} drm_warpper_direct_commit_t;
 
 typedef struct {
   int fd;
@@ -55,8 +53,7 @@ typedef struct {
   uint32_t crtc_id;
   uint32_t conn_id;
   plane_t plane[4]; // 4 layers, 2 buffers per layer
-  drmModeAtomicReq *req;
-  drmEventContext drm_event_ctx;
+  drmVBlank blank;
   pthread_t display_thread;
   int thread_running;
 } drm_warpper_t;
@@ -76,3 +73,5 @@ int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y)
 
 int drm_warpper_arquire_draw_buffer(drm_warpper_t *drm_warpper,int layer_id,uint8_t **vaddr);
 int drm_warpper_return_draw_buffer(drm_warpper_t *drm_warpper,int layer_id, uint8_t* vaddr);
+
+int drm_warpper_direct_commit(drm_warpper_t *drm_warpper,int layer_id,uint8_t *ch0_addr,uint8_t *ch1_addr,uint8_t *ch2_addr);

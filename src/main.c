@@ -6,6 +6,8 @@
 #include "log.h"
 #include <signal.h>
 #include "mediaplayer.h"
+#include "virt_to_phys.h"
+
 
 drm_warpper_t g_drm_warpper;
 mediaplayer_t g_mediaplayer;
@@ -63,21 +65,29 @@ int main(int argc, char *argv[]){
     );
     drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_UI, 0, 0);
 
+    // getchar();
+    // drm_warpper_switch_buffer_ioctl(&g_drm_warpper, DRM_WARPPER_LAYER_UI);
+    // getchar();
+
     uint8_t *vaddr;
     while(g_running){
+        log_info("acquiring draw buffer");
         drm_warpper_arquire_draw_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_UI, &vaddr);
         for(int i = 0; i < 100; i++){
             for(int j = 0; j < 100; j++){
                 ((uint32_t*)vaddr)[i * 100 + j] = 0xff000000;
             }
         }
+        log_info("returning draw buffer");
         drm_warpper_return_draw_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_UI, vaddr);
+        log_info("acquiring 2 draw buffer");
         drm_warpper_arquire_draw_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_UI, &vaddr);
         for(int i = 0; i < 100; i++){
             for(int j = 0; j < 100; j++){
                 ((uint32_t*)vaddr)[i * 100 + j] = 0xff0000ff;
             }
         }
+        log_info("returning 2 draw buffer");
         drm_warpper_return_draw_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_UI, vaddr);
         usleep(1000);
     }

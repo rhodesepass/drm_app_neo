@@ -27,7 +27,7 @@ add_executable(epass_drm_app
   src/drm_warpper.c
   src/log.c
   src/mediaplayer.c
-
+  src/virt_to_phys.c
 )
 
 target_include_directories(epass_drm_app PRIVATE

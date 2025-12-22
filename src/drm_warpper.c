@@ -11,47 +11,36 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include "log.h"
+#include "srgn_drm.h"
+#include "config.h"
 
 static inline int DRM_IOCTL(int fd, unsigned long cmd, void *arg) {
   int ret = drmIoctl(fd, cmd, arg);
   return ret < 0 ? -errno : ret;
 }
 
-static void page_flip_handler(int fd, unsigned int sequence, unsigned int tv_sec,
-    unsigned int tv_usec, void *user_data)
-{
-    drm_warpper_t *drm_warpper = (drm_warpper_t *)user_data;
-    log_debug("flip happened here....");
-    if(drm_warpper->req) {
-        drmModeAtomicFree(drm_warpper->req);
-        drm_warpper->req = NULL;
+static void drm_warpper_wait_for_vsync(drm_warpper_t *drm_warpper){
+    drm_warpper->blank.request.type = DRM_VBLANK_RELATIVE;
+    drm_warpper->blank.request.sequence = 1;
+    if (drmWaitVBlank(drm_warpper->fd, (drmVBlankPtr) &drm_warpper->blank)) {
+      log_error("drmWaitVBlank failed");
     }
 }
 
-static void drm_warpper_wait_for_vsync(drm_warpper_t *drm_warpper){
+static void drm_warpper_switch_buffer_ioctl(drm_warpper_t *drm_warpper,int layer_id,int type,uint8_t *ch0_addr,uint8_t *ch1_addr,uint8_t *ch2_addr){
     int ret;
-	fd_set fds;
-	FD_ZERO(&fds);
-	FD_SET(drm_warpper->fd, &fds);
+    struct drm_srgn_mount_fb srgn_mount_fb;
 
-    do {
-		ret = select(drm_warpper->fd + 1, &fds, NULL, NULL, NULL);
-	} while (ret == -1 && errno == EINTR);
-
-    if (ret < 0) {
-		log_error("select failed: %s", strerror(errno));
-		drmModeAtomicFree(drm_warpper->req);
-		drm_warpper->req = NULL;
-		return;
-	}
-
-	if (FD_ISSET(drm_warpper->fd, &fds)){   
-         // block here until vsync
-		drmHandleEvent(drm_warpper->fd, &drm_warpper->drm_event_ctx);
+    srgn_mount_fb.layer_id = layer_id;
+    srgn_mount_fb.type = type;
+    srgn_mount_fb.ch0_addr = (uint32_t)ch0_addr;
+    srgn_mount_fb.ch1_addr = (uint32_t)ch1_addr;
+    srgn_mount_fb.ch2_addr = (uint32_t)ch2_addr;
+    
+    ret = drmIoctl(drm_warpper->fd, DRM_IOCTL_SRGN_MOUNT_FB, &srgn_mount_fb);
+    if(ret < 0){
+        log_error("drm_warpper_switch_buffer_ioctl failed %s(%d)", strerror(errno), errno);
     }
-
-	drmModeAtomicFree(drm_warpper->req);
-	drm_warpper->req = NULL;
 }
 
 static void* drm_warpper_display_thread(void *arg){
@@ -60,58 +49,33 @@ static void* drm_warpper_display_thread(void *arg){
     int ret,i;
 
     log_info("display thread started");
-    buffer_object_display_list_t switch_list;
     while(drm_warpper->thread_running){
-        need_flip = false;
-        switch_list.display_cnt = 0;
-        switch_list.free_cnt = 0;
-        drm_warpper->req = drmModeAtomicAlloc();
+        drm_warpper_wait_for_vsync(drm_warpper);
+
         for(int layer_id = 0; layer_id < 4; layer_id++){
             if(drm_warpper->plane[layer_id].used){
                 buffer_object_t* buf;
                 bool res = try_dequeue(&drm_warpper->plane[layer_id].ready_queue, &buf);
                 if(res){
-                    need_flip = true;
-                    drmModeAtomicAddProperty(
-                        drm_warpper->req, 
-                        drm_warpper->plane_res->planes[layer_id], 
-                        drm_warpper->plane[layer_id].fb_prop_id, 
-                        buf->fb_id
-                    );
-
-                    switch_list.display_buf[switch_list.display_cnt++] = buf;
-
-                    for(int i = 0; i < 2; i++){
-                        if(&drm_warpper->plane[layer_id].buf[i] != buf){
-                            switch_list.free_buf[switch_list.free_cnt++] = &drm_warpper->plane[layer_id].buf[i];
-                        }
+                    if(layer_id == DRM_WARPPER_LAYER_UI){
+                        drm_warpper_switch_buffer_ioctl(
+                            drm_warpper, 
+                            layer_id, 
+                            DRM_SRGN_MOUNT_FB_TYPE_NORMAL, 
+                            buf->vaddr, 
+                            NULL, 
+                            NULL
+                        );
                     }
-
+                }
+                for(int i = 0; i < 2; i++){
+                    if(&drm_warpper->plane[layer_id].buf[i] != buf){
+                        drm_warpper->plane[layer_id].buf[i].state = DRM_WARPPER_BUFFER_STATE_FREE;
+                        sem_post(drm_warpper->plane[layer_id].buf[i].related_free_sem);
+                    }
                 }
             }
         }
-        if(need_flip){
-            ret = drmModeAtomicCommit(drm_warpper->fd, drm_warpper->req, DRM_MODE_PAGE_FLIP_EVENT,drm_warpper);
-            if(ret < 0){
-                log_error("drmModeAtomicCommit failed %s(%d)", strerror(errno), errno);
-                drmModeAtomicFree(drm_warpper->req);
-                drm_warpper->req = NULL;
-            }
-            
-            drm_warpper_wait_for_vsync(drm_warpper);
-            for(i = 0; i < switch_list.display_cnt; i++){
-                switch_list.display_buf[i]->state = DRM_WARPPER_BUFFER_STATE_DISPLAYING;
-            }
-            for(i = 0; i < switch_list.free_cnt; i++){
-                switch_list.free_buf[i]->state = DRM_WARPPER_BUFFER_STATE_FREE;
-                sem_post(switch_list.free_buf[i]->related_free_sem);
-            }
-        }
-        else{
-            drmModeAtomicFree(drm_warpper->req);
-            drm_warpper->req = NULL;
-        }
-        usleep(10000);
     }
     return NULL;
 }
@@ -180,8 +144,8 @@ int drm_warpper_init(drm_warpper_t *drm_warpper){
         drm_warpper->conn->modes[0].name, drm_warpper->conn->modes[0].vdisplay, drm_warpper->conn->modes[0].hdisplay,
         drm_warpper->conn->modes[0].vrefresh);
 
-    drm_warpper->drm_event_ctx.version = DRM_EVENT_CONTEXT_VERSION;
-    drm_warpper->drm_event_ctx.page_flip_handler = page_flip_handler;
+    drm_warpper->blank.request.type = DRM_VBLANK_RELATIVE;
+    drm_warpper->blank.request.sequence = 1;
 
     drm_warpper->thread_running = true;
     pthread_create(&drm_warpper->display_thread, NULL, drm_warpper_display_thread, drm_warpper);
@@ -292,20 +256,6 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
     return 0;
 }
 
-static int drm_warpper_get_prop_id(drm_warpper_t *drm_warpper,int layer_id,const char *prop_name){
-    drmModeObjectPropertiesPtr props = drmModeObjectGetProperties(drm_warpper->fd, drm_warpper->plane_res->planes[layer_id], DRM_MODE_OBJECT_PLANE);
-    int i = 0;
-    for (i = 0; i < (int)props->count_props; ++i) {
-        drmModePropertyPtr prop = drmModeGetProperty(drm_warpper->fd, props->props[i]);
-        log_info("property %s, id: %d", prop->name, prop->prop_id);
-        if (strcmp(prop->name, prop_name) == 0) {
-            log_info("found property %s, id: %d", prop_name, prop->prop_id);
-            return prop->prop_id;
-        }
-    }
-    log_error("failed to find property %s", prop_name);
-    return -1;
-}
 
 int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int height,drm_warpper_layer_mode_t mode){
 
@@ -318,8 +268,6 @@ int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int
     
     drm_warpper_create_buffer_object(drm_warpper->fd, &plane->buf[0], width, height, mode);
     drm_warpper_create_buffer_object(drm_warpper->fd, &plane->buf[1], width, height, mode);
-
-    plane->fb_prop_id = drm_warpper_get_prop_id(drm_warpper, layer_id, "FB_ID");
 
     sem_init(&plane->free_sem, 0, 2);
     plane->buf[0].related_free_sem = &plane->free_sem;
@@ -398,4 +346,3 @@ int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y)
 int drm_warpper_get_layer_buffer_legacy(drm_warpper_t *drm_warpper,int layer_id){
     return drm_warpper->plane[layer_id].buf[0].vaddr;
 }
-
