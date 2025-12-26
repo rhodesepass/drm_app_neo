@@ -497,7 +497,7 @@
  *  If size is not set to 0, the decoder will fail to decode when the cache is full.
  *  If size is 0, the cache function is not enabled and the decoded memory will be
  *  released immediately after use. */
-#define LV_CACHE_DEF_SIZE       0
+#define LV_CACHE_DEF_SIZE       (16 * 1024 * 1024)
 
 /** Default number of image header cache entries. The cache is used to store the headers of images
  *  The main logic is like `LV_CACHE_DEF_SIZE` but for image headers. */
@@ -935,7 +935,7 @@
 #define LV_USE_LODEPNG 0
 
 /** PNG decoder(libpng) library */
-#define LV_USE_LIBPNG 0
+#define LV_USE_LIBPNG 1
 
 /** BMP decoder library */
 #define LV_USE_BMP 0
@@ -1395,7 +1395,7 @@
 #define LV_BUILD_EXAMPLES 0
 
 /** Build the demos */
-#define LV_BUILD_DEMOS 1
+#define LV_BUILD_DEMOS 0
 
 /*===================
  * DEMO USAGE

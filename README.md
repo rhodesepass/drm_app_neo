@@ -3,7 +3,58 @@
 调用全志Cedar库，实现通行证视频播放/切换等功能。
 基于LVGL实现UI，（相当于是对旧版本的重构）
 
-# 编译方法
+## 模块划分
+
+### driver 显示后端模块
+
+主要负责显示到屏幕的过程。包括DRM封装、显示线程的创建、显示队列的管理、显示缓冲区的管理等。
+
+### render 渲染模块
+
+主要负责渲染到缓冲区的过程。包括视频层 mediaplayer 的渲染、UI lvgl的渲染
+
+### UI 模块
+
+主要是lvgl的ui。与backend和middleware交互。实现用户操作、过渡动画绘制。
+
+### PRTS 模块
+
+Playlist Routing & Transition System。负责干员列表的切换、播放、暂停、停止等操作。
+
+### utils 工具模块
+
+主要负责工具函数。包括日志、队列等。
+
+```mermaid
+graph TD
+    
+    subgraph UI
+        A1[gui_app.c]
+    end
+
+    subgraph Render
+        B1[mediaplayer.c]
+        B2[lvgl_drm_warp.c]
+    end
+
+    subgraph Driver
+        C1[drm_warpper.c]
+    end
+
+
+    subgraph PRTS
+        D1[prts.c]
+    end
+
+    D1 --> A1
+    D1 --> B1
+
+    A1 --> B2 
+
+    B1 --> C1
+    B2 --> C1
+```
+## 编译方法
 
 需要提前准备的其他源码：
 

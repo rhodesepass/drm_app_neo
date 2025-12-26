@@ -59,7 +59,7 @@ int main(int argc, char *argv[]){
         return -1;
     }
 
-    mediaplayer_set_video(&g_mediaplayer, "/root/loop.mp4");
+    mediaplayer_set_video(&g_mediaplayer, "/assets/MS/loop.mp4");
     mediaplayer_start(&g_mediaplayer);
 
 

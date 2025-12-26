@@ -40,4 +40,7 @@ void gui_app_create_ui(lvgl_drm_warp_t *lvgl_drm_warp){
     lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(lv_layer_bottom(), LV_OPA_TRANSP, LV_PART_MAIN);
 
+    lv_obj_t * overlay_screen = ui_create_overlay_image();
+    lv_screen_load_anim(overlay_screen, LV_SCREEN_LOAD_ANIM_FADE_OUT, 1000, 0, true);
+
 }

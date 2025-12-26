@@ -13,20 +13,6 @@
 #define SETTINGS_MAGIC 0x45504153434F4E46
 #define SETTINGS_VERSION 1
 
-#define PRTS_ASSET_PATH "/assets"
-#define PRTS_AUX_ASSET_PATH "/sd/assets"
-#define PRTS_MAX_OPERATORS 50
-#define PRTS_OVERLAY_FILENAME "overlay.argb"
-#define PRTS_INTRO_VIDEO_FILENAME "intro.mp4"
-#define PRTS_INTRO_LOGO_FILENAME "logo.argb"
-#define PRTS_LOOP_VIDEO_FILENAME "loop.mp4"
-#define PRTS_CONFIG_FILENAME "epconfig.txt"
-#define PRTS_FALLBACK_INTRO_LOGO_PATH "/root/rhodes.argb"
-#define PRTS_FALLBACK_INTRO_VIDEO_DURATION 8000000ull
-#define PRTS_OVERLAY_DISPLAY_OFFSET 3000000ull
-
-
-
 #define VBVBUFFERSIZE 2 * 1024 * 1024
 #define BUF_CNT_4_DI 1
 #define BUF_CNT_4_LIST 1

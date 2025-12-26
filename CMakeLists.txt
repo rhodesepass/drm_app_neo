@@ -19,6 +19,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+find_package(PNG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
@@ -26,21 +27,57 @@ pkg_check_modules(LIBDRM REQUIRED libdrm)
 set(LV_BUILD_CONF_DIR src/)
 add_subdirectory(lvgl)
 
+set(LVGL_PATCH "${CMAKE_SOURCE_DIR}/patch/lvgl-evdev-keymap.patch")
+set(LVGL_PATCH_STAMP "${CMAKE_BINARY_DIR}/.lvgl_patch_applied")
+
+if(EXISTS "${LVGL_PATCH}")
+  if(NOT EXISTS "${LVGL_PATCH_STAMP}")
+    message(STATUS "Patching lvgl evdev....")
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}/lvgl/" apply --whitespace=nowarn "${LVGL_PATCH}"
+      RESULT_VARIABLE _patch_rc
+      OUTPUT_VARIABLE _patch_out
+      ERROR_VARIABLE  _patch_err
+    )
+    message(STATUS "stdout:\n${_patch_out}\n"
+        "stderr:\n${_patch_err}\n")
+    if(NOT _patch_rc EQUAL 0)
+      message(FATAL_ERROR
+        "Failed to apply LVGL patch.\n"
+        "Hint: is the submodule checked out at the expected commit?")
+    endif()
+
+    file(WRITE "${LVGL_PATCH_STAMP}" "applied\n")
+  endif()
+endif()
+
 add_executable(epass_drm_app
   src/main.c
-  src/drm_warpper.c
-  src/log.c
-  src/mediaplayer.c
-  src/spsc_queue.c
-  src/lvgl_drm_warp.c
-  src/gui_app.c
+
+  src/prts/prts.c
+
+  src/driver/drm_warpper.c
+
+  src/render/mediaplayer.c
+  src/render/lvgl_drm_warp.c
+
+  src/ui/gui_app.c
+  src/ui/overlays.c
+
+  src/utils/spsc_queue.c
+  src/utils/log.c
 )
 
 target_include_directories(epass_drm_app PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
   ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/prts
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/driver
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/render
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
   ${LIBEVDEV_INCLUDE_DIRS}
   ${LIBDRM_INCLUDE_DIRS}
-  ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
 )
 
 target_compile_definitions(epass_drm_app PRIVATE
@@ -56,6 +93,7 @@ target_compile_options(epass_drm_app PRIVATE
    ${LIBEVDEV_CFLAGS_OTHER}
 )
 
+include_directories(${PNG_INCLUDE_DIR})
 include_directories(/home/shirogane/Desktop/liulianpai/drm_app/backup/tina_multimedia/libcedarx/libcore/base/include)
 include_directories(/home/shirogane/Desktop/liulianpai/drm_app/backup/tina_multimedia/libcedarx/libcore/parser/include)
 include_directories(/home/shirogane/Desktop/liulianpai/drm_app/backup/tina_multimedia/libcedarx/libcore/stream/include)
@@ -81,6 +119,7 @@ target_link_libraries(epass_drm_app
 
   ${LIBEVDEV_LIBRARIES}
   ${LIBDRM_LIBRARIES}
+  ${PNG_LIBRARIES}
 
   lvgl
 )
