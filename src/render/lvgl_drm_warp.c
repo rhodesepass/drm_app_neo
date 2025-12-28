@@ -75,16 +75,16 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     // modeset
     drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_UI, 0, 0, &lvgl_drm_warp->ui_buf_1);
 
-    lvgl_drm_warp->ui_buf_1_item.mount.type = DRM_SRGN_MOUNT_FB_TYPE_NORMAL;
-    lvgl_drm_warp->ui_buf_1_item.mount.ch0_addr = (uint32_t)lvgl_drm_warp->ui_buf_1.vaddr;
-    lvgl_drm_warp->ui_buf_1_item.mount.ch1_addr = 0;
-    lvgl_drm_warp->ui_buf_1_item.mount.ch2_addr = 0;
+    lvgl_drm_warp->ui_buf_1_item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_NORMAL;
+    lvgl_drm_warp->ui_buf_1_item.mount.arg0 = (uint32_t)lvgl_drm_warp->ui_buf_1.vaddr;
+    lvgl_drm_warp->ui_buf_1_item.mount.arg1 = 0;
+    lvgl_drm_warp->ui_buf_1_item.mount.arg2 = 0;
     lvgl_drm_warp->ui_buf_1_item.userdata = (void*)&lvgl_drm_warp->ui_buf_1;
 
-    lvgl_drm_warp->ui_buf_2_item.mount.type = DRM_SRGN_MOUNT_FB_TYPE_NORMAL;
-    lvgl_drm_warp->ui_buf_2_item.mount.ch0_addr = (uint32_t)lvgl_drm_warp->ui_buf_2.vaddr;
-    lvgl_drm_warp->ui_buf_2_item.mount.ch1_addr = 0;
-    lvgl_drm_warp->ui_buf_2_item.mount.ch2_addr = 0;
+    lvgl_drm_warp->ui_buf_2_item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_NORMAL;
+    lvgl_drm_warp->ui_buf_2_item.mount.arg0 = (uint32_t)lvgl_drm_warp->ui_buf_2.vaddr;
+    lvgl_drm_warp->ui_buf_2_item.mount.arg1 = 0;
+    lvgl_drm_warp->ui_buf_2_item.mount.arg2 = 0;
     lvgl_drm_warp->ui_buf_2_item.userdata = (void*)&lvgl_drm_warp->ui_buf_2;
 
     lvgl_drm_warp->has_vsync_done = true;

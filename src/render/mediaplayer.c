@@ -266,10 +266,10 @@ static void *mp_decoder_thread(void *param)
                     continue;
                 }
 
-                item_to_display->mount.type = DRM_SRGN_MOUNT_FB_TYPE_YUV;
-                item_to_display->mount.ch0_addr = (uint32_t)picture->pData0;
-                item_to_display->mount.ch1_addr = (uint32_t)picture->pData1;
-                item_to_display->mount.ch2_addr = 0;
+                item_to_display->mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_YUV;
+                item_to_display->mount.arg0 = (uint32_t)picture->pData0;
+                item_to_display->mount.arg1 = (uint32_t)picture->pData1;
+                item_to_display->mount.arg2 = 0;
                 item_to_display->userdata = (void*)picture;
 
                 drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, item_to_display);
@@ -425,14 +425,10 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
     mp->framerate = vInfo.nFrameRate;
 
     vConfig.eOutputPixelFormat  = PIXEL_FORMAT_YUV_MB32_420;
-    vConfig.nDeInterlaceHoldingFrameBufferNum =
-        GetConfigParamterInt("pic_4di_num", BUF_CNT_4_DI);
-    vConfig.nDisplayHoldingFrameBufferNum =
-        GetConfigParamterInt("pic_4list_num", BUF_CNT_4_LIST);
-    vConfig.nRotateHoldingFrameBufferNum =
-        GetConfigParamterInt("pic_4rotate_num", BUF_CNT_4_ROTATE);
-    vConfig.nDecodeSmoothFrameBufferNum =
-        GetConfigParamterInt("pic_4smooth_num", BUF_CNT_4_SMOOTH);
+    vConfig.nDeInterlaceHoldingFrameBufferNum = BUF_CNT_4_DI;
+    vConfig.nDisplayHoldingFrameBufferNum = BUF_CNT_4_LIST;
+    vConfig.nRotateHoldingFrameBufferNum = BUF_CNT_4_ROTATE;
+    vConfig.nDecodeSmoothFrameBufferNum = BUF_CNT_4_SMOOTH;
     vConfig.memops = mp->memops;
     vConfig.nVbvBufferSize = VBVBUFFERSIZE;
 
@@ -554,7 +550,11 @@ int mediaplayer_start(mediaplayer_t *mp)
     }
 
     memset(mp->input_uri, 0, sizeof(mp->input_uri));
-    snprintf(mp->input_uri, sizeof(mp->input_uri), "file://%s", mp->video_path);
+    int written = snprintf(mp->input_uri, sizeof(mp->input_uri), "file://%s", mp->video_path);
+    if ((size_t)written >= sizeof(mp->input_uri)) {
+        log_error("snprintf err");
+        return -1;
+    }
 
     mp->memops = MemAdapterGetOpsS();
     if (!mp->memops) {
@@ -614,14 +614,10 @@ int mediaplayer_start(mediaplayer_t *mp)
     mp->framerate = vInfo.nFrameRate;
 
     vConfig.eOutputPixelFormat  = PIXEL_FORMAT_YUV_MB32_420;
-    vConfig.nDeInterlaceHoldingFrameBufferNum =
-        GetConfigParamterInt("pic_4di_num", BUF_CNT_4_DI);
-    vConfig.nDisplayHoldingFrameBufferNum =
-        GetConfigParamterInt("pic_4list_num", BUF_CNT_4_LIST);
-    vConfig.nRotateHoldingFrameBufferNum =
-        GetConfigParamterInt("pic_4rotate_num", BUF_CNT_4_ROTATE);
-    vConfig.nDecodeSmoothFrameBufferNum =
-        GetConfigParamterInt("pic_4smooth_num", BUF_CNT_4_SMOOTH);
+    vConfig.nDeInterlaceHoldingFrameBufferNum = BUF_CNT_4_DI;
+    vConfig.nDisplayHoldingFrameBufferNum = BUF_CNT_4_LIST;
+    vConfig.nRotateHoldingFrameBufferNum = BUF_CNT_4_ROTATE;
+    vConfig.nDecodeSmoothFrameBufferNum = BUF_CNT_4_SMOOTH;
     vConfig.memops = mp->memops;
     vConfig.nVbvBufferSize = VBVBUFFERSIZE;
 

@@ -11,8 +11,8 @@ execute_process(
 )
 message(STATUS "Git version: ${GIT_VERSION}")
 
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
+# set(CMAKE_C_STANDARD 11)
+# set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -24,7 +24,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
 
-set(LV_BUILD_CONF_DIR src/)
+set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/src/lv_conf.h)
 add_subdirectory(lvgl)
 
 set(LVGL_PATCH "${CMAKE_SOURCE_DIR}/patch/lvgl-evdev-keymap.patch")
@@ -89,7 +89,7 @@ target_compile_definitions(epass_drm_app PRIVATE
 )
 
 target_compile_options(epass_drm_app PRIVATE
-  -Wall -Wextra -Wpedantic -Wno-unused-parameter
+  -Wall -Wextra -Wno-unused-parameter
    ${LIBEVDEV_CFLAGS_OTHER}
 )
 

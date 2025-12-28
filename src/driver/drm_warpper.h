@@ -30,7 +30,7 @@ typedef struct {
 } buffer_object_t;
 
 typedef struct {
-    struct drm_srgn_mount_fb_data mount;
+    struct drm_srgn_atomic_commit_data mount;
     void* userdata;
 } drm_warpper_queue_item_t;
 
