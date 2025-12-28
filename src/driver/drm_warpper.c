@@ -14,13 +14,12 @@
 #include "log.h"
 #include "srgn_drm.h"
 #include "config.h"
-
 static inline int DRM_IOCTL(int fd, unsigned long cmd, void *arg) {
   int ret = drmIoctl(fd, cmd, arg);
   return ret < 0 ? -errno : ret;
 }
 
-static void drm_warpper_wait_for_vsync(drm_warpper_t *drm_warpper){
+static void wait_for_vsync(drm_warpper_t *drm_warpper){
     drm_warpper->blank.request.type = DRM_VBLANK_RELATIVE;
     drm_warpper->blank.request.sequence = 1;
     // log_info("wait for vsync");
@@ -66,8 +65,12 @@ static void drm_warpper_display_thread(void *arg){
     int ret;
 
     while(drm_warpper->thread_running){
-        drm_warpper_wait_for_vsync(drm_warpper);
+        wait_for_vsync(drm_warpper);
         // log_info("vsync");
+        pthread_mutex_lock(&drm_warpper->mtx);
+        pthread_cond_signal(&drm_warpper->vsync_cond);
+        pthread_mutex_unlock(&drm_warpper->mtx); 
+
         srgn_mount_fb.size = 0;
         for(int i = 0; i < 4; i++){
             layer_t* layer = &drm_warpper->layer[i];
@@ -98,6 +101,13 @@ static void drm_warpper_display_thread(void *arg){
             }
         }
     }
+}
+
+int drm_warpper_wait_for_vsync(drm_warpper_t *drm_warpper){
+    pthread_mutex_lock(&drm_warpper->mtx);
+    pthread_cond_wait(&drm_warpper->vsync_cond, &drm_warpper->mtx);
+    pthread_mutex_unlock(&drm_warpper->mtx);
+    return 0;
 }
 
 int drm_warpper_enqueue_display_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t* item){

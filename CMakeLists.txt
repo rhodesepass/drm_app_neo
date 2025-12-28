@@ -24,32 +24,32 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
 
-set(LV_BUILD_CONF_DIR src/)
+set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/src/lv_conf.h)
 add_subdirectory(lvgl)
 
-set(LVGL_PATCH "${CMAKE_SOURCE_DIR}/patch/lvgl-evdev-keymap.patch")
-set(LVGL_PATCH_STAMP "${CMAKE_BINARY_DIR}/.lvgl_patch_applied")
+# set(LVGL_PATCH "${CMAKE_SOURCE_DIR}/patch/lvgl-evdev-keymap.patch")
+# set(LVGL_PATCH_STAMP "${CMAKE_BINARY_DIR}/.lvgl_patch_applied")
 
-if(EXISTS "${LVGL_PATCH}")
-  if(NOT EXISTS "${LVGL_PATCH_STAMP}")
-    message(STATUS "Patching lvgl evdev....")
-    execute_process(
-      COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}/lvgl/" apply --whitespace=nowarn "${LVGL_PATCH}"
-      RESULT_VARIABLE _patch_rc
-      OUTPUT_VARIABLE _patch_out
-      ERROR_VARIABLE  _patch_err
-    )
-    message(STATUS "stdout:\n${_patch_out}\n"
-        "stderr:\n${_patch_err}\n")
-    if(NOT _patch_rc EQUAL 0)
-      message(FATAL_ERROR
-        "Failed to apply LVGL patch.\n"
-        "Hint: is the submodule checked out at the expected commit?")
-    endif()
+# if(EXISTS "${LVGL_PATCH}")
+#   if(NOT EXISTS "${LVGL_PATCH_STAMP}")
+#     message(STATUS "Patching lvgl evdev....")
+#     execute_process(
+#       COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}/lvgl/" apply --whitespace=nowarn "${LVGL_PATCH}"
+#       RESULT_VARIABLE _patch_rc
+#       OUTPUT_VARIABLE _patch_out
+#       ERROR_VARIABLE  _patch_err
+#     )
+#     message(STATUS "stdout:\n${_patch_out}\n"
+#         "stderr:\n${_patch_err}\n")
+#     if(NOT _patch_rc EQUAL 0)
+#       message(FATAL_ERROR
+#         "Failed to apply LVGL patch.\n"
+#         "Hint: is the submodule checked out at the expected commit?")
+#     endif()
 
-    file(WRITE "${LVGL_PATCH_STAMP}" "applied\n")
-  endif()
-endif()
+#     file(WRITE "${LVGL_PATCH_STAMP}" "applied\n")
+#   endif()
+# endif()
 
 add_executable(epass_drm_app
   src/main.c
@@ -57,6 +57,8 @@ add_executable(epass_drm_app
   src/prts/prts.c
 
   src/driver/drm_warpper.c
+  src/driver/evdev.c
+
 
   src/render/mediaplayer.c
   src/render/lvgl_drm_warp.c
@@ -122,6 +124,8 @@ target_link_libraries(epass_drm_app
   ${PNG_LIBRARIES}
 
   lvgl
+  lvgl_demos
+  lvgl_examples
 )
 
 

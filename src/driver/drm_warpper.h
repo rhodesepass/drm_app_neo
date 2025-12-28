@@ -56,6 +56,9 @@ typedef struct {
   drmVBlank blank;
   pthread_t display_thread;
   int thread_running;
+
+  pthread_mutex_t mtx;
+  pthread_cond_t vsync_cond;
 } drm_warpper_t;
 
 
@@ -74,3 +77,5 @@ int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_objec
 int drm_warpper_enqueue_display_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t* item);
 int drm_warpper_dequeue_free_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t** out_item);
 int drm_warpper_try_dequeue_free_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t** out_item);
+
+int drm_warpper_wait_for_vsync(drm_warpper_t *drm_warpper);

@@ -47,7 +47,7 @@ int main(int argc, char *argv[]){
 
     // FIXME：
     // 用来跑modeset的buffer，实际上是不用的，这一片内存你也可以拿去干别的
-    // 期待有能人帮优化掉这个allocate。
+    // 所以我真的拿去给lvgl来当作draw buffer了，。。，。，，，，
     buffer_object_t video_buf;
     drm_warpper_allocate_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, &video_buf);
     drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &video_buf);
@@ -71,7 +71,7 @@ int main(int argc, char *argv[]){
         DRM_WARPPER_LAYER_MODE_ARGB8888
     );
 
-    lvgl_drm_warp_init(&g_lvgl_drm_warp, &g_drm_warpper);
+    lvgl_drm_warp_init(&g_lvgl_drm_warp, &g_drm_warpper, video_buf.vaddr);
     log_info("after create ui");
 
     log_info("drm_warpper addr:%p", &g_drm_warpper);

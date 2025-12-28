@@ -5,115 +5,106 @@
 #include <time.h>
 #include <unistd.h>
 #include "gui_app.h"
+#include "evdev.h"
+#include <stdint.h>
+#include <sys/time.h>
+#include <string.h>
+#include "drm_warpper.h"
 
-static uint32_t lvgl_drm_warp_tick_get_cb(void)
+/*Set in lv_conf.h as `LV_TICK_CUSTOM_SYS_TIME_EXPR`*/
+uint32_t lvgl_drm_warp_tick_get(void)
 {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    uint64_t time_ms = t.tv_sec * 1000 + (t.tv_nsec / 1000000);
+    static uint64_t start_ms = 0;
+    if(start_ms == 0) {
+        struct timeval tv_start;
+        gettimeofday(&tv_start, NULL);
+        start_ms = (tv_start.tv_sec * 1000000 + tv_start.tv_usec) / 1000;
+    }
+
+    struct timeval tv_now;
+    gettimeofday(&tv_now, NULL);
+    uint64_t now_ms;
+    now_ms = (tv_now.tv_sec * 1000000 + tv_now.tv_usec) / 1000;
+
+    uint32_t time_ms = now_ms - start_ms;
     return time_ms;
 }
 
-static void lvgl_drm_warp_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map)
-{
+static void lvgl_drm_warp_flush_cb(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t * color_p){
+    lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)drv->user_data;
 
-    if(!lv_disp_flush_is_last(disp)){
-        lv_display_flush_ready(disp);
+    if( area->x2 < 0 ||
+        area->y2 < 0 ||
+        area->x1 > UI_WIDTH - 1 ||
+        area->y1 > UI_HEIGHT - 1) {
+        lv_disp_flush_ready(drv);
         return;
     }
-    lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)lv_display_get_driver_data(disp);
 
-    
-
-    // log_info("enqueue display item");
-
-    if(lvgl_drm_warp->curr_draw_buf_idx == 0){
-        drm_warpper_enqueue_display_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1_item);
-    }else{
-        drm_warpper_enqueue_display_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2_item);
+    if(!lvgl_drm_warp->has_vsync_done){
+        drm_warpper_wait_for_vsync(lvgl_drm_warp->drm_warpper);
+        lvgl_drm_warp->has_vsync_done = true;
     }
-    lvgl_drm_warp->curr_draw_buf_idx = !lvgl_drm_warp->curr_draw_buf_idx;
 
-    // lvgl_drm_warp->has_vsync_done = false;
+    /*Truncate the area to the screen*/
+    int32_t act_x1 = area->x1 < 0 ? 0 : area->x1;
+    int32_t act_y1 = area->y1 < 0 ? 0 : area->y1;
+    int32_t act_x2 = area->x2 > (int32_t)UI_WIDTH - 1 ? (int32_t)UI_WIDTH - 1 : area->x2;
+    int32_t act_y2 = area->y2 > (int32_t)UI_HEIGHT - 1 ? (int32_t)UI_HEIGHT - 1 : area->y2;
 
-    // wait for vsync done
-    drm_warpper_queue_item_t* item;
-    // log_info("waiting for vsync");
-    drm_warpper_dequeue_free_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &item);
-    // log_info("dequeued free item");
-    // log_debug("flush_cb called, has_vsync_done: %d -> false", lvgl_drm_warp->has_vsync_done);
-    lv_display_flush_ready(disp);
+    lv_coord_t w = (act_x2 - act_x1 + 1);
+    long int location = 0;
+
+
+    /*32 or 24 bit per pixel*/
+    uint32_t * fbp32 = (uint32_t *)lvgl_drm_warp->ui_buf.vaddr;
+    int32_t y;
+    for(y = act_y1; y <= act_y2; y++) {
+        location = (act_x1) + (y) * UI_WIDTH;
+        memcpy(&fbp32[location], (uint32_t *)color_p, (act_x2 - act_x1 + 1) * 4);
+        color_p += w;
+    }
+
+
+    if(lv_disp_flush_is_last(drv)){
+        lvgl_drm_warp->has_vsync_done = false;
+    }
+
+    lv_disp_flush_ready(drv);
+    return;
 }
 
-// 这个回调函数呢，他什么时候都可能来调用一下，**就算现在没有正在刷新的内容 他也会来调用一下....**
-// 所以达到vsync以后，之后就不能dequeue(也就是等待了)
-// static void lvgl_drm_warp_flush_wait_cb(lv_display_t * disp){
-//     drm_warpper_queue_item_t* item;
-//     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)lv_display_get_driver_data(disp);
-//     // log_debug("flush_wait_cb called, has_vsync_done: %d", lvgl_drm_warp->has_vsync_done);
 
-//     if(lvgl_drm_warp->has_vsync_done){
-//         return;
-//     }
-
-//     // dequeue only, act as "waiting for vsync"
-//     // log_debug("waiting for vsync");
-//     drm_warpper_dequeue_free_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &item);
-//     // log_debug("dequeued free item");
-
-//     lvgl_drm_warp->has_vsync_done = true;
-// }
-
-
-void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper){
+void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper,uint8_t* draw_buf){
 
     lvgl_drm_warp->drm_warpper = drm_warpper;
 
-    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1);
-    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2);
+    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf);
+    drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_UI, 0, 0, &lvgl_drm_warp->ui_buf);
 
-    // modeset
-    drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_UI, 0, 0, &lvgl_drm_warp->ui_buf_1);
-
-    lvgl_drm_warp->ui_buf_1_item.mount.type = DRM_SRGN_MOUNT_FB_TYPE_NORMAL;
-    lvgl_drm_warp->ui_buf_1_item.mount.ch0_addr = (uint32_t)lvgl_drm_warp->ui_buf_1.vaddr;
-    lvgl_drm_warp->ui_buf_1_item.mount.ch1_addr = 0;
-    lvgl_drm_warp->ui_buf_1_item.mount.ch2_addr = 0;
-    lvgl_drm_warp->ui_buf_1_item.userdata = (void*)&lvgl_drm_warp->ui_buf_1;
-
-    lvgl_drm_warp->ui_buf_2_item.mount.type = DRM_SRGN_MOUNT_FB_TYPE_NORMAL;
-    lvgl_drm_warp->ui_buf_2_item.mount.ch0_addr = (uint32_t)lvgl_drm_warp->ui_buf_2.vaddr;
-    lvgl_drm_warp->ui_buf_2_item.mount.ch1_addr = 0;
-    lvgl_drm_warp->ui_buf_2_item.mount.ch2_addr = 0;
-    lvgl_drm_warp->ui_buf_2_item.userdata = (void*)&lvgl_drm_warp->ui_buf_2;
-
-    lvgl_drm_warp->has_vsync_done = true;
-
-    // 先把buffer提交进去，形成队列的初始状态（有一个buffer等待被free回来）
-    // drm_warpper_enqueue_display_item(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1_item);
-    drm_warpper_enqueue_display_item(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2_item);
     
-
     lv_init();
-    lv_tick_set_cb(lvgl_drm_warp_tick_get_cb);
-    lvgl_drm_warp->curr_draw_buf_idx = 0;
-
-    lv_display_t * disp;
-    disp = lv_display_create(UI_WIDTH, UI_HEIGHT);
-    lv_display_set_buffers(disp, 
-        lvgl_drm_warp->ui_buf_1.vaddr,
-        lvgl_drm_warp->ui_buf_2.vaddr, 
-        UI_WIDTH * UI_HEIGHT * 4,
-        LV_DISPLAY_RENDER_MODE_DIRECT);
     
-    lvgl_drm_warp->disp = disp;
-    lv_display_set_driver_data(disp, lvgl_drm_warp);
-    lv_display_set_flush_cb(disp, lvgl_drm_warp_flush_cb);
-    // lv_display_set_flush_wait_cb(disp, lvgl_drm_warp_flush_wait_cb);
+    // 这里，video层的buffer是NV12,所以大小是像素数量的1.5倍，函数要的结果是像素为单位
+    lv_disp_draw_buf_init(&lvgl_drm_warp->disp_buf, draw_buf, NULL, VIDEO_HEIGHT * VIDEO_WIDTH * 3 / 2 / 4);
 
-    lv_display_set_color_format(disp, LV_COLOR_FORMAT_ARGB8888);
+    lv_disp_drv_init(&lvgl_drm_warp->disp_drv);
+    lvgl_drm_warp->disp_drv.draw_buf   = &lvgl_drm_warp->disp_buf;
+    lvgl_drm_warp->disp_drv.flush_cb   = lvgl_drm_warp_flush_cb;
+    lvgl_drm_warp->disp_drv.hor_res    = UI_WIDTH;
+    lvgl_drm_warp->disp_drv.ver_res    = UI_HEIGHT;
+    lvgl_drm_warp->disp_drv.user_data  = lvgl_drm_warp;
+    // lvgl_drm_warp->disp_drv.antialiasing = 1;
+    lvgl_drm_warp->disp_drv.screen_transp = 1;
 
-    lvgl_drm_warp->keypad_indev = lv_evdev_create(LV_INDEV_TYPE_KEYPAD, "/dev/input/event0");
+    lvgl_drm_warp->disp = lv_disp_drv_register(&lvgl_drm_warp->disp_drv);
+    lvgl_drm_warp->has_vsync_done = false;
+
+    evdev_init();
+    lv_indev_drv_init(&lvgl_drm_warp->evdev_drv);
+    lvgl_drm_warp->evdev_drv.type = LV_INDEV_TYPE_KEYPAD;
+    lvgl_drm_warp->evdev_drv.read_cb = evdev_read;
+    lvgl_drm_warp->keypad_indev = lv_indev_drv_register(&lvgl_drm_warp->evdev_drv);
 
     lv_group_t * g = lv_group_create();
     lv_group_set_default(g);
@@ -124,11 +115,10 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
 }
 
 void lvgl_drm_warp_destroy(lvgl_drm_warp_t *lvgl_drm_warp){
-    drm_warpper_free_buffer(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1);
-    drm_warpper_free_buffer(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2);
+    drm_warpper_free_buffer(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf);
 }
 
 void lvgl_drm_warp_tick(lvgl_drm_warp_t *lvgl_drm_warp){
-    uint32_t idle_time = lv_timer_handler();
-    usleep(idle_time * 1000);
+    lv_timer_handler();
+    usleep(5000);
 }
