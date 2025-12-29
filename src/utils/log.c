@@ -40,7 +40,7 @@
  
  
  static const char *level_strings[] = {
-   "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
+   "[T]", "[D]", "[I]", "[W]", "[E]", "[F]"
  };
  
  #ifdef LOG_USE_COLOR
@@ -52,10 +52,11 @@
  
  static void stdout_callback(log_Event *ev) {
    char buf[16];
-   buf[strftime(buf, sizeof(buf), "%H:%M:%S", ev->time)] = '\0';
+  //  buf[strftime(buf, sizeof(buf), "%H:%M:%S", ev->time)] = '\0';
+  buf[0] = '\0'; // time not used
  #ifdef LOG_USE_COLOR
    fprintf(
-     ev->udata, "%s %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
+     ev->udata, "%s%s%-3s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
      buf, level_colors[ev->level], level_strings[ev->level],
      ev->file, ev->line);
  #else
