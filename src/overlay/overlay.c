@@ -1,5 +1,6 @@
 #include "overlay.h"
 #include "config.h"
+#include "drm_warpper.h"
 
 int overlay_init(overlay_t* overlay,drm_warpper_t* drm_warpper){
 

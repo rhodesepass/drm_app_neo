@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <time.h>
+#include "config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,7 +26,7 @@ extern "C" {
  */
 
 typedef uint64_t prts_timer_handle_t;
-typedef void (*prts_timer_cb)(void *userdata);
+typedef void (*prts_timer_cb)(void *userdata,bool is_last);
 
 #ifndef PRTS_TIMER_MAX
 #define PRTS_TIMER_MAX 1024
@@ -66,15 +67,14 @@ int prts_timer_destroy(prts_timer_t *tm);
  * @param cb             回调
  * @param userdata       回调参数
  */
-int prts_timer_create(prts_timer_t *tm,
-                      prts_timer_handle_t *out,
+int prts_timer_create(prts_timer_handle_t *out,
                       uint64_t start_delay_us,
                       uint64_t interval_us,
                       int64_t fire_count,
                       prts_timer_cb cb,
                       void *userdata);
 
-int prts_timer_cancel(prts_timer_t *tm, prts_timer_handle_t handle);
+int prts_timer_cancel(prts_timer_handle_t handle);
 
 #ifdef __cplusplus
 }

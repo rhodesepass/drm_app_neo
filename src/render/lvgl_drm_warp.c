@@ -1,10 +1,14 @@
 #include "lvgl_drm_warp.h"
 #include "config.h"
+#include "layer_animation.h"
 #include "log.h"
 #include <stdbool.h>
 #include <time.h>
 #include <unistd.h>
-#include "gui_app.h"
+#include "vars.h"
+#include "string.h"
+#include "stdlib.h"
+#include "ui.h"
 
 static uint32_t lvgl_drm_warp_tick_get_cb(void)
 {
@@ -45,40 +49,22 @@ static void lvgl_drm_warp_flush_cb(lv_display_t * disp, const lv_area_t * area, 
     lv_display_flush_ready(disp);
 }
 
-// 这个回调函数呢，他什么时候都可能来调用一下，**就算现在没有正在刷新的内容 他也会来调用一下....**
-// 所以达到vsync以后，之后就不能dequeue(也就是等待了)
-// static void lvgl_drm_warp_flush_wait_cb(lv_display_t * disp){
-//     drm_warpper_queue_item_t* item;
-//     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)lv_display_get_driver_data(disp);
-//     // log_debug("flush_wait_cb called, has_vsync_done: %d", lvgl_drm_warp->has_vsync_done);
-
-//     if(lvgl_drm_warp->has_vsync_done){
-//         return;
-//     }
-
-//     // dequeue only, act as "waiting for vsync"
-//     // log_debug("waiting for vsync");
-//     drm_warpper_dequeue_free_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &item);
-//     // log_debug("dequeued free item");
-
-//     lvgl_drm_warp->has_vsync_done = true;
-// }
-
 static void* lvgl_drm_warp_thread_entry(void *arg){
     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)arg;
     log_info("======> LVGL Thread Started!");
     while(lvgl_drm_warp->running){
         uint32_t idle_time = lv_timer_handler();
+        ui_tick();
         usleep(idle_time * 1000);
     }
     log_info("======> LVGL Thread Ended!");
     return NULL; 
 }
-
-void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper){
+extern void action_screen_key_event(lv_event_t * e);
+void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper,layer_animation_t *layer_animation){
 
     lvgl_drm_warp->drm_warpper = drm_warpper;
-
+    lvgl_drm_warp->layer_animation = layer_animation;
     drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1);
     drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2);
 
@@ -129,8 +115,12 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     lv_group_t * g = lv_group_create();
     lv_group_set_default(g);
     lv_indev_set_group(lvgl_drm_warp->keypad_indev, g);
+    lv_indev_add_event_cb(lvgl_drm_warp->keypad_indev, action_screen_key_event, LV_EVENT_KEY, &lvgl_drm_warp->keypad_indev);
 
-    gui_app_create_ui(lvgl_drm_warp);
+    // gui_app_create_ui(lvgl_drm_warp);
+    ui_init();
+    loadScreen(SCREEN_ID_SPINNER);
+    
 
     lvgl_drm_warp->running = 1;
     pthread_create(&lvgl_drm_warp->lvgl_thread, NULL, lvgl_drm_warp_thread_entry, lvgl_drm_warp);

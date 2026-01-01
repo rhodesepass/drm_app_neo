@@ -51,27 +51,33 @@ if(EXISTS "${LVGL_PATCH}")
   endif()
 endif()
 
+FILE(GLOB UI_SOURCES "src/ui/*.c")
+
 add_executable(epass_drm_app
   src/main.c
 
   src/prts/prts.c
-  src/prts/timer.c
 
   src/driver/drm_warpper.c
 
   src/render/mediaplayer.c
+  src/render/layer_animation.c
   src/render/lvgl_drm_warp.c
 
-  src/ui/gui_app.c
+  ${UI_SOURCES}
 
   src/overlay/overlay.c
 
 
   src/utils/spsc_queue.c
   src/utils/log.c
+  src/utils/timer.c
+
+
 )
 
 target_include_directories(epass_drm_app PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/prts

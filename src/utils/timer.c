@@ -1,4 +1,4 @@
-// PRTS  timer implementation
+// PRTS timer implementation
 
 #include "timer.h"
 
@@ -58,6 +58,8 @@ static void prts_timer_trampoline(union sigval sv)
         return;
     }
 
+    bool is_last = false;
+
     // 计数：先递减，确保在 cancel/destroy 之后的排队回调能因 gen mismatch 直接返回
     if (s->remaining > 0) {
         s->remaining--;
@@ -69,6 +71,7 @@ static void prts_timer_trampoline(union sigval sv)
             if (tm->free_top < PRTS_TIMER_MAX) {
                 tm->free_ids[tm->free_top++] = (uint16_t)id;
             }
+            is_last = true;
         }
     }
 
@@ -78,7 +81,7 @@ static void prts_timer_trampoline(union sigval sv)
     pthread_mutex_unlock(&tm->mtx);
 
     if (cb) {
-        cb(userdata);
+        cb(userdata, is_last);
     }
 }
 
@@ -132,8 +135,9 @@ static int prts_timer_cancel_locked(prts_timer_t *tm, uint32_t id, uint32_t gen)
     return 0;
 }
 
-int prts_timer_cancel(prts_timer_t *tm, prts_timer_handle_t handle)
+int prts_timer_cancel(prts_timer_handle_t handle)
 {
+    prts_timer_t *tm = g_prts_tm_singleton;
     if (!tm) return -EINVAL;
 
     uint32_t id = handle_id(handle);
@@ -176,14 +180,14 @@ int prts_timer_destroy(prts_timer_t *tm)
     return 0;
 }
 
-int prts_timer_create(prts_timer_t *tm,
-                      prts_timer_handle_t *out,
+int prts_timer_create(prts_timer_handle_t *out,
                       uint64_t start_delay_us,
                       uint64_t interval_us,
                       int64_t fire_count,
                       prts_timer_cb cb,
                       void *userdata)
 {
+    prts_timer_t *tm = g_prts_tm_singleton;
     if (!tm || !out || !cb) return -EINVAL;
     if (fire_count == 0) return -EINVAL;
     if (fire_count < -1) return -EINVAL;

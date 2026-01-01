@@ -3,9 +3,11 @@
 #include "lvgl.h"
 #include "drm_warpper.h"
 #include <pthread.h>
+#include "layer_animation.h"
 
 typedef struct {
     drm_warpper_t *drm_warpper;
+    layer_animation_t *layer_animation;
 
     lv_display_t * disp;
 
@@ -24,6 +26,6 @@ typedef struct {
 
 } lvgl_drm_warp_t;
 
-void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper);
+void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper,layer_animation_t *layer_animation);
 void lvgl_drm_warp_destroy(lvgl_drm_warp_t *lvgl_drm_warp);
 void lvgl_drm_warp_tick(lvgl_drm_warp_t *lvgl_drm_warp);

@@ -211,6 +211,7 @@ static void *mp_decoder_thread(void *param)
         drm_warpper_queue_item_t* item;
         while(drm_warpper_try_dequeue_free_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, &item) == 0){
             VideoPicture* pic = (VideoPicture*)item->userdata;
+            // log_debug("dequeue");
             if(pic){
                 ReturnPicture(decoder, pic);
             }
@@ -273,10 +274,9 @@ static void *mp_decoder_thread(void *param)
                 item_to_display->mount.arg1 = (uint32_t)picture->pData1;
                 item_to_display->mount.arg2 = 0;
                 item_to_display->userdata = (void*)picture;
-                item_to_display->on_heap = true;
-
+                // this "on_heap" means that the item_to_display will be free by the drm_warpper, not by the mediaplayer.
+                item_to_display->on_heap = false;
                 drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, item_to_display);
-
                 next_frame_time = next_frame_time + 1000000 * 1000 / mp->framerate;
             }
         }

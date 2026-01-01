@@ -1,2 +1,5 @@
 backup/
 build/
+
+src/ui/*
+!src/ui/actions.c

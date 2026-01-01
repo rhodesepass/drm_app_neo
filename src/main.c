@@ -1,3 +1,4 @@
+#include "config.h"
 #include "drm_warpper.h"
 #include <stdio.h>
 #include <string.h>
@@ -8,13 +9,15 @@
 #include "mediaplayer.h"
 #include "lvgl_drm_warp.h"
 #include "timer.h"
+#include "layer_animation.h"
 
 static drm_warpper_t g_drm_warpper;
 static mediaplayer_t g_mediaplayer;
 static lvgl_drm_warp_t g_lvgl_drm_warp;
 static prts_timer_t g_prts_timer;
+static layer_animation_t g_layer_animation;
 
-static int g_running = 1;
+int g_running = 1;
 void signal_handler(int sig)
 {
     log_info("received signal %d, shutting down", sig);
@@ -45,7 +48,7 @@ int main(int argc, char *argv[]){
     signal(SIGTERM, signal_handler);
 
     printf("EPASS_GIT_VERSION: %s\n", EPASS_GIT_VERSION);
-    printf(APP_BARNER);
+    puts(APP_BARNER);
 
     log_info("==========> Starting EPass DRM APP!");
 
@@ -55,6 +58,14 @@ int main(int argc, char *argv[]){
         log_error("failed to initialize DRM warpper");
         return -1;
     }
+
+    // ============ PRTS 定时器初始化 ===============
+
+    prts_timer_init(&g_prts_timer);
+
+
+    // ============ 图层动画 初始化 ===============
+    layer_animation_init(&g_layer_animation, &g_drm_warpper);
 
     // ============ Mediaplayer 初始化 ===============
     drm_warpper_init_layer(
@@ -97,20 +108,13 @@ int main(int argc, char *argv[]){
         DRM_WARPPER_LAYER_MODE_RGB565
     );
 
-    lvgl_drm_warp_init(&g_lvgl_drm_warp, &g_drm_warpper);
+    lvgl_drm_warp_init(&g_lvgl_drm_warp, &g_drm_warpper,&g_layer_animation);
 
-    // ============ PRTS 定时器初始化 ===============
-
-    prts_timer_init(&g_prts_timer);
-
-
+    drm_warpper_set_layer_coord(&g_drm_warpper, DRM_WARPPER_LAYER_UI, 0, SCREEN_HEIGHT);
     // ============ 主循环 ===============
-    int x = -128;
-    prts_timer_handle_t handle;
-    prts_timer_create(&g_prts_timer, &handle, 0, 50000, -1, prts_timer_callback, &x);
     // does nothing, stuck here until signal is received
     while(g_running){
-        usleep(1000 * 1000);
+        usleep(1 * 1000 * 1000);
     }
 
     /* cleanup */
