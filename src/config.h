@@ -71,3 +71,6 @@
 
 // ========== Layer Animation Configuration ==========
 #define LAYER_ANIMATION_STEP_TIME 20000 // 20ms, 1000ms / 50fps
+
+// ========== UI Configuration ==========
+#define UI_LAYER_ANIMATION_DURATION (500 * 1000) // 500ms

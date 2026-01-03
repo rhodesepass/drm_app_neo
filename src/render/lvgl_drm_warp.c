@@ -3,12 +3,14 @@
 #include "layer_animation.h"
 #include "log.h"
 #include <stdbool.h>
+#include <stdio.h>
 #include <time.h>
 #include <unistd.h>
 #include "vars.h"
 #include "string.h"
 #include "stdlib.h"
 #include "ui.h"
+#include "key_enc_evdev.h"
 
 static uint32_t lvgl_drm_warp_tick_get_cb(void)
 {
@@ -60,7 +62,9 @@ static void* lvgl_drm_warp_thread_entry(void *arg){
     log_info("======> LVGL Thread Ended!");
     return NULL; 
 }
-extern void action_screen_key_event(lv_event_t * e);
+
+
+extern void screen_key_event_cb(uint32_t key);
 void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper,layer_animation_t *layer_animation){
 
     lvgl_drm_warp->drm_warpper = drm_warpper;
@@ -110,12 +114,14 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     // lv_display_set_flush_wait_cb(disp, lvgl_drm_warp_flush_wait_cb);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
 
-    lvgl_drm_warp->keypad_indev = lv_evdev_create(LV_INDEV_TYPE_KEYPAD, "/dev/input/event0");
+    lvgl_drm_warp->key_enc_evdev.input_cb = screen_key_event_cb;
+    snprintf(lvgl_drm_warp->key_enc_evdev.dev_path, sizeof(lvgl_drm_warp->key_enc_evdev.dev_path), "/dev/input/event%d", 0);
+    key_enc_evdev_init(&lvgl_drm_warp->key_enc_evdev);
+    lvgl_drm_warp->keypad_indev = lvgl_drm_warp->key_enc_evdev.indev;
 
-    lv_group_t * g = lv_group_create();
-    lv_group_set_default(g);
-    lv_indev_set_group(lvgl_drm_warp->keypad_indev, g);
-    lv_indev_add_event_cb(lvgl_drm_warp->keypad_indev, action_screen_key_event, LV_EVENT_KEY, &lvgl_drm_warp->keypad_indev);
+    ui_create_groups();
+    lv_indev_set_group(lvgl_drm_warp->keypad_indev, groups.op);
+
 
     // gui_app_create_ui(lvgl_drm_warp);
     ui_init();
@@ -132,4 +138,5 @@ void lvgl_drm_warp_destroy(lvgl_drm_warp_t *lvgl_drm_warp){
 
     lvgl_drm_warp->running = 0;
     pthread_join(lvgl_drm_warp->lvgl_thread, NULL);
+    key_enc_evdev_destroy(&lvgl_drm_warp->key_enc_evdev);
 }

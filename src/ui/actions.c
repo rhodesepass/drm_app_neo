@@ -106,7 +106,7 @@ void action_show_menu(lv_event_t * e){
                 DRM_WARPPER_LAYER_UI, 
                 0, UI_OPLIST_Y, 
                 0, 0, 
-                1 * 1000 * 1000, 0);
+                UI_LAYER_ANIMATION_DURATION, 0);
             break;
         case curr_screen_t_SCREEN_SPINNER:
             layer_animation_ease_in_out_move(
@@ -114,7 +114,7 @@ void action_show_menu(lv_event_t * e){
                 DRM_WARPPER_LAYER_UI, 
                 0, SCREEN_HEIGHT, 
                 0, 0, 
-                1 * 1000 * 1000, 0);
+                UI_LAYER_ANIMATION_DURATION, 0);
             break;
         default:
             break;
@@ -130,25 +130,13 @@ void action_show_sysinfo(lv_event_t * e){
 }
 
 
-static lv_indev_state_t last_state = LV_INDEV_STATE_RELEASED;
 // handle key event for spinner screen and back event.
 // for ui bringup
-void action_screen_key_event(lv_event_t * e){
+void screen_key_event_cb(uint32_t key){
     lv_display_t * disp = lv_display_get_default();
     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)lv_display_get_driver_data(disp);
 
-
-    lv_indev_t * indev = (lv_indev_t *)lv_event_get_target(e);
-    lv_indev_state_t state = lv_indev_get_state(indev);
-    if(state != LV_INDEV_STATE_PRESSED || last_state == LV_INDEV_STATE_PRESSED) {
-        last_state = state;
-        return;
-    }
-    last_state = state;
-
-    uint32_t key = lv_indev_get_key(indev);
-
-    log_debug("action_screen_key_event: g_cur_scr = %d, key = %d", g_cur_scr, key);
+    log_debug("screen_key_event_cb: g_cur_scr = %d, key = %d", g_cur_scr, key);
 
     if (g_cur_scr != curr_screen_t_SCREEN_SPINNER){
         if(key == LV_KEY_ESC){
@@ -164,7 +152,7 @@ void action_screen_key_event(lv_event_t * e){
                 DRM_WARPPER_LAYER_UI,
                 0, from_y,
                 0, SCREEN_HEIGHT,
-                1 * 1000 * 1000, 0);
+                UI_LAYER_ANIMATION_DURATION, 0);
             loadScreen(SCREEN_ID_SPINNER);
         }
         return;
@@ -172,14 +160,14 @@ void action_screen_key_event(lv_event_t * e){
     // if spinner screen, handle key event
     switch(key){
         // go to oplist screen
-        case LV_KEY_PREV:
-        case LV_KEY_NEXT:
+        case LV_KEY_LEFT:
+        case LV_KEY_RIGHT:
             layer_animation_ease_in_out_move(
                 lvgl_drm_warp->layer_animation, 
                 DRM_WARPPER_LAYER_UI, 
                 0, SCREEN_HEIGHT, 
                 0, UI_OPLIST_Y, 
-                1 * 1000 * 1000, 0);
+                UI_LAYER_ANIMATION_DURATION, 0);
             loadScreen(SCREEN_ID_OPLIST);
             break;
         case LV_KEY_ENTER:
@@ -188,7 +176,7 @@ void action_screen_key_event(lv_event_t * e){
                 DRM_WARPPER_LAYER_UI, 
                 0, SCREEN_HEIGHT, 
                 0, 0, 
-                1 * 1000 * 1000, 0);
+                UI_LAYER_ANIMATION_DURATION, 0);
             loadScreen(SCREEN_ID_DISPLAYIMG);
             break;
         case LV_KEY_ESC:
@@ -197,7 +185,7 @@ void action_screen_key_event(lv_event_t * e){
                 DRM_WARPPER_LAYER_UI, 
                 0, SCREEN_HEIGHT, 
                 0, 0, 
-                1 * 1000 * 1000, 0);
+                UI_LAYER_ANIMATION_DURATION, 0);
             loadScreen(SCREEN_ID_MAINMENU);
             break;
     }

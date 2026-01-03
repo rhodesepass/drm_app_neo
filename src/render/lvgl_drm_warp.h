@@ -4,6 +4,7 @@
 #include "drm_warpper.h"
 #include <pthread.h>
 #include "layer_animation.h"
+#include "key_enc_evdev.h"
 
 typedef struct {
     drm_warpper_t *drm_warpper;
@@ -20,6 +21,7 @@ typedef struct {
 
     bool has_vsync_done;
     lv_indev_t *keypad_indev;
+    key_enc_evdev_t key_enc_evdev;
 
     pthread_t lvgl_thread;
     int running;
