@@ -21,6 +21,9 @@ lvgl_drm_warp_t g_lvgl_drm_warp;
 prts_timer_t g_prts_timer;
 layer_animation_t g_layer_animation;
 settings_t g_settings;
+overlay_t g_overlay;
+
+buffer_object_t g_video_buf;
 
 int g_running = 1;
 void signal_handler(int sig)
@@ -30,8 +33,7 @@ void signal_handler(int sig)
 }
 
 void mount_video_layer_callback(void *userdata,bool is_last){
-    buffer_object_t *video_buf = (buffer_object_t *)userdata;
-    drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, video_buf);
+    drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &g_video_buf);
 }
 
 int main(int argc, char *argv[]){
@@ -81,8 +83,7 @@ int main(int argc, char *argv[]){
     // FIXME：
     // 用来跑modeset的buffer，实际上是不用的，这一片内存你也可以拿去干别的
     // 期待有能人帮优化掉这个allocate。
-    buffer_object_t video_buf;
-    drm_warpper_allocate_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, &video_buf);
+    drm_warpper_allocate_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, &g_video_buf);
     // drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &video_buf);
 
     /* initialize mediaplayer */
@@ -103,14 +104,8 @@ int main(int argc, char *argv[]){
         DRM_WARPPER_LAYER_MODE_ARGB8888
     );
 
-    buffer_object_t overlay_buf;
-    drm_warpper_allocate_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay_buf);
-    drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_OVERLAY, OVERLAY_WIDTH, 0, &overlay_buf);
-    for(int y=0; y<OVERLAY_HEIGHT; y++){
-        for(int x=0; x<OVERLAY_WIDTH; x++){
-            *((uint32_t *)(overlay_buf.vaddr) + x + y * OVERLAY_WIDTH) = 0xFFFFFFFF;
-        }
-    }
+    overlay_init(&g_overlay, &g_drm_warpper, &g_layer_animation);
+
 
     // ============ LVGL 初始化 ===============
     drm_warpper_init_layer(
@@ -124,37 +119,7 @@ int main(int argc, char *argv[]){
     drm_warpper_set_layer_coord(&g_drm_warpper, DRM_WARPPER_LAYER_UI, 0, SCREEN_HEIGHT);
 
 
-    // 程序启动动画
-
-    // 用Overlay层，先从屏幕右侧进入
-    layer_animation_ease_out_move(
-        &g_layer_animation, 
-        DRM_WARPPER_LAYER_OVERLAY, 
-        OVERLAY_WIDTH, 0, 
-        0, 0, 
-        500 * 1000, 
-        0
-    );
-
-    // 一边进入一边渐变到白色
-    layer_animation_fade_in(
-        &g_layer_animation, 
-        DRM_WARPPER_LAYER_OVERLAY, 
-        500 * 1000, 
-        0
-    );
-
-    // 全部遮住以后挂载video层
-    prts_timer_handle_t init_handler;
-    prts_timer_create(&init_handler,500*1000,0,1,mount_video_layer_callback,&video_buf);
-
-    // 渐变到透明
-    layer_animation_fade_out(
-        &g_layer_animation, 
-        DRM_WARPPER_LAYER_OVERLAY, 
-        500 * 1000, 
-        1000 * 1000
-    );
+    overlay_schedule_startup_animation(&g_overlay,mount_video_layer_callback);
 
     
     // ============ 主循环 ===============
@@ -167,6 +132,7 @@ int main(int argc, char *argv[]){
     log_info("==========> Shutting down EPass DRM APP!");
     prts_timer_destroy(&g_prts_timer);
     lvgl_drm_warp_destroy(&g_lvgl_drm_warp);
+    overlay_destroy(&g_overlay);
     mediaplayer_stop(&g_mediaplayer);
     mediaplayer_destroy(&g_mediaplayer);
     drm_warpper_destroy(&g_drm_warpper);
