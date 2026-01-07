@@ -31,10 +31,13 @@ cacheassets_t g_cacheassets;
 buffer_object_t g_video_buf;
 
 int g_running = 1;
+int g_exitcode = 0;
+
 void signal_handler(int sig)
 {
     log_info("received signal %d, shutting down", sig);
     g_running = 0;
+    g_exitcode = 0;
 }
 
 void mount_video_layer_callback(void *userdata,bool is_last){
@@ -71,8 +74,8 @@ static void load_asset_arknights(char *image_path, uint8_t** addr,int* w,int* h)
 int main(int argc, char *argv[]){
     if(argc == 2){
         if(strcmp(argv[1], "version") == 0){
-            printf("EPASS_NEO_GIT_VERSION: %s", EPASS_GIT_VERSION);
-            printf("COMPILE_TIME: %s", COMPILE_TIME);
+            printf("EPASS_NEO_GIT_VERSION: %s\n", EPASS_GIT_VERSION);
+            printf("COMPILE_TIME: %s\n", COMPILE_TIME);
             return 0;
         }
         else if(strcmp(argv[1], "aux") == 0){
@@ -186,9 +189,9 @@ int main(int argc, char *argv[]){
     load_asset_arknights("/root/sniper.png", &opinfo_params.class_addr, &opinfo_params.class_w, &opinfo_params.class_h);
     overlay_opinfo_show_arknights(&g_overlay, &opinfo_params);
 
-    usleep(3 * 1000 * 1000);
+    usleep(5 * 1000 * 1000);
 
-    // overlay_opinfo_stop(&g_overlay);
+    overlay_opinfo_stop(&g_overlay);
 
     // ============ 主循环 ===============
     // does nothing, stuck here until signal is received
@@ -204,5 +207,5 @@ int main(int argc, char *argv[]){
     mediaplayer_stop(&g_mediaplayer);
     mediaplayer_destroy(&g_mediaplayer);
     drm_warpper_destroy(&g_drm_warpper);
-    return 0;
+    return g_exitcode;
 }

@@ -5,6 +5,8 @@
 #include "utils/code128.h"
 #include <src/misc/lv_types.h>
 #include <string.h>
+#include "lvgl/src/font/lv_font.h"
+#include "lvgl/src/misc/lv_text_private.h"
 
 static inline uint32_t argb8888_blend_over(uint32_t dst, uint8_t src_r, uint8_t src_g, uint8_t src_b, uint8_t src_a)
 {
@@ -142,6 +144,102 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
         /* glyph advance（含 kerning） */
         cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
     }
+}
+
+void fbdraw_text_range(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const lv_font_t* font, uint32_t color,int32_t line_h,int start_cp,int end_cp) {
+    uint32_t rgb = color & 0x00FFFFFF;
+    const uint8_t color_a = (color >> 24) & 0xFF;
+    if (line_h <= 0) {
+        line_h = (int32_t)lv_font_get_line_height(font);
+    }
+    const int32_t x0 = rect->x;
+    int32_t cursor_x = rect->x;
+    int32_t cursor_y = rect->y;
+
+    uint32_t ofs = 0;
+    uint32_t codepoint = 0;
+    int cp_idx = 0;
+    // log_trace("range into");
+    while((codepoint = lv_text_encoded_next(text, &ofs)) != 0) {
+        if(codepoint == '\n') {
+            cursor_x = x0;
+            cursor_y += line_h;
+            continue;
+        }
+        if(codepoint == '\r') {
+            cursor_x = x0;
+            continue;
+        }
+
+        uint32_t codepoint_next = lv_text_encoded_next(&text[ofs], NULL);
+        cp_idx++;
+        if(cp_idx < start_cp) {
+            cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+            continue;
+        }
+        if(cp_idx >= end_cp) break;
+
+        // log_trace("cp_idx=%d,codepoint=%d,codepoint_next=%d", cp_idx, codepoint, codepoint_next);
+
+        lv_font_glyph_dsc_t g_dsc;
+        if(!lv_font_get_glyph_dsc(font, &g_dsc, codepoint, codepoint_next)) {
+            /* 字符不可用，跳过 */
+            continue;
+        }
+
+        /* 空白字符等无需绘制 */
+        if(g_dsc.box_w == 0 || g_dsc.box_h == 0) {
+            cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+            continue;
+        }
+
+        lv_draw_buf_t * glyph_draw_buf = lv_draw_buf_create_ex(lv_draw_buf_get_font_handlers(),
+                                                               g_dsc.box_w, g_dsc.box_h,
+                                                               LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
+        if(!glyph_draw_buf) {
+            cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+            continue;
+        }
+
+        g_dsc.req_raw_bitmap = 0;
+        const lv_draw_buf_t * glyph_buf = (const lv_draw_buf_t *)lv_font_get_glyph_bitmap(&g_dsc, glyph_draw_buf);
+
+        if(glyph_buf && glyph_buf->data && glyph_buf->header.cf == LV_COLOR_FORMAT_A8) {
+            const uint8_t * a8 = (const uint8_t *)glyph_buf->data;
+            const uint32_t stride = glyph_buf->header.stride;
+
+            /* 参照 LVGL label 的基线计算：y 视为“行顶部” */
+            const int base_y = (int)cursor_y + (int)(font->line_height - font->base_line);
+            const uint8_t src_r = (rgb >> 16) & 0xFF;
+            const uint8_t src_g = (rgb >> 8) & 0xFF;
+            const uint8_t src_b = rgb & 0xFF;
+
+            for(int row = 0; row < (int)g_dsc.box_h; ++row) {
+                const uint8_t * a8_row = a8 + row * stride;
+                for(int col = 0; col < (int)g_dsc.box_w; ++col) {
+                    uint8_t pixel_alpha = a8_row[col];
+                    if(pixel_alpha == 0) continue;
+                    if(color_a != 255) pixel_alpha = (uint8_t)(((uint32_t)pixel_alpha * color_a + 127u) / 255u);
+
+                    const int px = (int)cursor_x + (int)g_dsc.ofs_x + col;
+                    const int py = base_y - (int)g_dsc.box_h - (int)g_dsc.ofs_y + row;
+                    if(px < rect->x || px >= rect->x + rect->w || py < rect->y || py >= rect->y + rect->h) continue;
+                    if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
+
+                    uint32_t * dst = fb->vaddr + px + py * fb->width;
+                    *dst = argb8888_blend_over(*dst, src_r, src_g, src_b, pixel_alpha);
+                }
+            }
+        }
+
+        lv_font_glyph_release_draw_data(&g_dsc);
+        lv_draw_buf_destroy(glyph_draw_buf);
+
+        /* glyph advance（含 kerning） */
+        cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+    }
+    // log_trace("range out");
+
 }
 
 void fbdraw_image(fbdraw_fb_t* fb, fbdraw_rect_t* rect, char* image_path){

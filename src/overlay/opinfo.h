@@ -14,7 +14,7 @@ typedef struct {
     char operator_name[20];
     char operator_code[40];
     char barcode_text[20];
-    char staff_text[20];
+    char staff_text[40];
     
     int class_w;
     int class_h;
