@@ -2,14 +2,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include "ui/actions.h"
+#include "actions.h"
 #include "screens.h"
-#include "ui/vars.h"
+#include "vars.h"
 #include "utils/log.h"
 #include "render/layer_animation.h"
 #include "config.h"
 #include "render/lvgl_drm_warp.h"
-#include "ui/ui.h"
+#include "ui.h"
 #include "utils/settings.h"
 #include "utils/storage.h"
 #include "utils/sysinfo.h"

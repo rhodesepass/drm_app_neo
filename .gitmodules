@@ -2,3 +2,6 @@
 	path = lvgl
 	url = https://github.com/lvgl/lvgl
 	branch = release/v9.4
+[submodule "eez_design"]
+	path = eez_design
+	url = https://github.com/rhodesepass/drm_app_neo_eez_design

@@ -9,8 +9,8 @@
 #include "config.h"
 #include "render/layer_animation.h"
 #include "utils/log.h"
-#include "ui/ui.h"
-#include "ui/vars.h"
+#include "ui.h"
+#include "vars.h"
 #include "driver/key_enc_evdev.h"
 #include "ui/filemanager.h"
 

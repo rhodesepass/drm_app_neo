@@ -178,3 +178,4 @@
 // ========== Exitcode Definition ==========
 #define EXITCODE_NORMAL 0
 #define EXITCODE_RESTART_APP 1
+#define EXITCODE_APPSTART 2

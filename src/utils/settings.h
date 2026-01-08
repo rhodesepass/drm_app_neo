@@ -1,4 +1,4 @@
-#include "ui/vars.h"
+#include "vars.h"
 #include "config.h"
 #include <stdint.h>
 

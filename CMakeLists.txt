@@ -32,7 +32,7 @@ set(CONFIG_LV_BUILD_DEMOS 0)
 add_subdirectory(lvgl)
 
 
-FILE(GLOB UI_SOURCES "src/ui/*.c")
+FILE(GLOB UI_SOURCES "eez_design/src/ui/*.c")
 
 add_executable(epass_drm_app
   src/main.c
@@ -48,6 +48,8 @@ add_executable(epass_drm_app
   src/render/fbdraw.c
 
   ${UI_SOURCES}
+  src/ui/actions.c
+  src/ui/filemanager.c
 
   src/overlay/overlay.c
   src/overlay/transitions.c
@@ -67,7 +69,7 @@ target_include_directories(epass_drm_app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
   ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+  ${CMAKE_CURRENT_SOURCE_DIR}/eez_design/src/ui
   ${LIBDRM_INCLUDE_DIRS}
 )
 
