@@ -46,31 +46,6 @@ void mount_video_layer_callback(void *userdata,bool is_last){
     drm_warpper_set_layer_coord(&g_drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0,0);
 }
 
-#include "utils/stb_image.h"
-static void load_asset_arknights(char *image_path, uint8_t** addr,int* w,int* h){
-    int c;
-    uint8_t* pixdata = stbi_load(image_path, w, h, &c, 4);
-    if(!pixdata){
-        log_error("failed to load image: %s", image_path);
-        return;
-    }
-    *addr = malloc((*w) * (*h) * 4);
-    if(!*addr){
-        log_error("failed to malloc memory: %s", image_path);
-        stbi_image_free(pixdata);
-        pixdata = NULL;
-        return;
-    }
-    for(int y = 0; y < (*h); y++){
-        for(int x = 0; x < (*w); x++){
-            uint32_t bgra_pixel = *((uint32_t *)(pixdata) + x + y * (*w));
-            uint32_t rgb_pixel = (bgra_pixel & 0x000000FF) << 16 | (bgra_pixel & 0x0000FF00) | (bgra_pixel & 0x00FF0000) >> 16 | (bgra_pixel & 0xFF000000);
-            *((uint32_t *)(*addr) + x + y * (*w)) = rgb_pixel;
-        }
-    }
-    stbi_image_free(pixdata);
-    pixdata = NULL;
-}
 
 int main(int argc, char *argv[]){
     if(argc == 2){
@@ -171,14 +146,16 @@ int main(int argc, char *argv[]){
     fade_params.duration = 500000;
     strcpy(fade_params.image_path, "/root/u_boot_logo.png");
     fade_params.background_color = 0xFF000000;
-    overlay_transition_fade(&g_overlay,mount_video_layer_callback,NULL,&fade_params);
+    overlay_transition_load_image(&fade_params);
+    // overlay_transition_fade(&g_overlay,mount_video_layer_callback,NULL,&fade_params);
     // overlay_transition_move(&g_overlay,mount_video_layer_callback,NULL,&fade_params);
-    // overlay_transition_swipe(&g_overlay,mount_video_layer_callback,NULL,&fade_params);
+    overlay_transition_swipe(&g_overlay,mount_video_layer_callback,NULL,&fade_params);
 
 
     usleep(3 * 1000 * 1000);
 
     olopinfo_params_t opinfo_params;
+    opinfo_params.type = OPINFO_TYPE_ARKNIGHTS;
     opinfo_params.fade_duration = 500000;
     opinfo_params.color = 0x00ff0000;
     strcpy(opinfo_params.operator_name, "SHIROGANE");
@@ -186,8 +163,9 @@ int main(int argc, char *argv[]){
     strcpy(opinfo_params.barcode_text, "SHIROGANE-SRGN123");
     strcpy(opinfo_params.staff_text, "Staff");
     strcpy(opinfo_params.aux_text, "Operator of Rhodes Island\nSUPPORTER/Rhodes Island\n我能吞下玻璃而不伤身体疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼疼");
-    load_asset_arknights("/root/ak_logo.png", &opinfo_params.logo_addr, &opinfo_params.logo_w, &opinfo_params.logo_h);
-    load_asset_arknights("/root/sniper.png", &opinfo_params.class_addr, &opinfo_params.class_w, &opinfo_params.class_h);
+    strcpy(opinfo_params.class_path, "/root/sniper.png");
+    strcpy(opinfo_params.logo_path, "/root/ak_logo.png");
+    overlay_opinfo_load_image(&opinfo_params);
     overlay_opinfo_show_arknights(&g_overlay, &opinfo_params);
 
     ui_warning(UI_WARNING_LOW_BATTERY);
@@ -204,6 +182,9 @@ int main(int argc, char *argv[]){
     while(g_running){
         usleep(1 * 1000 * 1000);
     }
+
+    overlay_opinfo_free_image(&opinfo_params);
+    overlay_transition_free_image(&fade_params);
 
     /* cleanup */
     log_info("==========> Shutting down EPass DRM APP!");
