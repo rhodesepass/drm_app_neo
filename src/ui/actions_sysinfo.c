@@ -241,7 +241,7 @@ const char *get_var_sysinfo(){
     snprintf(
         buf, sizeof(buf), 
         "罗德岛电子通行认证程序-代号:%s\n"
-        "版本号: %s\n"
+        "版本号: %s "
         "校验码: %08X\n"
         "程序生成时间: %s\n"
         "%s"

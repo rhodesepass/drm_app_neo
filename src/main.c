@@ -169,10 +169,17 @@ int main(int argc, char *argv[]){
     overlay_opinfo_show_arknights(&g_overlay, &opinfo_params);
 
     ui_warning(UI_WARNING_LOW_BATTERY);
+    ui_warning(UI_WARNING_ASSET_ERROR);
+    ui_warning(UI_WARNING_SD_MOUNT_ERROR);
+    ui_warning(UI_WARNING_LOW_BATTERY);
+    ui_warning(UI_WARNING_ASSET_ERROR);
+    ui_warning(UI_WARNING_SD_MOUNT_ERROR);
+    ui_warning(UI_WARNING_LOW_BATTERY);
+    ui_warning(UI_WARNING_ASSET_ERROR);
+    ui_warning(UI_WARNING_SD_MOUNT_ERROR);
 
     usleep(5 * 1000 * 1000);
     
-    ui_warning(UI_WARNING_ASSET_ERROR);
 
 
     overlay_opinfo_stop(&g_overlay);

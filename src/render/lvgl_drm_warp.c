@@ -13,6 +13,7 @@
 #include "vars.h"
 #include "driver/key_enc_evdev.h"
 #include "ui/filemanager.h"
+#include "ui/actions_warning.h"
 
 static uint32_t lvgl_drm_warp_tick_get_cb(void)
 {
@@ -127,7 +128,7 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     // gui_app_create_ui(lvgl_drm_warp);
     ui_init();
     loadScreen(SCREEN_ID_SPINNER);
-    
+    ui_warning_init();
     create_filemanager();
 
     lvgl_drm_warp->running = 1;
@@ -141,4 +142,5 @@ void lvgl_drm_warp_destroy(lvgl_drm_warp_t *lvgl_drm_warp){
     lvgl_drm_warp->running = 0;
     pthread_join(lvgl_drm_warp->lvgl_thread, NULL);
     key_enc_evdev_destroy(&lvgl_drm_warp->key_enc_evdev);
+    ui_warning_destroy();
 }

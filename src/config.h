@@ -20,8 +20,8 @@
     "白银今天下班了吗<inapp@iccmc.cc> 2026\n" \
     "https://github.com/rhodesepass\n" \
     "电子通行证是我个人业余时间做的一款开源的自由硬件，" \
-    "与鹰角网络没有任何直接或间接的关联。使用到的相关游戏素材仅作标识使用，" \
-    "相关版权属于鹰角网络。"\
+    "与鹰角网络没有任何直接或间接的关联。相关游戏素材版权属于鹰角网络。\n"\
+    "这是我对电子产业全流程的一次尝试，目的是学习项目管理。可能会有很多不足的地方，希望您能多多包涵。"
 
 // ========== Settings Configuration ==========
 #define SETTINGS_FILE_PATH "/root/epass_cfg.bin"
@@ -29,8 +29,10 @@
 #define SETTINGS_VERSION 2
 #define SETTINGS_BRIGHTNESS_PATH "/sys/class/backlight/backlight/brightness"
 
-// ========== PRTS Timer Configuration ==========
+// ========== PRTS Configuration ==========
+#define PRTS_OPERATORS_MAX 128
 #define PRTS_TIMER_MAX 1024
+#define PRTS_OPERATOR_PARSE_LOG "/root/asset.log"
 
 // ========== Screen Configuration ==========
 #define USE_360_640_SCREEN
@@ -151,9 +153,6 @@
 
 
 
-
-
-
 // ========== UI Configuration ==========
 #define UI_LAYER_ANIMATION_DURATION (500 * 1000) // 500ms
 
@@ -161,6 +160,7 @@
 #define UI_LAYER_ANIMATION_INTRO_LOADSCREEN_DELAY (500 * 1000)
 #define UI_LAYER_ANIMATION_INTRO_DEST_TRANSITION_DURATION (300 * 1000) // 300ms
 #define UI_LAYER_ANIMATION_INTRO_DEST_TRANSITION_DELAY (500 * 1000) // 500ms
+#define UI_WARNING_TIMER_TICK_PERIOD (3 * 1000 * 1000)
 
 // ========== Storage Configuration ==========
 #define NAND_MOUNT_POINT "/"
