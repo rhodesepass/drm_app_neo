@@ -1,12 +1,4 @@
 backup/
 build/
 
-# 我希望能直接通过EEZ Studio生成ui下的内容，不要做更改
-# 这样之后还能回到eez studio里面编辑UI。
-src/ui/*
-!src/ui/actions.c
-!src/ui/filemanager.c
-!src/ui/filemanager.h
-
-
 .cache

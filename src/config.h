@@ -15,6 +15,14 @@
     "        @#   %@@@@@        Engineering Dept.\n" \
     "           =:=        \n"
 
+#define APP_ABOUT_MSG \
+    "基于f1c200s的明日方舟电子通行认证终端\n" \
+    "白银今天下班了吗<inapp@iccmc.cc> 2026\n" \
+    "https://github.com/rhodesepass\n" \
+    "电子通行证是我个人业余时间做的一款开源的自由硬件，" \
+    "与鹰角网络没有任何直接或间接的关联。使用到的相关游戏素材仅作标识使用，" \
+    "相关版权属于鹰角网络。"\
+
 // ========== Settings Configuration ==========
 #define SETTINGS_FILE_PATH "/root/epass_cfg.bin"
 #define SETTINGS_MAGIC 0x45504153434F4E46
@@ -44,7 +52,7 @@
     #define UI_OPLIST_Y 250
     #define UI_SPINNER_INTRO_Y 580
     #define UI_MAINMENU_Y 190
-    #define UI_LOWBAT_Y 580
+    #define UI_WARNING_Y 565
 
 
 

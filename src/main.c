@@ -17,6 +17,7 @@
 #include "utils/settings.h"
 #include "utils/timer.h"
 #include "utils/cacheassets.h"
+#include "ui/actions_warning.h"
 
 /* global variables */
 drm_warpper_t g_drm_warpper;
@@ -189,7 +190,12 @@ int main(int argc, char *argv[]){
     load_asset_arknights("/root/sniper.png", &opinfo_params.class_addr, &opinfo_params.class_w, &opinfo_params.class_h);
     overlay_opinfo_show_arknights(&g_overlay, &opinfo_params);
 
+    ui_warning(UI_WARNING_LOW_BATTERY);
+
     usleep(5 * 1000 * 1000);
+    
+    ui_warning(UI_WARNING_ASSET_ERROR);
+
 
     overlay_opinfo_stop(&g_overlay);
 

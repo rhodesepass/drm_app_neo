@@ -1,10 +1,18 @@
-#include <stdio.h>
+// 设备信息页面 专用
+#include "ui.h"
+#include "ui/actions_sysinfo.h"
+#include "utils/log.h"
+#include "config.h"
 #include <string.h>
-#include <sys/stat.h>
+#include <stdio.h>
 #include <stdint.h>
-#include <stdlib.h>
+#include <sys/statvfs.h>
 
-void get_meminfo_str(char *ret, size_t ret_sz) {
+// =========================================
+// 自己添加的方法 START
+// =========================================
+
+void ui_sysinfo_get_meminfo_str(char *ret, size_t ret_sz) {
     FILE *fp = fopen("/proc/meminfo", "r");
     if (!fp) {
         snprintf(ret, ret_sz, "Meminfo: 读取失败");
@@ -38,7 +46,7 @@ void get_meminfo_str(char *ret, size_t ret_sz) {
     fclose(fp);
 }
 
-void get_os_release_str(char *ret, size_t ret_sz) {
+void ui_sysinfo_get_os_release_str(char *ret, size_t ret_sz) {
     FILE *fp = fopen("/etc/os-release", "r");
     if (!fp) {
         snprintf(ret, ret_sz, "os-release: 读取失败");
@@ -137,7 +145,7 @@ static uint32_t crc32_update(uint32_t crc, const unsigned char *buffer, size_t l
 }
 
 
-uint32_t get_file_crc32(const char *path) {
+uint32_t ui_sysinfo_get_file_crc32(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         return 0;
@@ -150,4 +158,154 @@ uint32_t get_file_crc32(const char *path) {
     }
     fclose(fp);
     return crc;
+}
+
+
+
+bool ui_sysinfo_is_sdcard_inserted(){
+    FILE *f = fopen(SD_DEV_PATH, "r");
+    if(f == NULL){
+        return false;
+    }
+    fclose(f);
+    return true;
+}
+
+uint32_t ui_sysinfo_get_nand_available_size(){
+    struct statvfs stat;
+    if(statvfs(NAND_MOUNT_POINT, &stat) != 0){
+        log_error("failed to get NAND available size");
+        return 0;
+    }
+    return stat.f_bavail * stat.f_bsize;
+}
+uint32_t ui_sysinfo_get_sd_available_size(){
+    struct statvfs stat;
+    if(statvfs(SD_MOUNT_POINT, &stat) != 0){
+        log_error("failed to get SD available size");
+        return 0;
+    }
+    return stat.f_bavail * stat.f_bsize;
+}
+uint32_t ui_sysinfo_get_nand_total_size(){
+    struct statvfs stat;
+    if(statvfs(NAND_MOUNT_POINT, &stat) != 0){
+        log_error("failed to get NAND total size");
+        return 0;
+    }
+    return stat.f_blocks * stat.f_bsize;
+}
+uint32_t ui_sysinfo_get_sd_total_size(){
+    struct statvfs stat;
+    if(statvfs(SD_MOUNT_POINT, &stat) != 0){
+        log_error("failed to get SD total size");
+        return 0;
+    }
+    return stat.f_blocks * stat.f_bsize;
+}
+int ui_sysinfo_format_sd_card(){
+    log_info("formatting SD card");
+    return 0;
+}
+
+
+
+// =========================================
+// EEZ 回调 START
+// =========================================
+
+
+
+const char *get_var_epass_version(){
+    return EPASS_GIT_VERSION;
+}
+void set_var_epass_version(const char *value){
+    return;
+}
+
+const char *get_var_sysinfo(){
+    static char buf[2048];
+    char meminfo[512] = {0};
+    char osrelease[512] = {0};
+    static int called_cnt = 0;
+    if(called_cnt != 0){
+        return buf;
+    }
+    called_cnt++;
+
+    ui_sysinfo_get_meminfo_str(meminfo, sizeof(meminfo));
+    ui_sysinfo_get_os_release_str(osrelease, sizeof(osrelease));
+
+    uint32_t app_crc32 = ui_sysinfo_get_file_crc32("/root/epass_drm_app");
+
+    snprintf(
+        buf, sizeof(buf), 
+        "罗德岛电子通行认证程序-代号:%s\n"
+        "版本号: %s\n"
+        "校验码: %08X\n"
+        "程序生成时间: %s\n"
+        "%s"
+        "%s%s",
+        APP_SUBCODENAME,
+        EPASS_GIT_VERSION,
+        app_crc32,
+        COMPILE_TIME,
+        meminfo,
+        osrelease,
+        APP_ABOUT_MSG
+    );
+
+    // refresh every 300 calls(10 secs)
+    if(called_cnt == 300){
+        called_cnt = 0;
+    }
+    return buf;
+}
+void set_var_sysinfo(const char *value){
+    return;
+}
+
+
+const char *get_var_nand_label(){
+    static char buf[128];
+    snprintf(buf, sizeof(buf), 
+        "%d/%dMB", 
+        ui_sysinfo_get_nand_available_size() / 1024 / 1024, 
+        ui_sysinfo_get_nand_total_size() / 1024 / 1024
+    );
+    return buf;
+}
+void set_var_nand_label(const char *value){
+    return;
+}
+const char *get_var_sd_label(){
+    static char buf[128];
+    if(!ui_sysinfo_is_sdcard_inserted()){
+        return "SD卡不存在";
+    }
+    snprintf(buf, sizeof(buf), 
+        "%d/%dMB", 
+        ui_sysinfo_get_sd_available_size() / 1024 / 1024, 
+        ui_sysinfo_get_sd_total_size() / 1024 / 1024
+    );
+    return buf;
+}
+void set_var_sd_label(const char *value){
+    return;
+}
+
+int32_t get_var_nand_percent(){
+    return (ui_sysinfo_get_nand_available_size() * 100) / ui_sysinfo_get_nand_total_size();
+}
+void set_var_nand_percent(int32_t value){
+    return;
+}
+int32_t get_var_sd_percent(){
+    if(!ui_sysinfo_is_sdcard_inserted()){
+        return 0;
+    }
+    return (ui_sysinfo_get_sd_available_size() * 100) / ui_sysinfo_get_sd_total_size();
+}
+void set_var_sd_percent(int32_t value){
+    return;
 }

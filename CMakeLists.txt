@@ -50,6 +50,13 @@ add_executable(epass_drm_app
   ${UI_SOURCES}
   src/ui/actions.c
   src/ui/filemanager.c
+  src/ui/scr_transition.c
+  src/ui/actions_warning.c
+  src/ui/actions_mainscreen.c
+  src/ui/actions_settings.c
+  src/ui/actions_displayimg.c
+  src/ui/actions_sysinfo.c
+
 
   src/overlay/overlay.c
   src/overlay/transitions.c
@@ -59,8 +66,6 @@ add_executable(epass_drm_app
   src/utils/log.c
   src/utils/timer.c
   src/utils/settings.c
-  src/utils/storage.c
-  src/utils/sysinfo.c
   src/utils/cacheassets.c
   src/utils/code128.c
 )
