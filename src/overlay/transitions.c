@@ -18,6 +18,8 @@ void overlay_transition_fade(overlay_t* overlay,void (*middle_cb)(void *userdata
     fbdraw_fb_t fbsrc,fbdst;
     fbdraw_rect_t src_rect,dst_rect;
 
+    overlay->request_abort = 0;
+
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
 
@@ -83,6 +85,8 @@ void overlay_transition_move(overlay_t* overlay,void (*middle_cb)(void *userdata
     drm_warpper_queue_item_t* item;
     fbdraw_fb_t fbsrc,fbdst;
     fbdraw_rect_t src_rect,dst_rect;
+
+    overlay->request_abort = 0;
 
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, SCREEN_WIDTH, 0);
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
@@ -171,12 +175,28 @@ typedef enum{
 } swipe_draw_state_t;
 
 
+static void swipe_cleanup(swipe_worker_data_t* data){
+    prts_timer_cancel(data->overlay->overlay_timer_handle);
+    free(data->bezeir_values);
+    data->bezeir_values = NULL;
+    data->overlay->overlay_timer_handle = 0;
+    return;
+}
+
 // 每一帧绘制的时候来调用。 来自 overlay_worker 线程
 // 双缓冲的建议按照状态机+绘制的方法来写。
 // 先计算这次要画哪些东西，然后绘制，最后交换buffer。
 static void swipe_worker(void *userdata,int skipped_frames){
     swipe_worker_data_t* data = (swipe_worker_data_t*)userdata;
     // log_trace("swipe_worker: skipped_frames=%d,curr_frame=%d,total_frames=%d", skipped_frames, data->curr_frame, data->total_frames);
+    
+    // 是否要求我们退出
+    if(data->overlay->request_abort){
+        swipe_cleanup(data);
+        log_debug("swipe worker: request abort");
+        return;
+    }
+    
     drm_warpper_set_layer_coord(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
     drm_warpper_queue_item_t* item;
     drm_warpper_dequeue_free_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
@@ -288,10 +308,7 @@ static void swipe_worker(void *userdata,int skipped_frames){
     drm_warpper_enqueue_display_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
     data->curr_frame ++;
     if(data->curr_frame >= data->total_frames){
-        prts_timer_cancel(data->overlay->overlay_timer_handle);
-        data->overlay->overlay_timer_handle = 0;
-        free(data->bezeir_values);
-        data->bezeir_values = NULL;
+        swipe_cleanup(data);
         return;
     }
 
@@ -358,6 +375,8 @@ void overlay_transition_swipe(overlay_t* overlay,void (*middle_cb)(void *userdat
         new_value = new_value >> LV_BEZIER_VAL_SHIFT;
         swipe_worker_data.bezeir_values[i] = new_value;
     }
+
+    overlay->request_abort = 0;
 
     // 我们在这里设置永远触发，其实是在worker里面注销定时器。
     // 我们要保证，就算有跳帧发生，最后一次触发的事件也能传到我们的回调里面

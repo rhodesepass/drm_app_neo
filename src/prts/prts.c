@@ -11,8 +11,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-
-
 void prts_log_parse_log(prts_t* prts,char* path,char* message,prts_parse_log_type_t type){
     if(prts->parse_log_f == NULL){
         return;
@@ -32,6 +30,12 @@ void prts_log_parse_log(prts_t* prts,char* path,char* message,prts_parse_log_typ
 
 static void delayed_warning_cb(void* userdata,bool is_last){
     ui_warning(UI_WARNING_ASSET_ERROR);
+}
+
+
+void prts_tick(prts_t* prts){
+    
+    return;
 }
 
 void prts_init(prts_t* prts){

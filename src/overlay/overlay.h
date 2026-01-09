@@ -36,6 +36,11 @@ typedef struct {
     overlay_worker_t worker;
 
     prts_timer_handle_t overlay_timer_handle;
+
+    // 请求提前终止，就是在overlay动画还没有执行完之前，
+    // 就让worker的func 来处理一下资源回收工作。
+    // request以后，只需要看timer handler是否归零 就可以知道是否已经处理完了。
+    int request_abort;
 } overlay_t;
 
 
@@ -45,4 +50,6 @@ int overlay_init(overlay_t* overlay,drm_warpper_t* drm_warpper,layer_animation_t
 int overlay_destroy(overlay_t* overlay);
 
 void overlay_worker_schedule(overlay_t* overlay,void (*func)(void *userdata,int skipped_frames),void* userdata);
-void overlay_poll_wait(overlay_t* overlay);
+
+// 请求终止Overlay，并等待worker处理完资源回收工作。
+void overlay_abort(overlay_t* overlay);

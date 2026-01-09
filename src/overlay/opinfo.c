@@ -22,6 +22,8 @@ void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params){
     fbdraw_fb_t fbdst,fbsrc;
     fbdraw_rect_t dst_rect,src_rect;
 
+    overlay->request_abort = 0;
+
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
 
@@ -152,6 +154,13 @@ static void draw_color_fade(uint32_t* vaddr,int radius,uint32_t color){
 static void arknights_overlay_worker(void *userdata,int skipped_frames){
     arknights_overlay_worker_data_t* data = (arknights_overlay_worker_data_t*)userdata;
 
+    // 是否要求我们退出
+    if(data->overlay->request_abort){
+        prts_timer_cancel(data->overlay->overlay_timer_handle);
+        data->overlay->overlay_timer_handle = 0;
+        log_debug("arknights overlay worker: request abort");
+        return;
+    }
 
     // =============  状态转移  ==================
     // == 文本 打字机效果 START
@@ -691,6 +700,8 @@ void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params)
         data.div_line_bezeir_values[i] = new_value;
     }
 
+    overlay->request_abort = 0;
+
     prts_timer_create(
         &overlay->overlay_timer_handle  ,
         0,
@@ -707,21 +718,6 @@ void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params)
         0, OVERLAY_HEIGHT,
         0, 0,
         params->fade_duration, 0
-    );
-}
-
-void overlay_opinfo_stop(overlay_t* overlay){
-    if(overlay->overlay_timer_handle){
-        prts_timer_cancel(overlay->overlay_timer_handle);
-        overlay->overlay_timer_handle = 0;
-    }
-
-    layer_animation_ease_in_out_move(
-        overlay->layer_animation, 
-        DRM_WARPPER_LAYER_OVERLAY, 
-        0, 0,
-        0, OVERLAY_HEIGHT,
-        UI_LAYER_ANIMATION_DURATION, 0
     );
 }
 

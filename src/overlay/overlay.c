@@ -156,8 +156,15 @@ int overlay_destroy(overlay_t* overlay){
     return 0;
 }
 
-void overlay_poll_wait(overlay_t* overlay){
+
+// 这个终止函数的调用者一般是 PRTS自己的timer回调
+// PRTS那边定时器周期比较长，而且这边request stop，最差情况下应该是多渲染一帧之后再退出
+// 现在我们还是用轮询的方式来做的。
+// 如果卡住prts太久，导致那边定时器被双重触发，就需要想个办法处理一下。
+void overlay_abort(overlay_t* overlay){
+    overlay->request_abort = 1;
     while(overlay->overlay_timer_handle){
         usleep(50 * 1000);
     }
-};
+    return;
+}

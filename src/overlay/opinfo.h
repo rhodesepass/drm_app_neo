@@ -49,5 +49,3 @@ void overlay_opinfo_free_image(olopinfo_params_t* params);
 
 void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params);
 void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params);
-
-void overlay_opinfo_stop(overlay_t* overlay);
