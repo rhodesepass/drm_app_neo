@@ -48,6 +48,7 @@ static void file_explorer_event_handler(lv_event_t * e)
         return;
     }
 
+    fprintf(fp, "chmod +x %s\n", abs_path);
     fprintf(fp, "%s\n", abs_path);
     fflush(fp);
     fsync(fileno(fp));
