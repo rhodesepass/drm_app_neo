@@ -444,7 +444,7 @@ void prts_init(prts_t* prts, overlay_t* overlay){
         // 告警信号要等UI启动后才能发送，这里塞到定时器回调里
         prts_timer_handle_t warning_handle;
         prts_timer_create(&warning_handle, 
-            3 * 1000 * 1000, 
+            5 * 1000 * 1000, 
             0, 
             1, 
             delayed_warning_cb, 
@@ -457,7 +457,7 @@ void prts_init(prts_t* prts, overlay_t* overlay){
         log_warn("no assets loaded, using fallback");
         prts_timer_handle_t warning_handle;
         prts_timer_create(&warning_handle, 
-            3 * 1000 * 1000, 
+            5 * 1000 * 1000, 
             0, 
             1, 
             delayed_warning_cb, 
