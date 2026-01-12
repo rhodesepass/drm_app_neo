@@ -233,7 +233,11 @@ static void swipe_worker(void *userdata,int skipped_frames){
 
     if (data->curr_frame < data->frames_per_stage){
         draw_state = SWIPE_DRAW_CONTENT;
+
         draw_start_x = data->bezeir_values[data->curr_frame];
+        if(data->curr_frame < 2){
+            draw_start_x = 0;    
+        }
         // double buffer，一次性需要推进两帧的内容
         if(data->curr_frame + 2 < data->frames_per_stage){
             draw_end_x = data->bezeir_values[data->curr_frame + 2];
@@ -244,6 +248,9 @@ static void swipe_worker(void *userdata,int skipped_frames){
     }
     else if (data->curr_frame < 2 * data->frames_per_stage){
         draw_state = SWIPE_DRAW_IDLE;
+        // stub to make compiler happy.
+        draw_start_x = 0;
+        draw_end_x = 0;
         if(!data->middle_cb_called){
             if(data->callback->middle_cb){
                 data->callback->middle_cb(data->callback->middle_cb_userdata, false);
@@ -254,6 +261,10 @@ static void swipe_worker(void *userdata,int skipped_frames){
     else{
         draw_state = SWIPE_DRAW_CLEAR;
         draw_start_x = data->bezeir_values[data->curr_frame - 2 * data->frames_per_stage];
+        // 进入本状态的头两帧（两个buffer）都从最左边画起
+        if(data->curr_frame - 2 * data->frames_per_stage < 2){
+            draw_start_x = 0;
+        }
         if(data->curr_frame + 2 < 3 * data->frames_per_stage){
             draw_end_x = data->bezeir_values[data->curr_frame - 2 * data->frames_per_stage + 2];
         }
@@ -352,8 +363,6 @@ void overlay_transition_swipe(overlay_t* overlay,oltr_callback_t* callback,oltr_
     drm_warpper_queue_item_t* item;
     uint32_t* vaddr;
 
-    drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0);
-    drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
 
     // 清空双缓冲buffer
     drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
@@ -361,13 +370,16 @@ void overlay_transition_swipe(overlay_t* overlay,oltr_callback_t* callback,oltr_
     memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
     drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
 
+    // 刚刚挂上去的buffer已经是空buffer了 可以上坐标了
+    drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
+    drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
+    
     drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
     vaddr = (uint32_t*)item->mount.arg0;
     memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
     drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
     
 
-    drm_warpper_mount_layer(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0, &overlay->overlay_buf_1);
 
 
     static swipe_worker_data_t swipe_worker_data;
