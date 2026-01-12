@@ -493,6 +493,8 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
     return 0;
 }
 
+extern buffer_object_t g_video_buf;
+
 int mediaplayer_stop(mediaplayer_t *mp)
 {
     if (!mp) {
@@ -512,6 +514,16 @@ int mediaplayer_stop(mediaplayer_t *mp)
     mp->running = 0;
 
     mp_cleanup_internal(mp);
+    
+    // 挂载到黑屏buffer。
+    static drm_warpper_queue_item_t item;
+    item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_YUV;
+    item.mount.arg0 = (uint32_t)g_video_buf.vaddr;
+    item.mount.arg1 = (uint32_t)g_video_buf.vaddr + g_video_buf.width * g_video_buf.height;
+    item.mount.arg2 = 0;
+    item.userdata = NULL;
+    item.on_heap = false;
+    drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, &item);
 
     return 0;
 }

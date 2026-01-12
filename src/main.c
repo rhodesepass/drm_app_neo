@@ -153,6 +153,14 @@ int main(int argc, char *argv[]){
         return -1;
     }
 
+    // 填充video buffer，防止闪烁。
+    fill_nv12_buffer_with_color(
+        g_video_buf.vaddr, 
+        VIDEO_WIDTH, 
+        VIDEO_HEIGHT, 
+        0xff000000
+    );
+
     // mediaplayer_set_video(&g_mediaplayer, "/assets/MS/loop.mp4");
     // mediaplayer_start(&g_mediaplayer);
 
@@ -187,14 +195,6 @@ int main(int argc, char *argv[]){
 
     // ============ PRTS 初始化===============
     prts_init(&g_prts, &g_overlay, g_use_sd);
-
-    // fix:根据第一个干员transition的颜色 先填充video buffer，防止闪烁。
-    fill_nv12_buffer_with_color(
-        g_video_buf.vaddr, 
-        VIDEO_WIDTH, 
-        VIDEO_HEIGHT, 
-        g_prts.operators[0].transition_in.background_color
-    );
 
     // ============ LVGL 初始化 ===============
     drm_warpper_init_layer(

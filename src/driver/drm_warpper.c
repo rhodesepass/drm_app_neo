@@ -144,6 +144,9 @@ int drm_warpper_set_layer_coord(drm_warpper_t *drm_warpper,int layer_id,int x,in
     item->mount.arg2 = 0;
     item->userdata = NULL;
     item->on_heap = true;
+#ifndef APP_RELEASE
+    log_trace("drm coord y:%d,x:%d,reg:%x",y,x,item->mount.arg0);
+#endif // APP_RELEASE
     return drm_warpper_enqueue_display_item(drm_warpper, layer_id, item);
 }
 
