@@ -38,6 +38,17 @@ void ui_settings_load_ctrl_word(){
 // EEZ 回调 START
 // =========================================
 
+// 这个按钮目前不起任何作用。它存在的意义仅仅是因为它是ui group的第一个元素。
+// 因为：目前设置里的slider，触发切换开/关是绑定在按键的release事件上的。
+// 假设用户从mainmenu，按下（press）enter按钮，进入设置界面。
+// 这时候用户松开手，按钮的release事件被触发，slider的切换开/关被触发，
+// 导致误整定第一个设置。
+// lv_btn按钮的触发事件是绑定在press上面的，不会有这个误触发的问题
+// 因此我这里直接添加一个没有作用的按钮。
+void action_clear_cache(lv_event_t * e){
+    log_debug("action_clear_cache");
+    // does nothing.
+}
 
 void action_settings_ctrl_changed(lv_event_t * e){
     log_debug("action_settings_ctrl_changed");
