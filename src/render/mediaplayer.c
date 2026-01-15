@@ -211,9 +211,7 @@ static void *mp_decoder_thread(void *param)
             if(pic){
                 ReturnPicture(decoder, pic);
             }
-            if(item->on_heap){
-                free(item);
-            }
+            free(item);
         }
 
         // long long start = mp_get_now_us();
@@ -270,7 +268,8 @@ static void *mp_decoder_thread(void *param)
                 item_to_display->mount.arg1 = (uint32_t)picture->pData1;
                 item_to_display->mount.arg2 = 0;
                 item_to_display->userdata = (void*)picture;
-                // this "on_heap" means that the item_to_display will be free by the drm_warpper, not by the mediaplayer.
+                // this "on_heap" means that the item_to_display 
+                // will be free by the drm_warpper, not by the mediaplayer.
                 item_to_display->on_heap = false;
                 drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, item_to_display);
                 next_frame_time = next_frame_time + 1000000 * 1000 / mp->framerate;
@@ -516,14 +515,20 @@ int mediaplayer_stop(mediaplayer_t *mp)
     mp_cleanup_internal(mp);
     
     // 挂载到黑屏buffer。
-    static drm_warpper_queue_item_t item;
-    item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_YUV;
-    item.mount.arg0 = (uint32_t)g_video_buf.vaddr;
-    item.mount.arg1 = (uint32_t)g_video_buf.vaddr + g_video_buf.width * g_video_buf.height;
-    item.mount.arg2 = 0;
-    item.userdata = NULL;
-    item.on_heap = false;
-    drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, &item);
+    drm_warpper_queue_item_t* item;
+    item = malloc(sizeof(drm_warpper_queue_item_t));
+    if(item == NULL){
+        log_error("malloc err");
+        return -1;
+    }
+
+    item->mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_YUV;
+    item->mount.arg0 = (uint32_t)g_video_buf.vaddr;
+    item->mount.arg1 = (uint32_t)g_video_buf.vaddr + g_video_buf.width * g_video_buf.height;
+    item->mount.arg2 = 0;
+    item->userdata = NULL;
+    item->on_heap = false;
+    drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, item);
 
     return 0;
 }
