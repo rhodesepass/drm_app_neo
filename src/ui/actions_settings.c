@@ -104,3 +104,10 @@ void set_var_usb_mode(usb_mode_t value){
     settings_set_usb_mode(value);
     return;
 }
+extern int g_running;
+extern int g_exitcode;
+void action_call_srgn_config(lv_event_t * e){
+    log_debug("action_call_srgn_config");
+    g_exitcode = EXITCODE_SRGN_CONFIG;
+    g_running = 0;
+}

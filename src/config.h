@@ -231,6 +231,8 @@
 #define EXITCODE_APPSTART 2
 #define EXITCODE_SHUTDOWN 3
 #define EXITCODE_FORMAT_SD_CARD 4
+#define EXITCODE_SRGN_CONFIG 5
+
 
 // ========== Display Image Configuration ==========
 #define DISPLAYIMG_MAX_COUNT 128

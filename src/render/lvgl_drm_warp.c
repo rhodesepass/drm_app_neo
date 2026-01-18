@@ -62,6 +62,7 @@ static void lvgl_drm_warp_flush_cb(lv_display_t * disp, const lv_area_t * area, 
 static void* lvgl_drm_warp_thread_entry(void *arg){
     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)arg;
     log_info("==> LVGL Thread Started!");
+    loadScreen(SCREEN_ID_SPINNER);
     while(lvgl_drm_warp->running){
         uint32_t idle_time = lv_timer_handler();
         ui_tick();
@@ -133,7 +134,6 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
 
     // gui_app_create_ui(lvgl_drm_warp);
     ui_init();
-    loadScreen(SCREEN_ID_SPINNER);
     create_filemanager();
 
     // UI 连锁 组件
