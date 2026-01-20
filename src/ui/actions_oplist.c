@@ -1,4 +1,4 @@
-// 干员信息 专用 - 虚拟滚动实现
+// 干员信息 专用 - 虚拟滚动实现（
 
 #include <src/core/lv_obj_event.h>
 #include <src/core/lv_obj_private.h>
@@ -19,7 +19,18 @@ extern objects_t objects;
 
 // 前向声明
 static void update_slot_content(int slot_idx, int operator_idx);
-static void oplist_scroll_cb(lv_event_t *e);
+static void oplist_focus_cb(lv_event_t *e);
+static void refocus_to_operator(int op_idx);
+
+// 根据干员索引重新设置焦点
+static void refocus_to_operator(int op_idx) {
+    for (int i = 0; i < OPLIST_VISIBLE_SLOTS; i++) {
+        if (g_ui_oplist.slots[i].operator_index == op_idx) {
+            lv_group_focus_obj(g_ui_oplist.slots[i].opbtn);
+            return;
+        }
+    }
+}
 
 static void op_btn_click_cb(lv_event_t *e){
     lv_obj_t* obj = lv_event_get_target(e);
@@ -79,22 +90,16 @@ static void update_slot_content(int slot_idx, int operator_idx) {
 
 // 更新可见区域
 static void update_visible_range(int new_start) {
+    // 边界检查
     if (new_start < 0) new_start = 0;
-    if (new_start > g_ui_oplist.total_count - 1) {
-        new_start = g_ui_oplist.total_count - 1;
-    }
-    if (new_start < 0) new_start = 0;
+    int max_start = g_ui_oplist.total_count - OPLIST_VISIBLE_SLOTS;
+    if (max_start < 0) max_start = 0;
+    if (new_start > max_start) new_start = max_start;
 
     int old_start = g_ui_oplist.visible_start;
     if (new_start == old_start) return;
 
     g_ui_oplist.visible_start = new_start;
-
-    // 计算实际需要显示的干员数量
-    int visible_count = OPLIST_VISIBLE_SLOTS;
-    if (new_start + visible_count > g_ui_oplist.total_count) {
-        visible_count = g_ui_oplist.total_count - new_start;
-    }
 
     // 更新所有槽位
     for (int i = 0; i < OPLIST_VISIBLE_SLOTS; i++) {
@@ -110,19 +115,36 @@ static void update_visible_range(int new_start) {
     }
 }
 
-// 滚动事件回调
-static void oplist_scroll_cb(lv_event_t *e) {
-    lv_obj_t *container = lv_event_get_target(e);
-    lv_coord_t scroll_y = lv_obj_get_scroll_y(container);
+// 焦点变化回调 - encoder导航驱动的虚拟滚动
+static void oplist_focus_cb(lv_event_t *e) {
+    lv_obj_t *focused = lv_event_get_target(e);
 
-    // 计算应该显示的起始索引
-    int new_start = scroll_y / OPLIST_ITEM_HEIGHT;
+    // 找到当前焦点的slot索引
+    int slot_idx = -1;
+    for (int i = 0; i < OPLIST_VISIBLE_SLOTS; i++) {
+        if (g_ui_oplist.slots[i].opbtn == focused) {
+            slot_idx = i;
+            break;
+        }
+    }
+    if (slot_idx < 0) return;
 
-    // 提前 2 项加载，避免滚动时出现空白
-    if (new_start > 2) new_start -= 2;
-    else new_start = 0;
+    int op_idx = g_ui_oplist.slots[slot_idx].operator_index;
+    if (op_idx < 0) return;
 
-    update_visible_range(new_start);
+    // 边界检测：焦点移到顶部附近，向上滚动
+    if (slot_idx <= 1 && g_ui_oplist.visible_start > 0) {
+        int new_start = g_ui_oplist.visible_start - 1;
+        update_visible_range(new_start);
+        refocus_to_operator(op_idx);
+    }
+    // 边界检测：焦点移到底部附近，向下滚动
+    else if (slot_idx >= OPLIST_VISIBLE_SLOTS - 2 &&
+             g_ui_oplist.visible_start + OPLIST_VISIBLE_SLOTS < g_ui_oplist.total_count) {
+        int new_start = g_ui_oplist.visible_start + 1;
+        update_visible_range(new_start);
+        refocus_to_operator(op_idx);
+    }
 }
 
 //自己添加的方法
@@ -136,11 +158,6 @@ void ui_oplist_init(prts_t* prts){
     // 清空干员列表容器
     lv_obj_clean(objects.oplst_container);
 
-    // 设置容器总高度以支持滚动
-    // LVGL list 会自动根据子对象调整滚动范围，但我们需要确保有足够空间
-    // 由于我们只创建固定数量的槽位，需要手动设置可滚动内容高度
-    lv_obj_set_scroll_dir(objects.oplst_container, LV_DIR_VER);
-
     // 创建固定数量的槽位
     int slots_to_create = OPLIST_VISIBLE_SLOTS;
     if (slots_to_create > prts->operator_count) {
@@ -152,13 +169,14 @@ void ui_oplist_init(prts_t* prts){
         if (i < prts->operator_count) {
             update_slot_content(i, i);
             lv_obj_remove_flag(g_ui_oplist.slots[i].container, LV_OBJ_FLAG_HIDDEN);
+
+            // 只为有效的槽位注册焦点回调
+            lv_obj_add_event_cb(g_ui_oplist.slots[i].opbtn,
+                                oplist_focus_cb, LV_EVENT_FOCUSED, NULL);
         } else {
             lv_obj_add_flag(g_ui_oplist.slots[i].container, LV_OBJ_FLAG_HIDDEN);
         }
     }
-
-    // 添加滚动事件回调
-    lv_obj_add_event_cb(objects.oplst_container, oplist_scroll_cb, LV_EVENT_SCROLL, NULL);
 
     log_info("prts->ui sync complete! Created %d slots for %d operators",
              slots_to_create, prts->operator_count);
