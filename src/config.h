@@ -18,7 +18,7 @@
 #define APP_ABOUT_MSG \
     "基于Cedar/LVGL和一点寄存器魔法的电子通行证播放程序\n" \
     "电子通行证 Contributers 2026 GPLV3\n" \
-    "白银+伊卡洛斯sama+GPT5.2 Et al.\n" \
+    "白银 伊卡洛斯sama 薄云 Et al.\n" \
     "https://github.com/rhodesepass\n" \
     "电子通行证是白银个人业余时间设计的一款开源的自由硬件，人人均可复刻，" \
     "与鹰角网络没有任何直接或间接的关联。相关游戏素材版权属于鹰角网络。\n"\
@@ -188,10 +188,10 @@
 
 // ========== Battery Configuration ==========
 #define UI_BATTERY_ADC_PATH "/sys/bus/iio/devices/iio:device0/in_voltage0_raw"
-#define UI_BATTERY_EMPTY_VALUE 2100
-#define UI_BATTERY_1_4_VALUE 2200
-#define UI_BATTERY_1_2_VALUE 2300
-#define UI_BATTERY_3_4_VALUE 2400
+#define UI_BATTERY_EMPTY_VALUE 2140
+#define UI_BATTERY_1_4_VALUE 2230
+#define UI_BATTERY_1_2_VALUE 2320
+#define UI_BATTERY_3_4_VALUE 2410
 #define UI_BATTERY_FULL_VALUE 2500
 #define UI_BATTERY_CHARGING_VALUE 2600
 #define UI_BATTERY_PADDING 10
