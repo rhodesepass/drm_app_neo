@@ -48,37 +48,6 @@ endif()
 
 option(ENABLE_CEDARX "Enable Cedarx video decoding support" ON)
 
-# 从环境变量读取 (如果未通过 -D 指定)
-if(NOT DEFINED CEDARX_ROOT AND DEFINED ENV{CEDARX_ROOT})
-  set(CEDARX_ROOT $ENV{CEDARX_ROOT})
-endif()
-
-if(NOT DEFINED CEDARX_LIB_PATH AND DEFINED ENV{CEDARX_LIB_PATH})
-  set(CEDARX_LIB_PATH $ENV{CEDARX_LIB_PATH})
-endif()
-
-# 检查 Cedarx 是否可用
-set(CEDARX_AVAILABLE OFF)
-if(ENABLE_CEDARX)
-  if(DEFINED CEDARX_ROOT AND EXISTS "${CEDARX_ROOT}" AND
-     DEFINED CEDARX_LIB_PATH AND EXISTS "${CEDARX_LIB_PATH}")
-    set(CEDARX_AVAILABLE ON)
-    message(STATUS "Cedarx: ENABLED")
-    message(STATUS "  Root: ${CEDARX_ROOT}")
-    message(STATUS "  Lib:  ${CEDARX_LIB_PATH}")
-  else()
-    message(STATUS "Cedarx: DISABLED (paths not found)")
-    message(STATUS "  To enable video playback, set CEDARX_ROOT and CEDARX_LIB_PATH")
-    if(DEFINED CEDARX_ROOT)
-      message(STATUS "  CEDARX_ROOT=${CEDARX_ROOT} (exists: ${EXISTS_CEDARX_ROOT})")
-    endif()
-    if(DEFINED CEDARX_LIB_PATH)
-      message(STATUS "  CEDARX_LIB_PATH=${CEDARX_LIB_PATH} (exists: ${EXISTS_CEDARX_LIB})")
-    endif()
-  endif()
-else()
-  message(STATUS "Cedarx: DISABLED (by user request)")
-endif()
 
 # ============================================================================
 # 依赖库查找
@@ -142,7 +111,7 @@ set(EPASS_SOURCES
 )
 
 # 如果 Cedarx 可用，添加 mediaplayer
-if(CEDARX_AVAILABLE)
+if(ENABLE_CEDARX)
   list(APPEND EPASS_SOURCES src/render/mediaplayer.c)
 endif()
 
@@ -160,15 +129,6 @@ target_include_directories(epass_drm_app PRIVATE
   ${PNG_INCLUDE_DIR}
 )
 
-# 如果 Cedarx 可用，添加 Cedarx 头文件路径
-if(CEDARX_AVAILABLE)
-  target_include_directories(epass_drm_app PRIVATE
-    ${CEDARX_ROOT}/libcore/base/include
-    ${CEDARX_ROOT}/libcore/parser/include
-    ${CEDARX_ROOT}/libcore/stream/include
-    ${CEDARX_ROOT}/external/include/adecoder
-  )
-endif()
 
 # ============================================================================
 # 编译定义
@@ -183,7 +143,7 @@ target_compile_definitions(epass_drm_app PRIVATE
 )
 
 # 如果 Cedarx 可用，定义宏
-if(CEDARX_AVAILABLE)
+if(ENABLE_CEDARX)
   target_compile_definitions(epass_drm_app PRIVATE HAVE_CEDARX=1)
 else()
   target_compile_definitions(epass_drm_app PRIVATE HAVE_CEDARX=0)
@@ -217,8 +177,7 @@ target_link_libraries(epass_drm_app
 )
 
 # 如果 Cedarx 可用，链接 Cedarx 库
-if(CEDARX_AVAILABLE)
-  target_link_directories(epass_drm_app PRIVATE ${CEDARX_LIB_PATH})
+if(ENABLE_CEDARX)
   target_link_libraries(epass_drm_app
     MemAdapter
     vdecoder
