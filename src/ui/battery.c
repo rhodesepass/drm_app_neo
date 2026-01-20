@@ -56,7 +56,7 @@ static void ui_battery_timer_cb(lv_timer_t * timer){
     else if(value < UI_BATTERY_3_4_VALUE){
         bat_char = UI_BATTERY_3_4_CHAR;
     }
-    else if(value > UI_BATTERY_FULL_VALUE){
+    else if(value > UI_BATTERY_CHARGING_VALUE){
         bat_char = UI_BATTERY_CHARGING_CHAR;
     }
     else{
