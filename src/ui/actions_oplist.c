@@ -1,5 +1,6 @@
 // 干员信息 专用 - 虚拟滚动实现（
 
+#include <src/core/lv_group.h>
 #include <src/core/lv_obj_event.h>
 #include <src/core/lv_obj_private.h>
 #include <src/misc/lv_event.h>
@@ -61,7 +62,17 @@ static void create_slot_ui(int slot_idx) {
 
     slot->container = obj;
 
-    // 使用 EEZ 的 dirty hack 来创建子对象
+    // 我们这里要用EEZ 生成的
+    // void create_user_widget_operator_entry(lv_obj_t *parent_obj, int startWidgetIndex);
+    // 来创建干员列表项。但是它startWidgetIndex是相对于eez的objects的。
+    // 我们希望添加到自己的信息表里。因此，这里有一个非常，非常，非常，非常Dirty的hacks
+
+    // create_user_widget_operator_entry的写入方法是：
+    // ((lv_obj_t **)&objects)[startWidgetIndex + 0] = obj;
+    // 也就是*((lv_obj_t **)&objects) + startWidgetIndex) = obj;
+    // 令 startWidgetIndex = (lv_obj_t**)&slot->opbtn - (lv_obj_t **)&objects;
+    // 这样实际的操作就是  *((lv_obj_t**)&slot->opbtn) = obj，即slot->opbtn = obj
+
     #warning "Dirty hacks happened here. If application crash during prts->ui sync, Please check alignness and such."
     int startWidgetIndex = (lv_obj_t**)&slot->opbtn - (lv_obj_t **)&objects;
     create_user_widget_operator_entry(obj, startWidgetIndex);
@@ -113,6 +124,7 @@ static void update_visible_range(int new_start) {
             g_ui_oplist.slots[i].operator_index = -1;
         }
     }
+
 }
 
 // 焦点变化回调 - encoder导航驱动的虚拟滚动
