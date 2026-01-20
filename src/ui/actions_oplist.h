@@ -4,17 +4,25 @@
 #include "prts/prts.h"
 #include "lvgl.h"
 
+// 虚拟滚动：可见区域 + 上下缓冲
+// 容器高度 280px，每项 80px，可见约 4 项，加上缓冲共 8 项
+#define OPLIST_VISIBLE_SLOTS 8
+#define OPLIST_ITEM_HEIGHT 80
+
 typedef struct {
+    lv_obj_t *container;  // 外层容器对象
     lv_obj_t *opbtn;
     lv_obj_t *oplogo;
     lv_obj_t *opdesc;
     lv_obj_t *opname;
+    int operator_index;   // 该槽位当前显示的干员索引，-1 表示未使用
 } ui_oplist_entry_objs_t;
 
 typedef struct {
     prts_t* prts;
-    ui_oplist_entry_objs_t entry_objs[PRTS_OPERATORS_MAX];
-    int entry_count;
+    ui_oplist_entry_objs_t slots[OPLIST_VISIBLE_SLOTS];  // 固定槽位
+    int total_count;        // 干员总数
+    int visible_start;      // 当前可见区域起始索引
 } ui_oplist_t;
 
 
