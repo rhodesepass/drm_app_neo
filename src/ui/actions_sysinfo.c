@@ -172,37 +172,37 @@ bool ui_sysinfo_is_sdcard_inserted(){
     return true;
 }
 
-uint32_t ui_sysinfo_get_nand_available_size(){
+uint64_t ui_sysinfo_get_nand_available_size(){
     struct statvfs stat;
     if(statvfs(NAND_MOUNT_POINT, &stat) != 0){
         log_error("failed to get NAND available size");
         return 0;
     }
-    return stat.f_bavail * stat.f_bsize;
+    return (uint64_t)stat.f_bavail * stat.f_bsize;
 }
-uint32_t ui_sysinfo_get_sd_available_size(){
+uint64_t ui_sysinfo_get_sd_available_size(){
     struct statvfs stat;
     if(statvfs(SD_MOUNT_POINT, &stat) != 0){
         log_error("failed to get SD available size");
         return 0;
     }
-    return stat.f_bavail * stat.f_bsize;
+    return (uint64_t)stat.f_bavail * stat.f_bsize;
 }
-uint32_t ui_sysinfo_get_nand_total_size(){
+uint64_t ui_sysinfo_get_nand_total_size(){
     struct statvfs stat;
     if(statvfs(NAND_MOUNT_POINT, &stat) != 0){
         log_error("failed to get NAND total size");
         return 0;
     }
-    return stat.f_blocks * stat.f_bsize;
+    return (uint64_t)stat.f_blocks * stat.f_bsize;
 }
-uint32_t ui_sysinfo_get_sd_total_size(){
+uint64_t ui_sysinfo_get_sd_total_size(){
     struct statvfs stat;
     if(statvfs(SD_MOUNT_POINT, &stat) != 0){
         log_error("failed to get SD total size");
         return 0;
     }
-    return stat.f_blocks * stat.f_bsize;
+    return (uint64_t)stat.f_blocks * stat.f_bsize;
 }
 
 
@@ -265,14 +265,41 @@ void set_var_sysinfo(const char *value){
     return;
 }
 
+// 格式化存储大小，自动选择单位 (MB/GB/TB)
+static void format_storage_size(uint64_t bytes, char *buf, size_t buf_sz) {
+    double size = (double)bytes;
+    const char *unit;
+
+    if (size >= 1024ULL * 1024 * 1024 * 1024) {  // >= 1TB
+        size /= (1024.0 * 1024 * 1024 * 1024);
+        unit = "TB";
+    } else if (size >= 1024ULL * 1024 * 1024) {  // >= 1GB
+        size /= (1024.0 * 1024 * 1024);
+        unit = "GB";
+    } else {  // MB
+        size /= (1024.0 * 1024);
+        unit = "MB";
+    }
+
+    if (size >= 100) {
+        snprintf(buf, buf_sz, "%.0f%s", size, unit);
+    } else if (size >= 10) {
+        snprintf(buf, buf_sz, "%.1f%s", size, unit);
+    } else {
+        snprintf(buf, buf_sz, "%.2f%s", size, unit);
+    }
+}
 
 const char *get_var_nand_label(){
     static char buf[128];
-    snprintf(buf, sizeof(buf), 
-        "%d/%dMB", 
-        ui_sysinfo_get_nand_available_size() / 1024 / 1024, 
-        ui_sysinfo_get_nand_total_size() / 1024 / 1024
-    );
+    char used_str[32], total_str[32];
+    uint64_t avail = ui_sysinfo_get_nand_available_size();
+    uint64_t total = ui_sysinfo_get_nand_total_size();
+    uint64_t used = total - avail;
+
+    format_storage_size(used, used_str, sizeof(used_str));
+    format_storage_size(total, total_str, sizeof(total_str));
+    snprintf(buf, sizeof(buf), "%s/%s", used_str, total_str);
     return buf;
 }
 void set_var_nand_label(const char *value){
@@ -280,17 +307,20 @@ void set_var_nand_label(const char *value){
 }
 const char *get_var_sd_label(){
     static char buf[128];
+    char used_str[32], total_str[32];
     if(!ui_sysinfo_is_sdcard_inserted()){
         return "SD卡不存在";
     }
     if(!g_use_sd){
         return "SD卡挂载失败";
     }
-    snprintf(buf, sizeof(buf), 
-        "%d/%dMB", 
-        ui_sysinfo_get_sd_available_size() / 1024 / 1024, 
-        ui_sysinfo_get_sd_total_size() / 1024 / 1024
-    );
+    uint64_t avail = ui_sysinfo_get_sd_available_size();
+    uint64_t total = ui_sysinfo_get_sd_total_size();
+    uint64_t used = total - avail;
+
+    format_storage_size(used, used_str, sizeof(used_str));
+    format_storage_size(total, total_str, sizeof(total_str));
+    snprintf(buf, sizeof(buf), "%s/%s", used_str, total_str);
     return buf;
 }
 void set_var_sd_label(const char *value){
@@ -298,7 +328,11 @@ void set_var_sd_label(const char *value){
 }
 
 int32_t get_var_nand_percent(){
-    return (ui_sysinfo_get_nand_available_size() * 100) / ui_sysinfo_get_nand_total_size();
+    uint64_t avail = ui_sysinfo_get_nand_available_size();
+    uint64_t total = ui_sysinfo_get_nand_total_size();
+    if(total == 0) return 0;
+    // 返回已用百分比 = (总容量 - 可用容量) / 总容量 * 100
+    return (int32_t)(((total - avail) * 100) / total);
 }
 void set_var_nand_percent(int32_t value){
     return;
@@ -307,7 +341,11 @@ int32_t get_var_sd_percent(){
     if(!ui_sysinfo_is_sdcard_inserted()){
         return 0;
     }
-    return (ui_sysinfo_get_sd_available_size() * 100) / ui_sysinfo_get_sd_total_size();
+    uint64_t avail = ui_sysinfo_get_sd_available_size();
+    uint64_t total = ui_sysinfo_get_sd_total_size();
+    if(total == 0) return 0;
+    // 返回已用百分比
+    return (int32_t)(((total - avail) * 100) / total);
 }
 void set_var_sd_percent(int32_t value){
     return;

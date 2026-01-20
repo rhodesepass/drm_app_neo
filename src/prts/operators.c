@@ -108,10 +108,11 @@ static int is_hex_color_6(const char *s) {
     return 1;
 }
 
-// 可选图片通用校验规则：
+// 可选图片通用校验规则（优化版：仅检查文件存在性，不加载图片）：
 // - json字段不存在 / 非字符串 / 空字符串 => 视为不存在，dst置空
-// - 若存在且不为空：join到绝对路径，尝试 stbi_load 校验可加载，并校验 w/h 合法且不超过 overlay 尺寸
+// - 若存在且不为空：join到绝对路径，检查文件存在且可读
 // - 不满足 => 视为不存在，dst置空
+// 注意：图片格式/尺寸验证推迟到实际加载时进行
 static void validate_optional_image_path(
     prts_t *prts,
     const char *op_dir,
@@ -131,17 +132,8 @@ static void validate_optional_image_path(
     abs_path[0] = '\0';
     join_asset_path(abs_path, sizeof(abs_path), op_dir, rel_path);
 
-    int w = 0, h = 0, c = 0;
-    uint8_t *pix = stbi_load(abs_path, &w, &h, &c, 4);
-    if (!pix) {
-        // 按规则：不满足则视为图片不存在
-        prts_log_parse_log(prts, (char*)op_dir, (char*)field_for_log, PARSE_LOG_WARN);
-        return;
-    }
-    stbi_image_free(pix);
-
-    if (w <= 0 || h <= 0 || w > OVERLAY_WIDTH || h > OVERLAY_HEIGHT) {
-        // 按规则：不满足则视为图片不存在
+    // 仅检查文件存在和可读性，不加载图片（性能优化）
+    if (!file_exists_readable(abs_path)) {
         prts_log_parse_log(prts, (char*)op_dir, (char*)field_for_log, PARSE_LOG_WARN);
         return;
     }
