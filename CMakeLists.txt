@@ -42,9 +42,7 @@ endif()
 # Cedarx 多媒体库配置 (Allwinner 专用, 可选)
 # ============================================================================
 # 可通过以下方式配置:
-#   1. 环境变量: CEDARX_ROOT, CEDARX_LIB_PATH
-#   2. CMake 变量: -DCEDARX_ROOT=... -DCEDARX_LIB_PATH=...
-#   3. -DENABLE_CEDARX=OFF 禁用 Cedarx 支持
+# -DENABLE_CEDARX=OFF 禁用 Cedarx 支持
 
 option(ENABLE_CEDARX "Enable Cedarx video decoding support" ON)
 
