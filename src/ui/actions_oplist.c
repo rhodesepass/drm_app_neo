@@ -18,6 +18,9 @@
 ui_oplist_t g_ui_oplist;
 extern objects_t objects;
 
+// 防递归标志 - 防止虚拟滚动时焦点事件递归触发
+static bool g_scroll_in_progress = false;
+
 // 前向声明
 static void update_slot_content(int slot_idx, int operator_idx);
 static void oplist_focus_cb(lv_event_t *e);
@@ -128,7 +131,11 @@ static void update_visible_range(int new_start) {
 }
 
 // 焦点变化回调 - encoder导航驱动的虚拟滚动
+// 伊卡洛斯sama是笨蛋，每次添加新代码都不好好测试!笨蛋!!
 static void oplist_focus_cb(lv_event_t *e) {
+    // 防止递归调用（refocus_to_operator会触发新的FOCUSED事件）
+    if (g_scroll_in_progress) return;
+
     lv_obj_t *focused = lv_event_get_target(e);
 
     // 找到当前焦点的slot索引
@@ -146,16 +153,20 @@ static void oplist_focus_cb(lv_event_t *e) {
 
     // 边界检测：焦点移到顶部附近，向上滚动
     if (slot_idx <= 1 && g_ui_oplist.visible_start > 0) {
+        g_scroll_in_progress = true;
         int new_start = g_ui_oplist.visible_start - 1;
         update_visible_range(new_start);
         refocus_to_operator(op_idx);
+        g_scroll_in_progress = false;
     }
     // 边界检测：焦点移到底部附近，向下滚动
     else if (slot_idx >= OPLIST_VISIBLE_SLOTS - 2 &&
              g_ui_oplist.visible_start + OPLIST_VISIBLE_SLOTS < g_ui_oplist.total_count) {
+        g_scroll_in_progress = true;
         int new_start = g_ui_oplist.visible_start + 1;
         update_visible_range(new_start);
         refocus_to_operator(op_idx);
+        g_scroll_in_progress = false;
     }
 }
 
@@ -196,6 +207,10 @@ void ui_oplist_init(prts_t* prts){
 
 void add_oplist_btn_to_group(){
     lv_group_remove_all_objs(groups.op);
+
+    // 禁用焦点组的 wrap 循环，防止长按时焦点在边界槽位间反复跳动
+    // 参考: lvgl/src/core/lv_group.c:480 - focus_next_core 中的 wrap 逻辑
+    lv_group_set_wrap(groups.op, false);
 
     // 只添加当前可见的按钮到组
     for (int i = 0; i < OPLIST_VISIBLE_SLOTS; i++) {
