@@ -9,104 +9,8 @@
 #include <unistd.h>
 #include <ctype.h>
 #include "utils/log.h"
+#include "utils/misc.h"
 
-// forward declarations (used by helpers defined before implementations below)
-static const char* json_get_string(cJSON *obj, const char *key);
-static int json_get_int(cJSON *obj, const char *key, int def);
-
-
-static void safe_strcpy(char *dst, size_t dst_sz, const char *src) {
-    if (!dst || dst_sz == 0) return;
-    if (!src) {
-        dst[0] = '\0';
-        return;
-    }
-    snprintf(dst, dst_sz, "%s", src);
-}
-
-static int join_asset_path(char *dst, size_t dst_sz, const char *base_dir, const char *rel_or_abs) {
-    if (!dst || dst_sz == 0) return -1;
-    dst[0] = '\0';
-
-    if (!rel_or_abs || rel_or_abs[0] == '\0') return -1;
-
-    // absolute path
-    if (rel_or_abs[0] == '/') {
-        safe_strcpy(dst, dst_sz, rel_or_abs);
-        return 0;
-    }
-
-    if (!base_dir || base_dir[0] == '\0') {
-        safe_strcpy(dst, dst_sz, rel_or_abs);
-        return 0;
-    }
-
-    // avoid double '/'
-    if (base_dir[strlen(base_dir) - 1] == '/') {
-        snprintf(dst, dst_sz, "%s%s", base_dir, rel_or_abs);
-    } else {
-        snprintf(dst, dst_sz, "%s/%s", base_dir, rel_or_abs);
-    }
-    return 0;
-}
-
-
-// "#RRGGBB" -> 0x00RRGGBB (opinfo color expects alpha in draw stage)
-static uint32_t parse_rgb00(const char *hex) {
-    if (!hex) return 0;
-    if (hex[0] == '#') hex++;
-    if (strlen(hex) != 6) return 0;
-    unsigned int v = 0;
-    if (sscanf(hex, "%06x", &v) != 1) return 0;
-    return (uint32_t)(v & 0x00FFFFFFu);
-}
-
-// "#RRGGBB" -> 0xFFRRGGBB
-static uint32_t parse_rgbff(const char *hex) {
-    return 0xFF000000u | parse_rgb00(hex);
-}
-
-static const char* path_basename(const char *path) {
-    if (!path) return "";
-    size_t len = strlen(path);
-    while (len > 0 && path[len - 1] == '/') len--;
-    if (len == 0) return "";
-
-    const char *end = path + len;
-    const char *p = end;
-    while (p > path && *(p - 1) != '/') p--;
-    return p;
-}
-
-static int file_exists_readable(const char *filepath) {
-    if (!filepath || filepath[0] == '\0') return 0;
-    return access(filepath, R_OK) == 0;
-}
-
-static void set_lvgl_path_from_abs(char *dst, size_t dst_sz, const char *abs_path) {
-    if (!dst || dst_sz == 0) return;
-    if (!abs_path || abs_path[0] == '\0') {
-        dst[0] = '\0';
-        return;
-    }
-    // already lvgl style
-    if (isalpha((unsigned char)abs_path[0]) && abs_path[1] == ':') {
-        safe_strcpy(dst, dst_sz, abs_path);
-        return;
-    }
-    snprintf(dst, dst_sz, "A:%s", abs_path);
-}
-
-static int is_hex_color_6(const char *s) {
-    if (!s) return 0;
-    if (s[0] != '#') return 0;
-    if (strlen(s) != 7) return 0;
-    for (int i = 1; i < 7; i++) {
-        char c = s[i];
-        if (!isxdigit((unsigned char)c)) return 0;
-    }
-    return 1;
-}
 
 // 可选图片通用校验规则（优化版：仅检查文件存在性，不加载图片）：
 // - json字段不存在 / 非字符串 / 空字符串 => 视为不存在，dst置空
@@ -130,7 +34,7 @@ static void validate_optional_image_path(
 
     char abs_path[256];
     abs_path[0] = '\0';
-    join_asset_path(abs_path, sizeof(abs_path), op_dir, rel_path);
+    join_path(abs_path, sizeof(abs_path), op_dir, rel_path);
 
     // 仅检查文件存在和可读性，不加载图片（性能优化）
     if (!file_exists_readable(abs_path)) {
@@ -202,60 +106,6 @@ static int parse_transition_obj(
     snprintf(warn_msg, sizeof(warn_msg), "%s.options.image 校验失败，按不存在处理", which);
     validate_optional_image_path(prts, op_dir, warn_msg, img, out->image_path, sizeof(out->image_path));
     return 0;
-}
-
-static char* read_file_all(const char *filepath, size_t *out_len) {
-    if (out_len) *out_len = 0;
-    FILE *f = fopen(filepath, "rb");
-    if (!f) return NULL;
-
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return NULL;
-    }
-    long sz = ftell(f);
-    if (sz <= 0) {
-        fclose(f);
-        return NULL;
-    }
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return NULL;
-    }
-
-    char *buf = (char*)malloc((size_t)sz + 1);
-    if (!buf) {
-        fclose(f);
-        return NULL;
-    }
-
-    size_t n = fread(buf, 1, (size_t)sz, f);
-    fclose(f);
-    if (n != (size_t)sz) {
-        free(buf);
-        return NULL;
-    }
-    buf[n] = '\0';
-    if (out_len) *out_len = n;
-    return buf;
-}
-
-static const char* json_get_string(cJSON *obj, const char *key) {
-    cJSON *it = cJSON_GetObjectItem(obj, key);
-    if (!it || !cJSON_IsString(it) || !it->valuestring) return NULL;
-    return it->valuestring;
-}
-
-static int json_get_int(cJSON *obj, const char *key, int def) {
-    cJSON *it = cJSON_GetObjectItem(obj, key);
-    if (!it || !cJSON_IsNumber(it)) return def;
-    return it->valueint;
-}
-
-static bool json_get_bool(cJSON *obj, const char *key, bool def) {
-    cJSON *it = cJSON_GetObjectItem(obj, key);
-    if (!it || !cJSON_IsBool(it)) return def;
-    return cJSON_IsTrue(it);
 }
 
 int prts_operator_try_load(prts_t *prts, prts_operator_entry_t* operator, char* path, op_source_t source){
@@ -330,12 +180,12 @@ int prts_operator_try_load(prts_t *prts, prts_operator_entry_t* operator, char* 
     } else {
         char abs_icon[256];
         abs_icon[0] = '\0';
-        join_asset_path(abs_icon, sizeof(abs_icon), path, icon);
+        join_path(abs_icon, sizeof(abs_icon), path, icon);
         if (!file_exists_readable(abs_icon)) {
             prts_log_parse_log(prts, path, "icon 文件不存在，使用默认icon", PARSE_LOG_WARN);
             safe_strcpy(operator->icon_path, sizeof(operator->icon_path), PRTS_DEFAULT_ICON_PATH);
         } else {
-            set_lvgl_path_from_abs(operator->icon_path, sizeof(operator->icon_path), abs_icon);
+            set_lvgl_path(operator->icon_path, sizeof(operator->icon_path), abs_icon);
         }
     }
 
@@ -382,7 +232,7 @@ int prts_operator_try_load(prts_t *prts, prts_operator_entry_t* operator, char* 
         cJSON_Delete(json);
         return -1;
     }
-    join_asset_path(operator->loop_video.path, sizeof(operator->loop_video.path), path, loop_file);
+    join_path(operator->loop_video.path, sizeof(operator->loop_video.path), path, loop_file);
     if (!file_exists_readable(operator->loop_video.path)) {
         prts_log_parse_log(prts, path, "loop.file 文件不存在", PARSE_LOG_ERROR);
         cJSON_Delete(json);
@@ -409,7 +259,7 @@ int prts_operator_try_load(prts_t *prts, prts_operator_entry_t* operator, char* 
                 cJSON_Delete(json);
                 return -1;
             }
-            join_asset_path(operator->intro_video.path, sizeof(operator->intro_video.path), path, intro_file);
+            join_path(operator->intro_video.path, sizeof(operator->intro_video.path), path, intro_file);
             if (!file_exists_readable(operator->intro_video.path)) {
                 prts_log_parse_log(prts, path, "intro.file 文件不存在", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
