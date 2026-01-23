@@ -248,4 +248,4 @@
 // ========== Display Image Configuration ==========
 #define DISPLAYIMG_MAX_COUNT 128
 #define DISPLAYIMG_MAX_PATH_LENGTH 128
-#define DISPLAYIMG_PATH "/dispimg/"
+#define DISPLAYIMG_PATH "/root/dispimg/"
