@@ -82,6 +82,14 @@ static void create_slot_ui(int slot_idx) {
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     add_style_op_entry(obj);
 
+    // 在 EEZ 函数执行完成后创建 SD 标记（作为 opbtn 的子对象）
+    slot->sd_label = lv_label_create(slot->opbtn);
+    lv_label_set_text(slot->sd_label, "SD");
+    lv_obj_align(slot->sd_label, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_set_style_text_color(slot->sd_label, lv_color_hex(0x88ff88), 0);
+    lv_obj_set_style_text_font(slot->sd_label, &lv_font_montserrat_14, 0);
+    lv_obj_add_flag(slot->sd_label, LV_OBJ_FLAG_HIDDEN);
+
     slot->operator_index = -1;  // 初始未绑定干员
 }
 
@@ -94,6 +102,13 @@ static void update_slot_content(int slot_idx, int operator_idx) {
     lv_label_set_text(slot->opname, op->operator_name);
     lv_label_set_text(slot->opdesc, op->description);
     lv_image_set_src(slot->oplogo, op->icon_path);
+
+    // 更新 SD 标记可见性
+    if (op->source == OP_SOURCE_SD) {
+        lv_obj_remove_flag(slot->sd_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(slot->sd_label, LV_OBJ_FLAG_HIDDEN);
+    }
 
     // 移除旧的事件回调，添加新的
     lv_obj_remove_event_cb(slot->opbtn, op_btn_click_cb);

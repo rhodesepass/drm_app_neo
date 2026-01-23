@@ -439,11 +439,11 @@ void prts_init(prts_t* prts, overlay_t* overlay, bool use_sd){
     }
     prts->operator_count = 0;
 
-    int errcnt = prts_operator_scan_assets(prts, PRTS_ASSET_DIR);
+    int errcnt = prts_operator_scan_assets(prts, PRTS_ASSET_DIR, OP_SOURCE_NAND);
 
     if(use_sd){
         log_info("==> PRTS will scan SD assets directory: %s", PRTS_ASSET_DIR_SD);
-        errcnt += prts_operator_scan_assets(prts, PRTS_ASSET_DIR_SD);
+        errcnt += prts_operator_scan_assets(prts, PRTS_ASSET_DIR_SD, OP_SOURCE_SD);
     }
 
     if(errcnt != 0){
@@ -469,7 +469,7 @@ void prts_init(prts_t* prts, overlay_t* overlay, bool use_sd){
             delayed_warning_cb, 
             (void *)UI_WARNING_NO_ASSETS
         );
-        prts_operator_try_load(prts, &prts->operators[0], PRTS_FALLBACK_ASSET_DIR);
+        prts_operator_try_load(prts, &prts->operators[0], PRTS_FALLBACK_ASSET_DIR, OP_SOURCE_NAND);
         prts->operator_count = 1;
     }
 
