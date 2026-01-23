@@ -56,8 +56,8 @@
 #define APPS_MAX_COUNT          64
 #define APPS_CONFIG_FILENAME    "appconfig.json"
 #define APPS_CONFIG_VERSION     1
-#define APPS_DIR_NAND           "/apps/"
-#define APPS_DIR_SD             SD_MOUNT_POINT "/apps/"
+#define APPS_DIR_NAND           "/app/"
+#define APPS_DIR_SD             SD_MOUNT_POINT "/app/"
 #define APPS_PARSE_LOG_PATH     "/root/apps.log"
 #define APPS_DEFAULT_ICON_PATH  "A:/root/res/default_app_icon.png"
 #define APP_ICON_SIZE           48

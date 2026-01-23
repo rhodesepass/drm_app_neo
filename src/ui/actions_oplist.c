@@ -82,14 +82,6 @@ static void create_slot_ui(int slot_idx) {
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     add_style_op_entry(obj);
 
-    // 在 EEZ 函数执行完成后创建 SD 标记（作为 opbtn 的子对象）
-    slot->sd_label = lv_label_create(slot->opbtn);
-    lv_label_set_text(slot->sd_label, "SD");
-    lv_obj_align(slot->sd_label, LV_ALIGN_TOP_RIGHT, -4, 4);
-    lv_obj_set_style_text_color(slot->sd_label, lv_color_hex(0x88ff88), 0);
-    lv_obj_set_style_text_font(slot->sd_label, &lv_font_montserrat_14, 0);
-    lv_obj_add_flag(slot->sd_label, LV_OBJ_FLAG_HIDDEN);
-
     slot->operator_index = -1;  // 初始未绑定干员
 }
 
@@ -146,7 +138,6 @@ static void update_visible_range(int new_start) {
 }
 
 // 焦点变化回调 - encoder导航驱动的虚拟滚动
-// 伊卡洛斯sama是笨蛋，每次添加新代码都不好好测试!笨蛋!!
 static void oplist_focus_cb(lv_event_t *e) {
     // 防止递归调用（refocus_to_operator会触发新的FOCUSED事件）
     if (g_scroll_in_progress) return;

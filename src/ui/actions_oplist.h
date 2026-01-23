@@ -13,12 +13,12 @@ typedef struct {
     lv_obj_t *container;  // 外层容器对象
     // ===== EEZ dirty hack 区域 - 以下四个字段顺序不可变 =====
     lv_obj_t *opbtn;      // +0: EEZ create_user_widget_operator_entry 写入
-    lv_obj_t *oplogo;     // +1: EEZ create_user_widget_operator_entry 写入
-    lv_obj_t *opdesc;     // +2: EEZ create_user_widget_operator_entry 写入
-    lv_obj_t *opname;     // +3: EEZ create_user_widget_operator_entry 写入
+    lv_obj_t *sd_label;   // +1: EEZ create_user_widget_operator_entry 写入
+    lv_obj_t *oplogo;     // +2: EEZ create_user_widget_operator_entry 写入
+    lv_obj_t *opdesc;     // +3: EEZ create_user_widget_operator_entry 写入
+    lv_obj_t *opname;     // +4: EEZ create_user_widget_operator_entry 写入
     // ===== EEZ dirty hack 区域结束 =====
     int operator_index;   // 该槽位当前显示的干员索引，-1 表示未使用
-    lv_obj_t *sd_label;   // SD卡来源标记 (动态创建，放在EEZ区域之后)
 } ui_oplist_entry_objs_t;
 
 typedef struct {
