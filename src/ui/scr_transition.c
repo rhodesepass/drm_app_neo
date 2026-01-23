@@ -14,6 +14,7 @@
 #include "ui/scr_transition.h"
 #include <ui/actions_displayimg.h>
 #include "ui/actions_confirm.h"
+#include "ui/applist.h"
 
 extern int g_running;
 extern int g_exitcode;
@@ -69,6 +70,9 @@ inline static void load_screen(curr_screen_t screen){
             break;
         case curr_screen_t_SCREEN_CONFIRM:
             loadScreen(SCREEN_ID_CONFIRM);
+            break;
+        case curr_screen_t_SCREEN_APPLIST:
+            loadScreen(SCREEN_ID_APPLIST);
             break;
     }
 }
@@ -151,6 +155,10 @@ void action_screen_loaded_cb(lv_event_t * e){
     else if(g_cur_scr == curr_screen_t_SCREEN_OPLIST){
         add_oplist_btn_to_group();
         ui_oplist_focus_current_operator();
+    }
+    else if(g_cur_scr == curr_screen_t_SCREEN_APPLIST){
+        create_applist();
+        add_applist_to_group();
     }
     return;
 };

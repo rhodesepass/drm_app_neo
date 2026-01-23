@@ -93,6 +93,10 @@ set(EPASS_SOURCES
   src/ui/actions_sysinfo.c
   src/ui/actions_oplist.c
   src/ui/actions_confirm.c
+  src/ui/applist.c
+
+  src/apps/apps.c
+  src/apps/apps_launcher.c
 
   src/overlay/overlay.c
   src/overlay/transitions.c

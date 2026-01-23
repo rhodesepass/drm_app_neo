@@ -55,6 +55,14 @@ void action_show_files(lv_event_t * e){
     ui_schedule_screen_transition(curr_screen_t_SCREEN_FILEMANAGER);
 }
 
+// 应用列表
+void action_show_apps(lv_event_t * e){
+    log_debug("action_show_apps");
+    lv_obj_t* obj = lv_event_get_target(e);
+    lv_obj_remove_state(obj, LV_STATE_PRESSED);
+    ui_schedule_screen_transition(curr_screen_t_SCREEN_APPLIST);
+}
+
 // 严格来说 它不是mainscreen的回调
 // 但是 姑且放在这里把
 void action_show_menu(lv_event_t * e){
