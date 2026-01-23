@@ -54,6 +54,9 @@ find_package(PNG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
+pkg_check_modules(LIBJPEG_TURBO REQUIRED libturbojpeg)
+pkg_check_modules(LIBJPEG REQUIRED libjpeg)
+
 
 # ============================================================================
 # LVGL 配置
@@ -129,6 +132,8 @@ target_include_directories(epass_drm_app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/eez_design/src/ui
   ${LIBDRM_INCLUDE_DIRS}
   ${PNG_INCLUDE_DIR}
+  ${LIBJPEG_TURBO_INCLUDE_DIRS}
+  ${LIBJPEG_INCLUDE_DIRS}
 )
 
 
@@ -176,6 +181,8 @@ target_link_libraries(epass_drm_app
   ${LIBDRM_LIBRARIES}
   ${PNG_LIBRARIES}
   lvgl
+  ${LIBJPEG_TURBO_LIBRARIES}
+  ${LIBJPEG_LIBRARIES}
 )
 
 # 如果 Cedarx 可用，链接 Cedarx 库
