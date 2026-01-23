@@ -258,7 +258,7 @@ static bool json_get_bool(cJSON *obj, const char *key, bool def) {
     return cJSON_IsTrue(it);
 }
 
-int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * path){
+int prts_operator_try_load(prts_t *prts, prts_operator_entry_t* operator, char* path, op_source_t source){
     if (!path || strlen(path) == 0) {
         return -1;
     }
@@ -272,6 +272,7 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
     operator->transition_in.background_color = 0xFF000000u;
     operator->transition_loop.type = TRANSITION_TYPE_NONE;
     operator->transition_loop.background_color = 0xFF000000u;
+    operator->source = source;
 
     char cfg_path[256];
     snprintf(cfg_path, sizeof(cfg_path), "%s/%s", path, "epconfig.json");
@@ -514,7 +515,7 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
     return 0;
 }
 
-int prts_operator_scan_assets(prts_t *prts,char* dirpath){
+int prts_operator_scan_assets(prts_t *prts, char* dirpath, op_source_t source){
     int error_cnt = 0;
     char path[128];
     DIR *dir = opendir(dirpath);
@@ -537,7 +538,7 @@ int prts_operator_scan_assets(prts_t *prts,char* dirpath){
         }
 
         snprintf(path, sizeof(path), "%s/%s", dirpath, entry->d_name);
-        if (prts_operator_try_load(prts, &prts->operators[prts->operator_count], path) == 0) {
+        if (prts_operator_try_load(prts, &prts->operators[prts->operator_count], path, source) == 0) {
             prts->operator_count++;
         }
         else{
@@ -555,6 +556,7 @@ void prts_operator_log_entry(prts_operator_entry_t* operator){
     log_trace("description: %s", operator->description);
     log_trace("icon_path: %s", operator->icon_path);
     log_trace("disp_type: %d", operator->disp_type);
+    log_trace("source: %s", operator->source == OP_SOURCE_SD ? "SD" : "NAND");
     log_trace("intro_video.enabled: %d", operator->intro_video.enabled);
     log_trace("intro_video.duration: %d", operator->intro_video.duration);
     log_trace("intro_video.path: %s", operator->intro_video.path);

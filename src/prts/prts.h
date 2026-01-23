@@ -21,6 +21,12 @@ typedef enum {
     DISPLAY_720_1280 = 2,
 } display_type_t;
 
+// 干员来源
+typedef enum {
+    OP_SOURCE_NAND = 0,
+    OP_SOURCE_SD
+} op_source_t;
+
 typedef struct {
     char path[128];
 
@@ -44,6 +50,7 @@ typedef struct {
     oltr_params_t transition_in;
     oltr_params_t transition_loop;
 
+    op_source_t source;  // 干员来源 (NAND/SD)
 } prts_operator_entry_t;
 
 
