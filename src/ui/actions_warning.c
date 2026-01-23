@@ -38,7 +38,7 @@ inline static const char *get_warning_desc(warning_type_t type){
         case UI_WARNING_LOW_BATTERY:
             return "请尽快将您的通行认证终端连接至电源适配器。";
         case UI_WARNING_ASSET_ERROR:
-            return "请根据日志排查干员素材格式问题";
+            return“请根据PRTS_OPERATOR_PARSE_LOG“排查干员素材";
         case UI_WARNING_SD_MOUNT_ERROR:
             return "请检查SD卡格式为FAT32，或进行格式化。";
         case UI_WARNING_PRTS_CONFLICT:
