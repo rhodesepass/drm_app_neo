@@ -21,23 +21,6 @@
 #include "utils/misc.h"
 
 extern settings_t g_settings;
-void prts_log_parse_log(prts_t* prts,char* path,char* message,prts_parse_log_type_t type){
-    if(prts->parse_log_f == NULL){
-        return;
-    }
-    switch(type){
-        case PARSE_LOG_ERROR:
-            fprintf(prts->parse_log_f, "在处理%s时发生错误: %s\n", path, message);
-            log_error("在处理%s时发生错误: %s", path, message);
-            break;
-        case PARSE_LOG_WARN:
-            fprintf(prts->parse_log_f, "在处理%s时发生警告: %s\n", path, message);
-            log_warn("在处理%s时发生警告: %s", path, message);
-            break;
-    }
-    fflush(prts->parse_log_f);
-}
-
 
 
 inline static bool should_switch_by_interval(prts_t* prts){

@@ -12,6 +12,7 @@ typedef enum {
     UI_WARNING_NO_ASSETS = 5, // 没有干员素材
     UI_WARNING_NOT_IMPLEMENTED = 6, // 未实现
     UI_WARNING_APP_NO_DIRECT_START = 7, // APP 不支持直接启动，需要通过关联的拓展名启动
+    UI_WARNING_APP_LOAD_ERROR = 8, // 部分APP加载失败
 } warning_type_t;
 
 typedef struct {

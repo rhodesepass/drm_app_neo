@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 uint64_t get_now_us(void);
 void fill_nv12_buffer_with_color(uint8_t* buf, int width, int height, uint32_t rgb);
@@ -20,3 +21,11 @@ bool json_get_bool(cJSON *obj, const char *key, bool def) ;
 uint32_t parse_rgbff(const char *hex) ;
 int is_hex_color_6(const char *s) ;
 bool is_sdcard_inserted();
+
+// 对于需要写入日志文件以便检查格式错误的类型，需要一个专门的日志方法。
+typedef enum {
+    PARSE_LOG_ERROR = 0,
+    PARSE_LOG_WARN = 1,
+} parse_log_type_t;
+
+void parse_log_file(FILE* parse_log_f,const char *path, const char *message, parse_log_type_t type);

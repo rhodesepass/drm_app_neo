@@ -1,3 +1,4 @@
+#include <apps/apps.h>
 #include <stdio.h>
 #include <string.h>
 #include <ui/actions_warning.h>
@@ -30,6 +31,7 @@ settings_t g_settings;
 overlay_t g_overlay;
 cacheassets_t g_cacheassets;
 prts_t g_prts;
+apps_t g_apps;
 
 buffer_object_t g_video_buf;
 
@@ -51,12 +53,13 @@ void mount_video_layer_callback(void *userdata,bool is_last){
 
 
 // ============ 组件依赖关系： ============
-// UI 依赖 PRTS 扫描后生成干员列表
 // LayerAnimation 依赖 PRTS定时器 与 drm warpper
 // mediaplayer 依赖 drm warpper
 // cacheassets 依赖 mediaplayer 初始化用的那个buffer
 // overlay 依赖 drm warpper 与 layer animation
 // prts 依赖 overlay
+// apps 依赖 prts
+// lvgl_drm_warp 依赖 drm_warpper,prts,apps
 
 // ============ 组件初始化顺序： ============
 // 1. drm warpper
@@ -67,6 +70,8 @@ void mount_video_layer_callback(void *userdata,bool is_last){
 // 6. cacheassets
 // 7. overlay
 // 8. prts
+// 9. apps
+// 10. lvgl_drm_warp
 
 int main(int argc, char *argv[]){
     if(argc == 2){
@@ -116,6 +121,7 @@ int main(int argc, char *argv[]){
     // FIXME：
     // 用来跑modeset的buffer，实际上是不用的，这一片内存你也可以拿去干别的
     // 期待有能人帮优化掉这个allocate。
+    // 20260110: 这个内存如果用做别的话，modeset的话会显示成很难看的绿色。先闲置把
     drm_warpper_allocate_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, &g_video_buf);
     // drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &video_buf);
 
@@ -168,6 +174,9 @@ int main(int argc, char *argv[]){
 
     // ============ PRTS 初始化===============
     prts_init(&g_prts, &g_overlay, g_use_sd);
+
+    // ============ APPS 初始化 ===============
+    apps_init(&g_apps, g_use_sd);
 
     // ============ LVGL 初始化 ===============
     drm_warpper_init_layer(

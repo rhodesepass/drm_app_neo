@@ -200,3 +200,18 @@ bool is_sdcard_inserted(){
     fclose(f);
     return true;
 }
+
+void parse_log_file(FILE* parse_log_f,const char *path, const char *message, parse_log_type_t type){
+    if(parse_log_f == NULL){
+        return;
+    }
+    switch(type){
+        case PARSE_LOG_ERROR:
+            fprintf(parse_log_f, "在处理%s时发生错误: %s\n", path, message);
+            break;
+        case PARSE_LOG_WARN:
+            fprintf(parse_log_f, "在处理%s时发生警告: %s\n", path, message);
+            break;
+    }
+    fflush(parse_log_f);
+}

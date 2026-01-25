@@ -45,11 +45,24 @@
 #define PRTS_TIMER_MAX 1024
 #define PRTS_OPERATOR_PARSE_LOG "/root/asset.log"
 #define PRTS_ASSET_VERSION_NUMBER 1
+#define PRTS_ASSET_CONFIG_FILENAME "epconfig.json"
 #define PRTS_DEFAULT_ICON_PATH "A:/root/res/defaulticon.png"
 #define PRTS_ASSET_DIR "/assets/"
 #define PRTS_ASSET_DIR_SD SD_MOUNT_POINT "/assets/"
 #define PRTS_TICK_PERIOD (1000 * 1000)
 #define PRTS_FALLBACK_ASSET_DIR "/root/res/fallback/"
+
+// ========== Apps Configuration ==========
+#define APPS_MAX 64
+#define APPS_EXTMAP_MAX 128
+#define APPS_PARSE_LOG "/root/apps.log"
+#define APPS_CONFIG_VERSION 1
+#define APPS_CONFIG_FILENAME "appconfig.json"
+#define APPS_DEFAULT_ICON_PATH "A:/root/res/defaulticon.png"
+#define APPS_DIR "/app/"
+#define APPS_DIR_SD SD_MOUNT_POINT "/app/"
+#define APPS_BG_APP_CHECK_PERIOD (1000 * 1000)
+
 
 // ========== Screen Configuration ==========
 #define USE_360_640_SCREEN

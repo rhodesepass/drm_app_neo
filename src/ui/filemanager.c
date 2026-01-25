@@ -66,10 +66,13 @@ void create_filemanager(){
         return;
     }
 
-
     lv_obj_clean(root);
 
+    lv_obj_set_style_bg_color(root, lv_color_hex(0xf2f1f6), 0);
+
     fe = lv_file_explorer_create(root);
+    lv_obj_set_style_bg_color(fe, lv_color_hex(0xf2f1f6), 0);
+
 
     lv_obj_set_size(fe, LV_PCT(100), LV_PCT(100));
     lv_obj_center(fe);

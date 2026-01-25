@@ -41,6 +41,8 @@ inline static char *get_warning_title(warning_type_t type){
             return "未实现的功能";
         case UI_WARNING_APP_NO_DIRECT_START:
             return "APP不支持直接启动";
+        case UI_WARNING_APP_LOAD_ERROR:
+            return "部分APP加载失败";
         default:
             return "未知错误";
     }
@@ -62,6 +64,8 @@ inline static char *get_warning_desc(warning_type_t type){
             return "我还没写这个功能，要不来git看看帮写写？";
         case UI_WARNING_APP_NO_DIRECT_START:
             return "请通过文件管理器选择此APP支持的文件";
+        case UI_WARNING_APP_LOAD_ERROR:
+            return "请根据日志检查APP配置文件是否正确";
         default:
             return "为什么你能看到这个告警页面？";
     }
@@ -83,6 +87,8 @@ inline static char *get_warning_icon(warning_type_t type){
             return UI_ICON_CODE_PULL_REQUEST;
         case UI_WARNING_APP_NO_DIRECT_START:
             return UI_ICON_TRIANGLE_EXCLAMATION;
+        case UI_WARNING_APP_LOAD_ERROR:
+            return UI_ICON_TRIANGLE_EXCLAMATION;
         default:
             return UI_ICON_QUESTION;
     }
@@ -103,6 +109,8 @@ inline static uint32_t get_warning_color(warning_type_t type){
         case UI_WARNING_NOT_IMPLEMENTED:
             return UI_COLOR_ERROR;
         case UI_WARNING_APP_NO_DIRECT_START:
+            return UI_COLOR_WARNING;
+        case UI_WARNING_APP_LOAD_ERROR:
             return UI_COLOR_WARNING;
         default:
             return UI_COLOR_INFO;
@@ -164,7 +172,6 @@ static void ui_warning_timer_cb(lv_timer_t * timer){
         return;
     }
     if(spsc_bq_try_pop(&g_warning_queue, (void **)&info) == 0){
-        log_debug("ui_warning_timer_cb: type = %d", type);
         strcpy(g_warning_title, info->title);
         strcpy(g_warning_desc, info->desc);
         strcpy(g_warning_icon, info->icon);

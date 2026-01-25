@@ -11,11 +11,6 @@
 #include "vars.h"
 
 typedef enum {
-    PARSE_LOG_ERROR = 0,
-    PARSE_LOG_WARN = 1,
-} prts_parse_log_type_t;
-
-typedef enum {
     DISPLAY_360_640 = 0,
     DISPLAY_480_854 = 1,
     DISPLAY_720_1280 = 2,
@@ -96,5 +91,4 @@ typedef struct {
 void prts_init(prts_t* prts,overlay_t* overlay,bool use_sd);
 void prts_destroy(prts_t* prts);
 
-void prts_log_parse_log(prts_t* prts,char* path,char* message,prts_parse_log_type_t type);
 void prts_request_set_operator(prts_t* prts,int operator_index);

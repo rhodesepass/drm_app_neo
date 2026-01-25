@@ -87,6 +87,10 @@ set(EPASS_SOURCES
   src/prts/prts.c
   src/prts/operators.c
 
+  src/apps/apps.c
+  src/apps/extmap.c
+  src/apps/apps_cfg_parse.c
+
   src/driver/drm_warpper.c
   src/driver/key_enc_evdev.c
 

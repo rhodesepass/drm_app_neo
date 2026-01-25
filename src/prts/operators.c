@@ -37,7 +37,7 @@ static void validate_optional_image_path(
 
     // 仅检查文件存在和可读性，不加载图片（性能优化）
     if (!file_exists_readable(abs_path)) {
-        prts_log_parse_log(prts, (char*)op_dir, (char*)field_for_log, PARSE_LOG_WARN);
+        parse_log_file(prts->parse_log_f, (char*)op_dir, (char*)field_for_log, PARSE_LOG_WARN);
         return;
     }
 
@@ -62,13 +62,13 @@ static int parse_transition_obj(
         return 0;
     }
     if (!cJSON_IsObject(tr_obj)) {
-        prts_log_parse_log(prts, (char*)op_dir, (char*)which, PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, (char*)op_dir, (char*)which, PARSE_LOG_ERROR);
         return -1;
     }
 
     const char *t = json_get_string(tr_obj, "type");
     if (!t) {
-        prts_log_parse_log(prts, (char*)op_dir, "transition 缺少 type", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "transition 缺少 type", PARSE_LOG_ERROR);
         return -1;
     }
 
@@ -80,19 +80,19 @@ static int parse_transition_obj(
     else if (strcmp(t, "move") == 0) out->type = TRANSITION_TYPE_MOVE;
     else if (strcmp(t, "swipe") == 0) out->type = TRANSITION_TYPE_SWIPE;
     else {
-        prts_log_parse_log(prts, (char*)op_dir, "transition.type 不合法", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "transition.type 不合法", PARSE_LOG_ERROR);
         return -1;
     }
 
     cJSON *opt = cJSON_GetObjectItem(tr_obj, "options");
     if (!opt || !cJSON_IsObject(opt)) {
-        prts_log_parse_log(prts, (char*)op_dir, "transition.type!=none 但 options 不存在", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "transition.type!=none 但 options 不存在", PARSE_LOG_ERROR);
         return -1;
     }
 
     out->duration = json_get_int(opt, "duration", 0);
     if (out->duration <= 0) {
-        prts_log_parse_log(prts, (char*)op_dir, "transition.options.duration<=0", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "transition.options.duration<=0", PARSE_LOG_ERROR);
         return -1;
     }
 
@@ -113,7 +113,7 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         return -1;
     }
     if (!operator) {
-        prts_log_parse_log(prts, path, "operator 指针为空", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "operator 指针为空", PARSE_LOG_ERROR);
         return -1;
     }
     memset(operator, 0, sizeof(*operator));
@@ -126,26 +126,26 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
     operator->transition_loop.background_color = 0xFF000000u;
 
     char cfg_path[256];
-    snprintf(cfg_path, sizeof(cfg_path), "%s/%s", path, "epconfig.json");
+    join_path(cfg_path, sizeof(cfg_path), path, PRTS_ASSET_CONFIG_FILENAME);
 
     size_t json_len = 0;
     char *buf = read_file_all(cfg_path, &json_len);
     if (!buf) {
-        prts_log_parse_log(prts, path, "epconfig.json不存在或读取失败", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, PRTS_ASSET_CONFIG_FILENAME "不存在或读取失败", PARSE_LOG_ERROR);
         return -1;
     }
 
     cJSON *json = cJSON_Parse(buf);
     free(buf);
     if(json == NULL){
-        prts_log_parse_log(prts, path, "epconfig.json解析失败", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, PRTS_ASSET_CONFIG_FILENAME "解析失败", PARSE_LOG_ERROR);
         return -1;
     }
 
     // ===== version =====
     cJSON *ver = cJSON_GetObjectItem(json, "version");
     if (!ver || !cJSON_IsNumber(ver) || ver->valueint != PRTS_ASSET_VERSION_NUMBER) {
-        prts_log_parse_log(prts, path, "version 校验失败", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "version 校验失败", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
@@ -160,12 +160,12 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
 
     const char *uuid_str = json_get_string(json, "uuid");
     if (!uuid_str || uuid_str[0] == '\0') {
-        prts_log_parse_log(prts, path, "缺少字段 uuid", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "缺少字段 uuid", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
     if (uuid_parse(uuid_str, &operator->uuid) != 0) {
-        prts_log_parse_log(prts, path, "uuid 解析失败", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "uuid 解析失败", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
@@ -183,7 +183,7 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         abs_icon[0] = '\0';
         join_path(abs_icon, sizeof(abs_icon), path, icon);
         if (!file_exists_readable(abs_icon)) {
-            prts_log_parse_log(prts, path, "icon 文件不存在，使用默认icon", PARSE_LOG_WARN);
+            parse_log_file(prts->parse_log_f, path, "icon 文件不存在，使用默认icon", PARSE_LOG_WARN);
             safe_strcpy(operator->icon_path, sizeof(operator->icon_path), PRTS_DEFAULT_ICON_PATH);
         } else {
             set_lvgl_path(operator->icon_path, sizeof(operator->icon_path), abs_icon);
@@ -192,27 +192,27 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
 
     const char *screen = json_get_string(json, "screen");
     if (!screen || screen[0] == '\0') {
-        prts_log_parse_log(prts, path, "缺少字段 screen", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "缺少字段 screen", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
 #if defined(USE_360_640_SCREEN)
     if (strcmp(screen, "360x640") != 0) {
-        prts_log_parse_log(prts, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
     operator->disp_type = DISPLAY_360_640;
 #elif defined(USE_480_854_SCREEN)
     if (strcmp(screen, "480x854") != 0) {
-        prts_log_parse_log(prts, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
     operator->disp_type = DISPLAY_480_854
 #elif defined(USE_720_1280_SCREEN)
     if (strcmp(screen, "720x1280") != 0) {
-        prts_log_parse_log(prts, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
@@ -223,19 +223,19 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
     // ===== loop / intro videos =====
     cJSON *loop = cJSON_GetObjectItem(json, "loop");
     if (!loop || !cJSON_IsObject(loop)) {
-        prts_log_parse_log(prts, path, "缺少对象 loop", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "缺少对象 loop", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
     const char *loop_file = json_get_string(loop, "file");
     if (!loop_file || loop_file[0] == '\0') {
-        prts_log_parse_log(prts, path, "缺少 loop.file", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "缺少 loop.file", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
     join_path(operator->loop_video.path, sizeof(operator->loop_video.path), path, loop_file);
     if (!file_exists_readable(operator->loop_video.path)) {
-        prts_log_parse_log(prts, path, "loop.file 文件不存在", PARSE_LOG_ERROR);
+        parse_log_file(prts->parse_log_f, path, "loop.file 文件不存在", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
@@ -251,18 +251,18 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         const char *intro_file = json_get_string(intro, "file");
         if (operator->intro_video.enabled) {
             if (!intro_file || intro_file[0] == '\0') {
-                prts_log_parse_log(prts, path, "intro.enabled=true 但缺少 intro.file", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "intro.enabled=true 但缺少 intro.file", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
             if (operator->intro_video.duration <= 0) {
-                prts_log_parse_log(prts, path, "intro.enabled=true 但 duration<=0", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "intro.enabled=true 但 duration<=0", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
             join_path(operator->intro_video.path, sizeof(operator->intro_video.path), path, intro_file);
             if (!file_exists_readable(operator->intro_video.path)) {
-                prts_log_parse_log(prts, path, "intro.file 文件不存在", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "intro.file 文件不存在", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
@@ -298,14 +298,14 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         } else if (strcmp(ov_type, "arknights") == 0) {
             operator->opinfo_params.type = OPINFO_TYPE_ARKNIGHTS;
             if (!opt || !cJSON_IsObject(opt)) {
-                prts_log_parse_log(prts, path, "overlay.type=arknights 但 options 不存在", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "overlay.type=arknights 但 options 不存在", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
             // appear_time
             int appear_time = json_get_int(opt, "appear_time", 0);
             if (appear_time <= 0) {
-                prts_log_parse_log(prts, path, "overlay.options.appear_time<=0", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "overlay.options.appear_time<=0", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
@@ -335,20 +335,20 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         } else if (strcmp(ov_type, "image") == 0) {
             operator->opinfo_params.type = OPINFO_TYPE_IMAGE;
             if (!opt || !cJSON_IsObject(opt)) {
-                prts_log_parse_log(prts, path, "overlay.type=image 但 options 不存在", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "overlay.type=image 但 options 不存在", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
             int appear_time = json_get_int(opt, "appear_time", 0);
             if (appear_time <= 0) {
-                prts_log_parse_log(prts, path, "overlay.options.appear_time<=0", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "overlay.options.appear_time<=0", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
             operator->opinfo_params.appear_time = appear_time;
             operator->opinfo_params.duration = json_get_int(opt, "duration", 0);
             if (operator->opinfo_params.duration <= 0) {
-                prts_log_parse_log(prts, path, "overlay.options.duration<=0", PARSE_LOG_ERROR);
+                parse_log_file(prts->parse_log_f, path, "overlay.options.duration<=0", PARSE_LOG_ERROR);
                 cJSON_Delete(json);
                 return -1;
             }
@@ -356,7 +356,7 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
             const char *img = json_get_string(opt, "image");
             validate_optional_image_path(prts, path, "overlay.options.image 校验失败，按不存在处理", img, operator->opinfo_params.image_path, sizeof(operator->opinfo_params.image_path));
         } else {
-            prts_log_parse_log(prts, path, "overlay.type 不合法", PARSE_LOG_ERROR);
+            parse_log_file(prts->parse_log_f, path, "overlay.type 不合法", PARSE_LOG_ERROR);
             cJSON_Delete(json);
             return -1;
         }
@@ -371,8 +371,8 @@ int prts_operator_scan_assets(prts_t *prts,char* dirpath,prts_source_t source){
     char path[128];
     DIR *dir = opendir(dirpath);
     if (!dir) {
-        prts_log_parse_log(prts, dirpath, "unable to open assets directory", PARSE_LOG_ERROR);
-        return 1;
+        parse_log_file(prts->parse_log_f, dirpath, "无法打开素材目录", PARSE_LOG_WARN);
+        return 0;
     }
 
     struct dirent *entry;
@@ -384,11 +384,11 @@ int prts_operator_scan_assets(prts_t *prts,char* dirpath,prts_source_t source){
             continue;
         }
         if (prts->operator_count >= PRTS_OPERATORS_MAX) {
-            prts_log_parse_log(prts, dirpath, "operator count exceeds maximum PRTS_OPERATORS_MAX", PARSE_LOG_WARN);
+            parse_log_file(prts->parse_log_f, dirpath, "素材数量超过最大值", PARSE_LOG_WARN);
             break;
         }
 
-        snprintf(path, sizeof(path), "%s/%s", dirpath, entry->d_name);
+        join_path(path, sizeof(path), dirpath, entry->d_name);
         if (prts_operator_try_load(prts, &prts->operators[prts->operator_count], path, source, prts->operator_count) == 0) {
             prts->operator_count++;
         }
@@ -399,7 +399,7 @@ int prts_operator_scan_assets(prts_t *prts,char* dirpath,prts_source_t source){
     closedir(dir);
     return error_cnt;
 }
-
+#ifndef APP_RELEASE
 void prts_operator_log_entry(prts_operator_entry_t* operator){
     log_debug("name: %s", operator->operator_name);
     log_debug("uuid: ");
@@ -433,4 +433,5 @@ void prts_operator_log_entry(prts_operator_entry_t* operator){
     log_trace("transition_loop.background_color: %x", operator->transition_loop.background_color);
     log_trace("transition_loop.image_path: %s", operator->transition_loop.image_path);
 }
+#endif // APP_RELEASE
 
