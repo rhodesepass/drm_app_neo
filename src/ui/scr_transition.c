@@ -225,3 +225,7 @@ void screen_key_event_cb(uint32_t key){
             break;
     }
 }
+
+curr_screen_t ui_get_current_screen(){
+    return g_cur_scr;
+}

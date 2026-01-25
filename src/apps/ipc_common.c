@@ -177,8 +177,8 @@ void ipc_print_res_type(ipc_resp_type_t type){
         case IPC_RESP_ERROR_MSG_TOO_LONG:
             log_debug("IPC_RESP_ERROR_MSG_TOO_LONG");
             break;
-        case IPC_RESP_ERROR_HANDLER:
-            log_debug("IPC_RESP_ERROR_HANDLER");
+        case IPC_RESP_ERROR_NOMEM:
+            log_debug("IPC_RESP_ERROR_NOMEM");
             break;
         case IPC_RESP_ERROR_INVALID_REQUEST:
             log_debug("IPC_RESP_ERROR_INVALID_REQUEST");

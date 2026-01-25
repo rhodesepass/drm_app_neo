@@ -4,6 +4,7 @@
 #include <time.h>
 #include <ui/actions_apps.h>
 #include <ui/actions_displayimg.h>
+#include <ui/ipc_helper.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
@@ -144,6 +145,7 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     ui_battery_init();
     ui_displayimg_init();
     ui_confirm_init();
+    ui_ipc_helper_init();
     ui_apps_init(apps);
 
     atomic_store(&lvgl_drm_warp->running, 1);
@@ -165,7 +167,6 @@ void lvgl_drm_warp_destroy(lvgl_drm_warp_t *lvgl_drm_warp){
     ui_warning_destroy();
     ui_battery_destroy();
     ui_confirm_destroy();
-    log_info("pre app destroy");
+    ui_ipc_helper_destroy();
     ui_apps_destroy();
-    log_info("post app destroy");
 }

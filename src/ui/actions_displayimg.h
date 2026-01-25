@@ -29,6 +29,7 @@ typedef enum {
 void ui_displayimg_init();
 
 void ui_displayimg_key_event(uint32_t key);
+void ui_displayimg_force_dispimg(const char *path);
 
 
 // EEZ回调不需要添加。

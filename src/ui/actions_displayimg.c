@@ -109,6 +109,17 @@ void ui_displayimg_key_event(uint32_t key){
     display_img(&g_displayimg.files[g_displayimg.index]);
 }
 
+void ui_displayimg_force_dispimg(const char *path){
+    ui_displayimg_file_type_t type = displayimg_file_type(path);
+    if(type == UI_DISPLAYIMG_FILE_TYPE_INVALID){
+        return;
+    }
+    static ui_displayimg_file_t file;
+    snprintf(file.img_path, DISPLAYIMG_MAX_PATH_LENGTH, "A:%s", path);
+    file.is_gif = (type == UI_DISPLAYIMG_FILE_TYPE_GIF);
+    display_img(&file);
+}
+
 // =========================================
 // EEZ 回调 START
 // =========================================
