@@ -80,7 +80,7 @@ size_t calculate_ipc_resp_size_by_req(ipc_req_type_t type){
             // No additional data
             break;
         case IPC_REQ_PRTS_GET_OPERATOR_INFO:
-            // No additional data
+            size += sizeof(ipc_prts_operator_info_data_t);
             break;
         case IPC_REQ_PRTS_SET_BLOCKED_AUTO_SWITCH:
             // No additional data

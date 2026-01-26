@@ -24,9 +24,9 @@ static void ui_ipc_helper_timer_cb(lv_timer_t *timer){
                 ui_displayimg_force_dispimg(req->dispimg_path);
                 break;
         }
-    }
-    if(req->on_heap){
-        free(req);
+        if(req->on_heap){
+            free(req);
+        }
     }
 }
 

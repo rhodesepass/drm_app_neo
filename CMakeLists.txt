@@ -113,6 +113,7 @@ set(EPASS_SOURCES
   src/ui/actions_oplist.c
   src/ui/actions_apps.c
   src/ui/actions_confirm.c
+  src/ui/ipc_helper.c
 
   src/overlay/overlay.c
   src/overlay/transitions.c

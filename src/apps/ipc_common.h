@@ -183,10 +183,12 @@ typedef struct {
         ipc_req_ui_force_dispimg_data_t ui_force_dispimg;
         ipc_req_prts_set_operator_data_t prts_set_operator;
         ipc_req_prts_get_operator_info_data_t prts_get_operator;
+        ipc_req_prts_set_blocked_auto_switch_data_t prts_set_blocked_auto_switch;
         ipc_settings_data_t settings;
         ipc_mediaplayer_video_path_data_t mediaplayer_video_path;
         ipc_req_overlay_schedule_transition_data_t overlay_schedule_transition;
         ipc_req_overlay_schedule_transition_video_data_t overlay_schedule_transition_video;
+        ipc_req_app_exit_data_t app_exit;
     };
 } ipc_req_t;
 
@@ -200,15 +202,16 @@ typedef enum {
     IPC_RESP_ERROR_MSG_TOO_LONG = 1,
     IPC_RESP_ERROR_NOMEM = 2,
     IPC_RESP_ERROR_INVALID_REQUEST = 3,
-    IPC_RESP_ERROR_STATE_CONFLICT = 3,
-    IPC_RESP_ERROR_LENGTH_MISMATCH = 4,
-    IPC_RESP_ERROR_UNKNOWN = 5,
+    IPC_RESP_ERROR_STATE_CONFLICT = 4,
+    IPC_RESP_ERROR_LENGTH_MISMATCH = 5,
+    IPC_RESP_ERROR_UNKNOWN = 6,
 } ipc_resp_type_t;
 
 typedef struct {
     ipc_resp_type_t type;
     union {
         ipc_resp_ui_get_current_screen_data_t ui_current_screen;
+        ipc_resp_prts_status_data_t prts_status;
         ipc_prts_operator_info_data_t prts_operator_info;
         ipc_settings_data_t settings;
         ipc_mediaplayer_video_path_data_t mediaplayer_video_path;

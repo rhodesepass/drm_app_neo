@@ -86,6 +86,7 @@ typedef struct {
     prts_timer_handle_t timer_handle;
 
     spsc_bq_t req_queue;
+    atomic_int is_auto_switch_blocked;
 } prts_t;
 
 void prts_init(prts_t* prts,overlay_t* overlay,bool use_sd);

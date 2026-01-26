@@ -91,15 +91,18 @@ int apps_cfg_try_load(apps_t *apps,app_entry_t* app,char * app_dir,app_source_t 
         return -1;
     }
 
+    // 构建可执行文件完整路径
+    join_path(app->executable_path, sizeof(app->executable_path), app_dir, exec_file);
+
     // 验证可执行文件存在
-    if (!file_exists_readable(exec_file)) {
+    if (!file_exists_readable(app->executable_path)) {
         parse_log_file(apps->parse_log_f, app_dir, "可执行文件不存在", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
 
     // 添加执行权限
-    if (chmod(exec_file, 0755) != 0) {
+    if (chmod(app->executable_path, 0755) != 0) {
         parse_log_file(apps->parse_log_f, app_dir, "添加执行权限失败", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
@@ -178,15 +181,6 @@ int apps_cfg_try_load(apps_t *apps,app_entry_t* app,char * app_dir,app_source_t 
                 desc ? desc : "(无描述)");
     
 
-    // 构建可执行文件完整路径
-    join_path(app->executable_path, sizeof(app->executable_path), app_dir, exec_file);
-
-    // 验证可执行文件存在
-    if (!file_exists_readable(app->executable_path)) {
-        parse_log_file(apps->parse_log_f, app_dir, "可执行文件不存在", PARSE_LOG_ERROR);
-        cJSON_Delete(json);
-        return -1;
-    }
 
     // 解析图标（可选）
     const char* icon = json_get_string(json, "icon");

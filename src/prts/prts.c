@@ -25,7 +25,9 @@ extern settings_t g_settings;
 
 inline static bool should_switch_by_interval(prts_t* prts){
     uint64_t interval_us = 0;
-
+    if(atomic_load(&prts->is_auto_switch_blocked) != 0){
+        return false;
+    }
     switch(g_settings.switch_interval){
         case sw_interval_t_SW_INTERVAL_1MIN:
             interval_us = 1 * 60 * 1000 * 1000;
@@ -457,6 +459,7 @@ void prts_init(prts_t* prts, overlay_t* overlay, bool use_sd){
     }
 #endif // APP_RELEASE
 
+    atomic_store(&prts->is_auto_switch_blocked, 0);
 
     spsc_bq_init(&prts->req_queue, 10);
 

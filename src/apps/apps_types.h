@@ -2,6 +2,7 @@
 #include "utils/uuid.h"
 #include "utils/timer.h"
 #include "config.h"
+#include <prts/prts.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <pthread.h>
@@ -60,4 +61,5 @@ typedef struct {
 
     pthread_t ipc_thread;
     atomic_int ipc_running;
+    prts_t* prts;
 } apps_t;

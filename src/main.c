@@ -177,7 +177,7 @@ int main(int argc, char *argv[]){
     prts_init(&g_prts, &g_overlay, g_use_sd);
 
     // ============ APPS 初始化 ===============
-    apps_init(&g_apps, g_use_sd);
+    apps_init(&g_apps, &g_prts, g_use_sd);
 
     // ============ LVGL 初始化 ===============
     drm_warpper_init_layer(
@@ -196,7 +196,6 @@ int main(int argc, char *argv[]){
         ui_warning(UI_WARNING_SD_MOUNT_ERROR);
     }
 
-    ui_warning_custom("我喜欢你", "你喜欢我我喜欢你", UI_ICON_HEART, UI_COLOR_OK);
 
     // ============ 主循环 ===============
     while(g_running){

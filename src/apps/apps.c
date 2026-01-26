@@ -31,9 +31,10 @@ static void apps_bg_app_check_timer_cb(void *userdata, bool is_last) {
     }
 }
 
-int apps_init(apps_t *apps, bool use_sd) {
+int apps_init(apps_t *apps, prts_t *prts, bool use_sd) {
     log_info("==> Apps Initializing...");
     apps->app_count = 0;
+    apps->prts = prts;
 
     apps->parse_log_f = fopen(APPS_PARSE_LOG, "w");
     if (apps->parse_log_f == NULL) {
