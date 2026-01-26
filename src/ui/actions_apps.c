@@ -51,7 +51,7 @@ static void app_btn_click_cb(lv_event_t *e) {
         return;
     }
     else if (app->type == APP_TYPE_BACKGROUND){
-        // 后台应用，直接启动
+        // 后台应用，切换状态
         apps_toggle_bg_app_by_index(g_ui_apps.apps, app_idx);
         ui_schedule_screen_transition(curr_screen_t_SCREEN_SPINNER);
         return;
@@ -138,7 +138,6 @@ static void update_slot_content(int slot_idx, int app_idx) {
         add_style_app_fg(slot->bgfg_flag);
     }
 
-    // 移除旧的事件回调，添加新的（回调内容留空，你来写）
     lv_obj_remove_event_cb(slot->appbtn, app_btn_click_cb);
     lv_obj_add_event_cb(slot->appbtn, app_btn_click_cb, LV_EVENT_PRESSED, (void *)(intptr_t)app_idx);
 
@@ -232,15 +231,6 @@ void ui_apps_init(apps_t *apps){
     // 清空应用列表容器
     lv_obj_clean(objects.app_container);
 
-    if(apps->app_count == 0){
-        // 没有应用，直接返回
-        return;
-    }
-    else{
-        lv_obj_add_flag(objects.applist_no_app_label, LV_OBJ_FLAG_HIDDEN);
-    }
-
-
     for (int i = 0; i < UI_APP_VISIBLE_SLOTS; i++) {
         create_slot_ui(i);
         if (i < apps->app_count) {
@@ -288,3 +278,9 @@ void ui_apps_destroy(){
 // EEZ 回调 START
 // =========================================
 
+bool get_var_applist_show_warning(){
+    return g_ui_apps.total_count != 0;
+}
+void set_var_applist_show_warning(bool value){
+    return;
+}

@@ -1,6 +1,8 @@
 #include "apps/ipc_handler.h"
 #include "apps/ipc_common.h"
 #include "apps/apps_types.h"
+#include "vars.h"
+#include <overlay/overlay.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +25,7 @@ inline static int handle_ui_warning(ipc_req_t *req, ipc_resp_t *resp){
         req->ui_warning.icon, 
         req->ui_warning.color
     );
+    resp->type = IPC_RESP_OK;
     return calculate_ipc_resp_size_by_req(req->type);
 }
 
@@ -162,6 +165,7 @@ inline static int handle_settings_get(ipc_req_t *req, ipc_resp_t *resp){
 
 inline static int handle_settings_set(ipc_req_t *req, ipc_resp_t *resp){
     settings_lock(&g_settings);
+    usb_mode_t curr_usb_mode = g_settings.usb_mode;
     g_settings.brightness = req->settings.brightness;
     g_settings.switch_interval = req->settings.switch_interval;
     g_settings.switch_mode = req->settings.switch_mode;
@@ -169,7 +173,9 @@ inline static int handle_settings_set(ipc_req_t *req, ipc_resp_t *resp){
     g_settings.ctrl_word = req->settings.ctrl_word;
     settings_unlock(&g_settings);
     
-    settings_set_usb_mode(req->settings.usb_mode);
+    if(curr_usb_mode != req->settings.usb_mode){
+        settings_set_usb_mode(req->settings.usb_mode);
+    }
     
     // 保存设置并应用（设置亮度）
     settings_update(&g_settings);
@@ -264,6 +270,8 @@ inline static int handle_overlay_schedule_transition(apps_t *apps, ipc_req_t *re
     }
     
     overlay_t* overlay = apps->prts->overlay;
+    // 先终止overlay上的其他操作。
+    overlay_abort(overlay);
     
     // 分配并填充 oltr_params_t
     oltr_params_t* params = (oltr_params_t*)malloc(sizeof(oltr_params_t));
@@ -282,7 +290,7 @@ inline static int handle_overlay_schedule_transition(apps_t *apps, ipc_req_t *re
     params->image_h = 0;
     params->image_addr = NULL;
     
-    // 加载图片
+    // 加载图片。如果image_path为空 自动不加载。
     overlay_transition_load_image(params);
     
     // 分配 callback 结构体
@@ -349,6 +357,9 @@ inline static int handle_overlay_schedule_transition_video(apps_t *apps, ipc_req
     }
     
     overlay_t* overlay = apps->prts->overlay;
+
+    // 先终止overlay上的其他操作。
+    overlay_abort(overlay);
     
     // 分配并填充 oltr_params_t
     oltr_params_t* params = (oltr_params_t*)malloc(sizeof(oltr_params_t));
