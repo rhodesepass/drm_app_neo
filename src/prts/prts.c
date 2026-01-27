@@ -117,8 +117,8 @@ typedef struct {
 // intro视频播放完（达到intro的duration之后）触发的定时器回调。调度transition_loop -> loop video
 static void schedule_video_and_transitions_timer_cb(void* userdata,bool is_last){
     schedule_video_and_transitions_timer_data_t* data = (schedule_video_and_transitions_timer_data_t*)userdata;
-    schedule_video_and_transitions(data->prts, data->video, data->transition, data->is_first_transition);
     data->prts->state = PRTS_STATE_TRANSITION_LOOP;
+    schedule_video_and_transitions(data->prts, data->video, data->transition, data->is_first_transition);
     if(data->on_heap){
         free(data);
     }
@@ -214,6 +214,11 @@ static oltr_params_t first_transition_params = {
     .background_color = 0xFF000000u,
 };
 
+// 排期视频和过渡。
+// 在第一次过渡时，需要挂载视频图层，并使用move过渡。
+// 在非第一次过渡时，需要使用过渡类型对应的过渡效果。
+// 如果transition的type为NONE，则直接调用回调函数来切换视频并推进状态机。
+// 由于回调函数那边会检定现在的状态，因此：先推进状态机，再来调用这个函数。
 static void schedule_video_and_transitions(prts_t* prts,prts_video_t* video,oltr_params_t* transition,bool is_first_transition){
     oltr_callback_t* callback = malloc(sizeof(oltr_callback_t));
 
@@ -291,34 +296,31 @@ static void switch_operator_secound_stage(void* userdata,bool is_last){
     bool is_first_switch = *data->is_first_switch;
 
 
-    prts_state_t next_state = PRTS_STATE_IDLE;
-
     // 第一步。 存在intro video，且闭锁入场动画软压板没投
     // 则做全量 transition_in -> intro video -> transition_loop -> loop video
     if(target_operator->intro_video.enabled && g_settings.ctrl_word.no_intro_block == 0){
+        prts->state = PRTS_STATE_TRANSITION_IN;
         schedule_video_and_transitions(prts, 
             &target_operator->intro_video, 
             &target_operator->transition_in, 
             is_first_switch
         );
-        next_state = PRTS_STATE_TRANSITION_IN;
     }
     // 不存在 intro video，则做 transition_in -> loop video
     // 我格式没设计好，所以明明使用的是transition_in 却进入了LOOP状态
     // 这个LOOP状态用于在回调中推进状态机。
     else{
+        prts->state = PRTS_STATE_TRANSITION_LOOP;
         schedule_video_and_transitions(prts, 
             &target_operator->loop_video, 
             &target_operator->transition_in,
             is_first_switch
         );
-        next_state = PRTS_STATE_TRANSITION_LOOP;
     }
 
     prts->last_switch_time = get_now_us();
     prts->operator_index = target_index;
     *data->is_first_switch = false;
-    prts->state = next_state;
 
     if(data->on_heap){
         free(data);
