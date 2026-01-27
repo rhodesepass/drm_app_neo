@@ -244,8 +244,31 @@ static void schedule_video_and_transitions(prts_t* prts,prts_video_t* video,oltr
             case TRANSITION_TYPE_SWIPE:
                 overlay_transition_swipe(prts->overlay, callback, transition);
                 break;
+            case TRANSITION_TYPE_NONE:
+                // 没有过渡效果时，直接调用回调来切换视频并推进状态机
+                if(callback->middle_cb){
+                    callback->middle_cb(callback->middle_cb_userdata, true);
+                }
+                if(callback->end_cb){
+                    callback->end_cb(callback->end_cb_userdata, true);
+                }
+                // 释放callback结构体
+                if(callback->on_heap){
+                    free(callback);
+                }
+                break;
             default:
                 log_error("invalid transition type: %d", transition->type);
+                // 即使类型无效，也要调用回调以避免状态机卡住
+                if(callback->middle_cb){
+                    callback->middle_cb(callback->middle_cb_userdata, true);
+                }
+                if(callback->end_cb){
+                    callback->end_cb(callback->end_cb_userdata, true);
+                }
+                if(callback->on_heap){
+                    free(callback);
+                }
                 break;
         }
     }
