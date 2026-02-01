@@ -103,30 +103,49 @@ static void set_video_mount_layer_cb(void* userdata,bool is_last){
 }
 
 // 前向定义
-static void schedule_video_and_transitions(prts_t* prts,prts_video_t* video,oltr_params_t* transition,bool is_first_transition);
+static void schedule_video_and_transitions(prts_t* prts, prts_video_t* video, oltr_params_t* transition, bool is_first_transition, int target_operator_index);
 
 typedef struct {
     prts_t* prts;
     prts_video_t* video;
     oltr_params_t* transition;
     bool is_first_transition;
+    int target_operator_index;  // 在调度时捕获目标干员索引
     // 需不需要释放这个结构体
     bool on_heap;
 } schedule_video_and_transitions_timer_data_t;
+
+// 用于传递给 schedule_video_and_transitions_end_cb 的数据结构
+typedef struct {
+    prts_t* prts;
+    int target_operator_index;  // 在调度时捕获目标干员索引
+} schedule_video_and_transitions_end_cb_data_t;
+
+// 用于传递给 schedule_opinfo_timer_cb 的数据结构
+typedef struct {
+    prts_t* prts;
+    int target_operator_index;  // 在调度时捕获目标干员索引
+    bool on_heap;
+} schedule_opinfo_timer_data_t;
 
 // intro视频播放完（达到intro的duration之后）触发的定时器回调。调度transition_loop -> loop video
 static void schedule_video_and_transitions_timer_cb(void* userdata,bool is_last){
     schedule_video_and_transitions_timer_data_t* data = (schedule_video_and_transitions_timer_data_t*)userdata;
     data->prts->state = PRTS_STATE_TRANSITION_LOOP;
-    schedule_video_and_transitions(data->prts, data->video, data->transition, data->is_first_transition);
+    schedule_video_and_transitions(data->prts, data->video, data->transition, data->is_first_transition, data->target_operator_index);
     if(data->on_heap){
         free(data);
     }
 }
 
 static void schedule_opinfo_timer_cb(void* userdata,bool is_last){
-    prts_t* prts = (prts_t*)userdata;
-    prts_operator_entry_t* target_operator = &prts->operators[prts->operator_index];
+    schedule_opinfo_timer_data_t* data = (schedule_opinfo_timer_data_t*)userdata;
+    prts_t* prts = data->prts;
+    prts_operator_entry_t* target_operator = &prts->operators[data->target_operator_index];
+
+    log_info("schedule_opinfo_timer_cb: showing opinfo for operator %d (%s)",
+             data->target_operator_index, target_operator->operator_name);
+
     if(target_operator->opinfo_params.type == OPINFO_TYPE_ARKNIGHTS){
         overlay_opinfo_show_arknights(prts->overlay, &target_operator->opinfo_params);
     }
@@ -137,17 +156,33 @@ static void schedule_opinfo_timer_cb(void* userdata,bool is_last){
         log_error("schedule_opinfo_timer_cb: invalid opinfo type: %d", target_operator->opinfo_params.type);
     }
     prts->state = PRTS_STATE_IDLE;
+
+    if(data->on_heap){
+        free(data);
+    }
 }
 
 static void schedule_opinfo(prts_t* prts,prts_operator_entry_t* target_operator){
     if(target_operator->opinfo_params.type != OPINFO_TYPE_NONE){
+        schedule_opinfo_timer_data_t* data = malloc(sizeof(schedule_opinfo_timer_data_t));
+        if(data == NULL){
+            log_error("schedule_opinfo: malloc failed");
+            return;
+        }
+        data->prts = prts;
+        data->target_operator_index = target_operator->index;
+        data->on_heap = true;
+
+        log_info("schedule_opinfo: scheduling for operator %d (%s)",
+                 target_operator->index, target_operator->operator_name);
+
         prts_timer_handle_t timer_handle;
-        prts_timer_create(&timer_handle, 
-            target_operator->opinfo_params.appear_time, 
-            0, 
-            1, 
-            schedule_opinfo_timer_cb, 
-            (void*)prts);
+        prts_timer_create(&timer_handle,
+            target_operator->opinfo_params.appear_time,
+            0,
+            1,
+            schedule_opinfo_timer_cb,
+            (void*)data);
     }
 }
 
@@ -163,13 +198,18 @@ static void schedule_opinfo(prts_t* prts,prts_operator_entry_t* target_operator)
 
 static void schedule_video_and_transitions_end_cb(void* userdata,bool is_last){
     log_trace("schedule_video_and_transitions_end_cb");
-    prts_t* prts = (prts_t*)userdata;
-    prts_operator_entry_t* target_operator = &prts->operators[prts->operator_index];
+    schedule_video_and_transitions_end_cb_data_t* cb_data = (schedule_video_and_transitions_end_cb_data_t*)userdata;
+    prts_t* prts = cb_data->prts;
+    int target_operator_index = cb_data->target_operator_index;
+    prts_operator_entry_t* target_operator = &prts->operators[target_operator_index];
+
+    log_info("schedule_video_and_transitions_end_cb: processing for operator %d (%s)",
+             target_operator_index, target_operator->operator_name);
 
     prts_state_t curr_state = prts->state;
     prts_state_t next_state = PRTS_STATE_IDLE;
 
-    
+
     if(curr_state == PRTS_STATE_TRANSITION_IN){
         // 入场过渡结束，进入intro视频。等intro视频结束后，排期transition_loop -> loop video
         schedule_video_and_transitions_timer_data_t *data = malloc(sizeof(schedule_video_and_transitions_timer_data_t));
@@ -177,6 +217,7 @@ static void schedule_video_and_transitions_end_cb(void* userdata,bool is_last){
         data->video = &target_operator->loop_video;
         data->transition = &target_operator->transition_loop;
         data->is_first_transition = false;
+        data->target_operator_index = target_operator_index;  // 传递目标干员索引
         data->on_heap = true;
         int delay = target_operator->intro_video.duration - target_operator->transition_in.duration * 2 - target_operator->transition_loop.duration;
         if(delay < 0){
@@ -202,6 +243,9 @@ static void schedule_video_and_transitions_end_cb(void* userdata,bool is_last){
     }
 
     prts->state = next_state;
+    // 注意：不在这里释放 cb_data
+    // oltr_callback_cleanup 或 swipe_cleanup 会统一处理释放
+    // 如果在这里释放会导致 double-free 崩溃
 }
 
 static oltr_params_t first_transition_params = {
@@ -219,15 +263,27 @@ static oltr_params_t first_transition_params = {
 // 在非第一次过渡时，需要使用过渡类型对应的过渡效果。
 // 如果transition的type为NONE，则直接调用回调函数来切换视频并推进状态机。
 // 由于回调函数那边会检定现在的状态，因此：先推进状态机，再来调用这个函数。
-static void schedule_video_and_transitions(prts_t* prts,prts_video_t* video,oltr_params_t* transition,bool is_first_transition){
+static void schedule_video_and_transitions(prts_t* prts, prts_video_t* video, oltr_params_t* transition, bool is_first_transition, int target_operator_index){
     oltr_callback_t* callback = malloc(sizeof(oltr_callback_t));
 
-    log_trace("schedule_video_and_transitions: video: %s, transition: %d, is_first_transition: %d", video->path, transition->type, is_first_transition);
-    
+    log_trace("schedule_video_and_transitions: video: %s, transition: %d, is_first_transition: %d, target_operator: %d",
+              video->path, transition->type, is_first_transition, target_operator_index);
+
+    // 创建 end_cb 的数据结构，包含目标干员索引
+    schedule_video_and_transitions_end_cb_data_t* end_cb_data = malloc(sizeof(schedule_video_and_transitions_end_cb_data_t));
+    if(end_cb_data == NULL){
+        log_error("schedule_video_and_transitions: malloc failed for end_cb_data");
+        free(callback);
+        return;
+    }
+    end_cb_data->prts = prts;
+    end_cb_data->target_operator_index = target_operator_index;
+
     callback->middle_cb_userdata = video;
     callback->end_cb = schedule_video_and_transitions_end_cb;
-    callback->end_cb_userdata = prts;
+    callback->end_cb_userdata = end_cb_data;
     callback->on_heap = true;
+    callback->end_cb_userdata_on_heap = true;  // 标记 end_cb_userdata 需要释放
 
     // 第一次发生过渡时 有两个问题:
     // 1. 需要挂载视频图层（用mount_video_layer_callback）
@@ -257,6 +313,11 @@ static void schedule_video_and_transitions(prts_t* prts,prts_video_t* video,oltr
                 if(callback->end_cb){
                     callback->end_cb(callback->end_cb_userdata, true);
                 }
+                // 由于没有调用 overlay_transition_*，不会有 cleanup 定时器
+                // 需要手动释放 end_cb_userdata
+                if(callback->end_cb_userdata_on_heap && callback->end_cb_userdata){
+                    free(callback->end_cb_userdata);
+                }
                 // 释放callback结构体
                 if(callback->on_heap){
                     free(callback);
@@ -270,6 +331,11 @@ static void schedule_video_and_transitions(prts_t* prts,prts_video_t* video,oltr
                 }
                 if(callback->end_cb){
                     callback->end_cb(callback->end_cb_userdata, true);
+                }
+                // 由于没有调用 overlay_transition_*，不会有 cleanup 定时器
+                // 需要手动释放 end_cb_userdata
+                if(callback->end_cb_userdata_on_heap && callback->end_cb_userdata){
+                    free(callback->end_cb_userdata);
                 }
                 if(callback->on_heap){
                     free(callback);
@@ -300,10 +366,11 @@ static void switch_operator_secound_stage(void* userdata,bool is_last){
     // 则做全量 transition_in -> intro video -> transition_loop -> loop video
     if(target_operator->intro_video.enabled && g_settings.ctrl_word.no_intro_block == 0){
         prts->state = PRTS_STATE_TRANSITION_IN;
-        schedule_video_and_transitions(prts, 
-            &target_operator->intro_video, 
-            &target_operator->transition_in, 
-            is_first_switch
+        schedule_video_and_transitions(prts,
+            &target_operator->intro_video,
+            &target_operator->transition_in,
+            is_first_switch,
+            target_index
         );
     }
     // 不存在 intro video，则做 transition_in -> loop video
@@ -311,10 +378,11 @@ static void switch_operator_secound_stage(void* userdata,bool is_last){
     // 这个LOOP状态用于在回调中推进状态机。
     else{
         prts->state = PRTS_STATE_TRANSITION_LOOP;
-        schedule_video_and_transitions(prts, 
-            &target_operator->loop_video, 
+        schedule_video_and_transitions(prts,
+            &target_operator->loop_video,
             &target_operator->transition_in,
-            is_first_switch
+            is_first_switch,
+            target_index
         );
     }
 

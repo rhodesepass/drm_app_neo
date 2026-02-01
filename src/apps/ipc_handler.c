@@ -323,7 +323,8 @@ inline static int handle_overlay_schedule_transition(apps_t *apps, ipc_req_t *re
     callback->end_cb = overlay_transition_end_cb_free_image;
     callback->end_cb_userdata = end_userdata;
     callback->on_heap = true;
-    
+    callback->end_cb_userdata_on_heap = false;  // end_cb 自己处理释放，cleanup 不需要
+
     // 根据类型调用对应的过渡函数
     switch(params->type){
         case TRANSITION_TYPE_FADE:
@@ -424,7 +425,8 @@ inline static int handle_overlay_schedule_transition_video(apps_t *apps, ipc_req
     callback->end_cb = overlay_transition_end_cb_free_image;  // 在过渡结束时释放图片
     callback->end_cb_userdata = end_userdata;
     callback->on_heap = true;
-    
+    callback->end_cb_userdata_on_heap = false;  // end_cb 自己处理释放，cleanup 不需要
+
     // 根据类型调用对应的过渡函数
     switch(params->type){
         case TRANSITION_TYPE_FADE:

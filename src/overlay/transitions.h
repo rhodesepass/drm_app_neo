@@ -30,6 +30,8 @@ typedef struct {
     void* end_cb_userdata;
     // 需不需要 transition 结束后释放这个结构体
     bool on_heap;
+    // end_cb_userdata 是否需要在清理时释放
+    bool end_cb_userdata_on_heap;
 } oltr_callback_t;
 
 void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_params_t* params);
