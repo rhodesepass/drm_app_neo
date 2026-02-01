@@ -7,6 +7,13 @@
 ```mermaid
 graph TD
     %% ===== Top -> Bottom blend order: 2 / 1 / 0 =====
+    
+    subgraph MGMT["Managements"]
+        PRTS["PRTS 调度/定时器<br/>src/prts/*"]
+        APP["拓展APP/IPC<br/>src/apps/*"]
+        
+        APP --> PRTS
+    end
 
     subgraph L2["Layer 2 / UI (RGB565) - Top"]
         LVGL["LVGL 渲染与线程<br/>src/render/lvgl_drm_warp.c"]
@@ -16,14 +23,15 @@ graph TD
         ACTIONS --> LVGL
     end
 
-    subgraph L1["Layer 1 / Overlay (ARGB8888 + Alpha) - Middle"]
+    subgraph L1["Layer 1 / Overlay - Middle"]
         OVERLAY["Overlay 绘制<br/>transitions/opinfo<br/>src/overlay/*"]
-        PRTS["PRTS 调度/定时器<br/>src/prts/*"]
+        
         PRTS --> OVERLAY
     end
 
-    subgraph L0["Layer 0 / Video (MB32 NV12) - Bottom"]
+    subgraph L0["Layer 0 / Video - Bottom"]
         MP["Mediaplayer (Cedar 解码)<br/>src/render/mediaplayer.c"]
+        PRTS --> MP
     end
 
     subgraph DW["Driver: drm_warpper + custom ioctl"]
@@ -32,10 +40,17 @@ graph TD
         DEBE["sun4i DEBE<br/>Plane Blend: 2/1/0"]
         Q --> IOCTL --> DEBE
     end
+    
+    subgraph UTILS["Utils"]
+        LOG["日志"]
+        BQ["队列"]
+        T["定时器"]
+        MISC["....."]
+    end
 
-    LVGL -->|"enqueue NORMAL FB (arg0=vaddr)"| Q
-    OVERLAY -->|"enqueue NORMAL FB + coord/alpha"| Q
-    MP -->|"enqueue YUV FB (arg0=pData0,arg1=pData1)"| Q
+    LVGL -->|"enqueue NORMAL FB"| Q
+    OVERLAY -->|"enqueue NORMAL FB"| Q
+    MP -->|"enqueue YUV FB"| Q
 ```
 
 ## 开始使用
