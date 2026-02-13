@@ -40,6 +40,7 @@ typedef struct {
     uint32_t* logo_addr;
 
     char rhodes_text[40];        // 用户自定义文字，非空时替代默认 rhodes logo 图片
+    char top_right_bar_text[40]; // 用户自定义文字，非空时覆盖 top_right_bar 内嵌文字
 
     uint32_t color;
 
