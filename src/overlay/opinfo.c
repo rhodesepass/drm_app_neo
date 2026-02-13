@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 LV_FONT_DECLARE(ui_font_bebas_40);
+LV_FONT_DECLARE(ui_font_bebas_bold_72);
 LV_FONT_DECLARE(ui_font_sourcesans_reg_14);
 
 
@@ -566,7 +567,9 @@ static void arknights_overlay_worker_timer_cb(void *userdata,bool is_last){
     overlay_worker_schedule(data->overlay,arknights_overlay_worker,data);
 }
 
-static void init_template_arknights_overlay(uint32_t* vaddr){
+static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* params){
+    log_info("init_template_arknights: rhodes_text=[%s]", params->rhodes_text);
+
     fbdraw_fb_t fbsrc,fbdst;
     fbdraw_rect_t src_rect,dst_rect;
 
@@ -636,22 +639,32 @@ static void init_template_arknights_overlay(uint32_t* vaddr){
     fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
 
     // TOP_LEFT_RHODES
-    cacheassets_get_asset_from_global(CACHE_ASSETS_TOP_LEFT_RHODES, &asset_w, &asset_h, &asset_addr);
-    fbsrc.vaddr = (uint32_t*)asset_addr;
-    fbsrc.width = asset_w;
-    fbsrc.height = asset_h;
+    if (params->rhodes_text[0] != '\0') {
+        // 用户自定义文字替代 logo（顺时针旋转 +90° 显示，72px Bold）
+        dst_rect.x = 0;
+        dst_rect.y = 5;
+        dst_rect.w = 67;
+        dst_rect.h = OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y - 5;
+        fbdraw_text_rot90(&fbdst, &dst_rect, params->rhodes_text, &ui_font_bebas_bold_72, 0xFFFFFFFF);
+    } else {
+        // 默认缓存图
+        cacheassets_get_asset_from_global(CACHE_ASSETS_TOP_LEFT_RHODES, &asset_w, &asset_h, &asset_addr);
+        fbsrc.vaddr = (uint32_t*)asset_addr;
+        fbsrc.width = asset_w;
+        fbsrc.height = asset_h;
 
-    src_rect.x = 0;
-    src_rect.y = 0;
-    src_rect.w = asset_w;
-    src_rect.h = asset_h;
+        src_rect.x = 0;
+        src_rect.y = 0;
+        src_rect.w = asset_w;
+        src_rect.h = asset_h;
 
-    dst_rect.x = 0;
-    dst_rect.y = 0;
-    dst_rect.w = asset_w;
-    dst_rect.h = asset_h;
+        dst_rect.x = 0;
+        dst_rect.y = 0;
+        dst_rect.w = asset_w;
+        dst_rect.h = asset_h;
 
-    fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+        fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+    }
 
 }
 
@@ -667,12 +680,12 @@ void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params)
     // 清空双缓冲buffer
     drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
     vaddr = (uint32_t*)item->mount.arg0;
-    init_template_arknights_overlay(vaddr);
+    init_template_arknights_overlay(vaddr, params);
     drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
 
     drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
     vaddr = (uint32_t*)item->mount.arg0;
-    init_template_arknights_overlay(vaddr);
+    init_template_arknights_overlay(vaddr, params);
     drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
 
     static arknights_overlay_worker_data_t data;

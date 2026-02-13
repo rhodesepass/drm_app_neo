@@ -332,6 +332,10 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
             const char *cls = json_get_string(opt, "operator_class_icon");
             validate_optional_image_path(prts, path, "overlay.options.operator_class_icon 校验失败，按不存在处理", cls, operator->opinfo_params.class_path, sizeof(operator->opinfo_params.class_path));
 
+            const char *rhodes = json_get_string(opt, "top_left_rhodes");
+            safe_strcpy(operator->opinfo_params.rhodes_text, sizeof(operator->opinfo_params.rhodes_text),
+                        (rhodes && rhodes[0]) ? rhodes : "");
+
         } else if (strcmp(ov_type, "image") == 0) {
             operator->opinfo_params.type = OPINFO_TYPE_IMAGE;
             if (!opt || !cJSON_IsObject(opt)) {
@@ -424,6 +428,7 @@ void prts_operator_log_entry(prts_operator_entry_t* operator){
     log_trace("opinfo_params.color: %x", operator->opinfo_params.color);
     log_trace("opinfo_params.logo_path: %s", operator->opinfo_params.logo_path);
     log_trace("opinfo_params.class_path: %s", operator->opinfo_params.class_path);
+    log_trace("opinfo_params.rhodes_text: %s", operator->opinfo_params.rhodes_text);
     log_trace("transition_in.type: %d", operator->transition_in.type);
     log_trace("transition_in.duration: %d", operator->transition_in.duration);
     log_trace("transition_in.background_color: %x", operator->transition_in.background_color);
