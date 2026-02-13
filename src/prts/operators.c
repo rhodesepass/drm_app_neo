@@ -336,6 +336,10 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
             safe_strcpy(operator->opinfo_params.rhodes_text, sizeof(operator->opinfo_params.rhodes_text),
                         (rhodes && rhodes[0]) ? rhodes : "");
 
+            const char *trbt = json_get_string(opt, "top_right_bar_text");
+            safe_strcpy(operator->opinfo_params.top_right_bar_text, sizeof(operator->opinfo_params.top_right_bar_text),
+                        (trbt && trbt[0]) ? trbt : "");
+
         } else if (strcmp(ov_type, "image") == 0) {
             operator->opinfo_params.type = OPINFO_TYPE_IMAGE;
             if (!opt || !cJSON_IsObject(opt)) {
@@ -429,6 +433,7 @@ void prts_operator_log_entry(prts_operator_entry_t* operator){
     log_trace("opinfo_params.logo_path: %s", operator->opinfo_params.logo_path);
     log_trace("opinfo_params.class_path: %s", operator->opinfo_params.class_path);
     log_trace("opinfo_params.rhodes_text: %s", operator->opinfo_params.rhodes_text);
+    log_trace("opinfo_params.top_right_bar_text: %s", operator->opinfo_params.top_right_bar_text);
     log_trace("transition_in.type: %d", operator->transition_in.type);
     log_trace("transition_in.duration: %d", operator->transition_in.duration);
     log_trace("transition_in.background_color: %x", operator->transition_in.background_color);

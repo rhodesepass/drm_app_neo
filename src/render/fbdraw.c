@@ -61,8 +61,22 @@ void fbdraw_copy_rect(fbdraw_fb_t* src_fb, fbdraw_fb_t* dst_fb, fbdraw_rect_t* s
     }
 }
 
+int32_t fbdraw_text_width(const char* text, const lv_font_t* font, int32_t letter_space) {
+    int32_t width = 0;
+    uint32_t ofs = 0;
+    uint32_t codepoint;
+    while ((codepoint = lv_text_encoded_next(text, &ofs)) != 0) {
+        uint32_t codepoint_next = lv_text_encoded_next(&text[ofs], NULL);
+        int32_t w = (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+        if (w > 0) {
+            width += w + letter_space;
+        }
+    }
+    if (width > 0) width -= letter_space;
+    return width;
+}
 
-void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const lv_font_t* font, uint32_t color,int32_t line_h) {
+void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const lv_font_t* font, uint32_t color,int32_t line_h,int32_t letter_space) {
     uint32_t rgb = color & 0x00FFFFFF;
     const uint8_t color_a = (color >> 24) & 0xFF;
     if (line_h <= 0) {
@@ -95,7 +109,7 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
 
         /* 空白字符等无需绘制 */
         if(g_dsc.box_w == 0 || g_dsc.box_h == 0) {
-            cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+            cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next) + letter_space;
             continue;
         }
 
@@ -103,7 +117,7 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
                                                                g_dsc.box_w, g_dsc.box_h,
                                                                LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
         if(!glyph_draw_buf) {
-            cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+            cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next) + letter_space;
             continue;
         }
 
@@ -114,7 +128,7 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
             const uint8_t * a8 = (const uint8_t *)glyph_buf->data;
             const uint32_t stride = glyph_buf->header.stride;
 
-            /* 参照 LVGL label 的基线计算：y 视为“行顶部” */
+            /* 参照 LVGL label 的基线计算：y 视为"行顶部" */
             const int base_y = (int)cursor_y + (int)(font->line_height - font->base_line);
             const uint8_t src_r = (rgb >> 16) & 0xFF;
             const uint8_t src_g = (rgb >> 8) & 0xFF;
@@ -141,8 +155,8 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
         lv_font_glyph_release_draw_data(&g_dsc);
         lv_draw_buf_destroy(glyph_draw_buf);
 
-        /* glyph advance（含 kerning） */
-        cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next);
+        /* glyph advance（含 kerning + letter_space） */
+        cursor_x += (int32_t)lv_font_get_glyph_width(font, codepoint, codepoint_next) + letter_space;
     }
 }
 
@@ -217,7 +231,7 @@ void fbdraw_text_vertical(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text
 }
 
 void fbdraw_text_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect,
-                       const char* text, const lv_font_t* font, uint32_t color) {
+                       const char* text, const lv_font_t* font, uint32_t color, int32_t letter_space) {
     // 1. 分配临时缓冲，宽高互换（与 fbdraw_barcode_rot90 相同模式）
     int buf_w = rect->h;
     int buf_h = rect->w;
@@ -227,7 +241,7 @@ void fbdraw_text_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect,
     // 2. 在临时缓冲中水平渲染文字
     fbdraw_fb_t tmp_fb = { .vaddr = buf, .width = buf_w, .height = buf_h };
     fbdraw_rect_t tmp_rect = { .x = 0, .y = 0, .w = buf_w, .h = buf_h };
-    fbdraw_text(&tmp_fb, &tmp_rect, text, font, color, 0);
+    fbdraw_text(&tmp_fb, &tmp_rect, text, font, color, 0, letter_space);
 
     // 3. 顺时针旋转 +90° (CW) 并写入目标
     for (int y = rect->y; y < rect->y + rect->h; y++) {
@@ -236,8 +250,10 @@ void fbdraw_text_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect,
             int local_y = (rect->w - 1) - (x - rect->x);
             if (local_x < 0 || local_x >= buf_w || local_y < 0 || local_y >= buf_h) continue;
             uint32_t pixel = buf[local_y * buf_w + local_x];
-            if (((pixel >> 24) & 0xFF) == 0) continue;
-            fb->vaddr[y * fb->width + x] = pixel;
+            uint8_t pa = (pixel >> 24) & 0xFF;
+            if (pa == 0) continue;
+            uint32_t *dst = &fb->vaddr[y * fb->width + x];
+            *dst = argb8888_blend_over(*dst, (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF, pa);
         }
     }
 
@@ -478,7 +494,7 @@ void fbdraw_barcode_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* str,
     dst_rect.w = buf_w;
     dst_rect.h = font_height;
 
-    fbdraw_text(&fbdst, &dst_rect, str, font, 0xFF000000, 0);
+    fbdraw_text(&fbdst, &dst_rect, str, font, 0xFF000000, 0, 0);
 
     for(int y = rect->y; y < rect->y + rect->h; y++){
         for(int x = rect->x; x < rect->x + rect->w; x++){
