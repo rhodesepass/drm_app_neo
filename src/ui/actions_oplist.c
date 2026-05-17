@@ -219,6 +219,8 @@ void add_oplist_btn_to_group(){
         }
     }
     lv_group_add_obj(groups.op, objects.mainmenu_btn);
+    lv_group_add_obj(groups.op, objects.refresh_oplist_btn);
+
 }
 
 void ui_oplist_focus_current_operator(){
@@ -238,4 +240,12 @@ void ui_oplist_focus_current_operator(){
             return;
         }
     }
+}
+
+// EEZ 回调
+void action_refresh_oplist(lv_event_t *e) {
+    log_debug("action_refresh_oplist");
+    ui_schedule_screen_transition(curr_screen_t_SCREEN_SPINNER);
+    prts_request_reload_assets(g_ui_oplist.prts);
+
 }

@@ -51,6 +51,8 @@ typedef enum {
     PRTS_REQUEST_NONE = 0,
     // 请求切换到指定干员
     PRTS_REQUEST_SET_OPERATOR,
+    // 请求重新从磁盘加载干员
+    PRTS_REQUEST_RELOAD_ASSETS
 } prts_request_type_t;
 
 
@@ -87,9 +89,12 @@ typedef struct {
 
     spsc_bq_t req_queue;
     atomic_int is_auto_switch_blocked;
+
+    bool use_sd;
 } prts_t;
 
 void prts_init(prts_t* prts,overlay_t* overlay,bool use_sd);
 void prts_destroy(prts_t* prts);
 
 void prts_request_set_operator(prts_t* prts,int operator_index);
+void prts_request_reload_assets(prts_t* prts);

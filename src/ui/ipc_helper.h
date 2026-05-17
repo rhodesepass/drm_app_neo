@@ -5,6 +5,7 @@
 typedef enum {
     UI_IPC_HELPER_REQ_TYPE_SET_CURRENT_SCREEN = 0,
     UI_IPC_HELPER_REQ_TYPE_FORCE_DISPIMG = 1,
+    UI_IPC_HELPER_REQ_TYPE_REFRESH_OPLIST = 2,
 } ui_ipc_helper_req_type_t;
 
 typedef struct {

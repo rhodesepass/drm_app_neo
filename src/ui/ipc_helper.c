@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <ui/actions_displayimg.h>
 #include <ui/scr_transition.h>
+#include <ui/actions_oplist.h>
 
 // 因为LVGL不是线程安全的。所有UI的写入，都需要在lvgl的线程内部自己完成。
 // 所以需要一个helper来帮助我们完成这个工作。
@@ -12,6 +13,7 @@
 static spsc_bq_t g_ui_ipc_queue;
 static lv_timer_t *g_ui_ipc_timer = NULL;
 extern objects_t objects;
+extern prts_t g_prts;
 
 static void ui_ipc_helper_timer_cb(lv_timer_t *timer){
     ui_ipc_helper_req_t *req;
@@ -22,6 +24,9 @@ static void ui_ipc_helper_timer_cb(lv_timer_t *timer){
                 break;
             case UI_IPC_HELPER_REQ_TYPE_FORCE_DISPIMG:
                 ui_displayimg_force_dispimg(req->dispimg_path);
+                break;
+            case UI_IPC_HELPER_REQ_TYPE_REFRESH_OPLIST:
+                ui_oplist_init(&g_prts);
                 break;
         }
         if(req->on_heap){

@@ -40,6 +40,10 @@ void settings_set_usb_mode(usb_mode_t usb_mode){
             log_info("setting usb mode to RNDIS");
             system("usbctl rndis &");
             break;
+        case usb_mode_t_EPMANAGER:
+            log_info("setting usb mode to EPMANAGER");
+            system("usbctl epass &");
+            break;
         default:
             log_info("setting usb mode to NONE");
             system("usbctl none &");
@@ -95,7 +99,7 @@ void settings_init(settings_t *settings){
     settings->brightness = 5;
     settings->switch_interval = sw_interval_t_SW_INTERVAL_5MIN;
     settings->switch_mode = sw_mode_t_SW_MODE_SEQUENCE;
-    settings->usb_mode = usb_mode_t_MTP;
+    settings->usb_mode = usb_mode_t_EPMANAGER;
     settings->ctrl_word.lowbat_trip = 1;
     settings->ctrl_word.no_intro_block = 0;
     settings->ctrl_word.no_overlay_block = 0;

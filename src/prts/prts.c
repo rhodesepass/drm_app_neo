@@ -19,6 +19,7 @@
 #include "render/mediaplayer.h"
 #include "ui/scr_transition.h"
 #include "utils/misc.h"
+#include "ui/ipc_helper.h"
 
 extern settings_t g_settings;
 
@@ -50,7 +51,7 @@ inline static bool should_switch_by_interval(prts_t* prts){
     }
 
 
-    if(g_settings.switch_mode == sw_mode_t_SW_RANDOM_MANUAL){
+    if(g_settings.switch_mode == sw_mode_t_SW_MODE_MANUAL){
         return false;
     }
     else{
@@ -446,6 +447,75 @@ static void switch_operator(prts_t* prts,int target_index){
 }
 
 
+static void prts_reload_assets(prts_t* prts,bool is_first_load) {
+
+    uuid_t operator_uuid_before;
+
+    atomic_store(&prts->is_auto_switch_blocked,1);
+
+    if(!is_first_load){
+        memcpy(&operator_uuid_before, &prts->operators[prts->operator_index].uuid, sizeof(uuid_t));
+    }
+
+    prts->parse_log_f = fopen(PRTS_OPERATOR_PARSE_LOG, "w");
+    if(prts->parse_log_f == NULL){
+        log_error("failed to open parse log file: %s", PRTS_OPERATOR_PARSE_LOG);
+    }
+    prts->operator_count = 0;
+
+    int errcnt = prts_operator_scan_assets(prts, PRTS_ASSET_DIR,PRTS_SOURCE_NAND);
+
+    if(prts->use_sd){
+        log_info("==> PRTS will scan SD assets directory: %s", PRTS_ASSET_DIR_SD);
+        errcnt += prts_operator_scan_assets(prts, PRTS_ASSET_DIR_SD,PRTS_SOURCE_SD);
+    }
+
+    if(errcnt != 0){
+        ui_warning(UI_WARNING_ASSET_ERROR);
+        log_warn("failed to load assets, error count: %d", errcnt);
+    }
+
+    if(prts->operator_count == 0){
+        log_warn("no assets loaded, using fallback");
+        ui_warning(UI_WARNING_NO_ASSETS);
+        prts_operator_try_load(prts, &prts->operators[0], PRTS_FALLBACK_ASSET_DIR, PRTS_SOURCE_NAND, 0);
+        prts->operator_count = 1;
+    }
+
+#ifndef APP_RELEASE
+    for(int i = 0; i < prts->operator_count; i++){
+        log_debug("========================");
+        log_debug("operator[%d]:", i);
+        prts_operator_log_entry(&prts->operators[i]);
+    }
+#endif // APP_RELEASE
+
+    if(!is_first_load){
+        int i;
+        for(i = 0; i < prts->operator_count; i++){
+            if(uuid_compare(&operator_uuid_before, &prts->operators[i].uuid)){
+                prts->operator_index = i;
+                break;
+            }
+        }
+
+        if(i == prts->operator_count){
+            log_warn("old operator not found, try to switch to first operator");
+            prts->operator_index = 0;
+            switch_operator(prts, 0);
+        }
+
+        // 通知UI刷新干员列表
+        log_info("==> PRTS will notify UI to refresh oplist");
+        ui_ipc_helper_req_t* req = malloc(sizeof(ui_ipc_helper_req_t));
+        req->type = UI_IPC_HELPER_REQ_TYPE_REFRESH_OPLIST;
+        req->on_heap = true;
+
+        ui_ipc_helper_request(req);
+    }
+
+    atomic_store(&prts->is_auto_switch_blocked,0);
+}
 
 static void prts_tick_cb(void* userdata,bool is_last){
     prts_t* prts = (prts_t*)userdata;
@@ -461,6 +531,14 @@ static void prts_tick_cb(void* userdata,bool is_last){
         switch(req->type){
             case PRTS_REQUEST_SET_OPERATOR:
                 target_operator_index = req->operator_index;
+                break;
+            case PRTS_REQUEST_RELOAD_ASSETS:
+                // 都要切换素材了 先别处理当前请求了，
+                if(prts->state != PRTS_STATE_IDLE){
+                    spsc_bq_push(&prts->req_queue, (void *)req);
+                    return;
+                }
+                prts_reload_assets(prts, false);
                 break;
             default:
                 log_error("invalid request type: %d", req->type);
@@ -506,7 +584,7 @@ static void prts_tick_cb(void* userdata,bool is_last){
     return;
 }
 
-
+// 由其他线程调用，请求切换干员
 void prts_request_set_operator(prts_t* prts,int operator_index){
     prts_request_t* req = malloc(sizeof(prts_request_t));
     req->type = PRTS_REQUEST_SET_OPERATOR;
@@ -515,46 +593,24 @@ void prts_request_set_operator(prts_t* prts,int operator_index){
     spsc_bq_push(&prts->req_queue, (void *)req);
 }
 
+// 由其他线程调用，请求重新从磁盘加载干员
+void prts_request_reload_assets(prts_t* prts){
+    prts_request_t* req = malloc(sizeof(prts_request_t));
+    req->type = PRTS_REQUEST_RELOAD_ASSETS;
+    req->on_heap = true;
+    spsc_bq_push(&prts->req_queue, (void *)req);
+}
 
 void prts_init(prts_t* prts, overlay_t* overlay, bool use_sd){
     log_info("==> PRTS Initializing...");
     prts->overlay = overlay;
-    prts->parse_log_f = fopen(PRTS_OPERATOR_PARSE_LOG, "w");
-    if(prts->parse_log_f == NULL){
-        log_error("failed to open parse log file: %s", PRTS_OPERATOR_PARSE_LOG);
-    }
-    prts->operator_count = 0;
-
-    int errcnt = prts_operator_scan_assets(prts, PRTS_ASSET_DIR,PRTS_SOURCE_NAND);
-
-    if(use_sd){
-        log_info("==> PRTS will scan SD assets directory: %s", PRTS_ASSET_DIR_SD);
-        errcnt += prts_operator_scan_assets(prts, PRTS_ASSET_DIR_SD,PRTS_SOURCE_SD);
-    }
-
-    if(errcnt != 0){
-        ui_warning(UI_WARNING_ASSET_ERROR);
-        log_warn("failed to load assets, error count: %d", errcnt);
-    }
-
-    if(prts->operator_count == 0){
-        log_warn("no assets loaded, using fallback");
-        ui_warning(UI_WARNING_NO_ASSETS);
-        prts_operator_try_load(prts, &prts->operators[0], PRTS_FALLBACK_ASSET_DIR, PRTS_SOURCE_NAND, 0);
-        prts->operator_count = 1;
-    }
-
-#ifndef APP_RELEASE
-    for(int i = 0; i < prts->operator_count; i++){
-        log_debug("========================");
-        log_debug("operator[%d]:", i);
-        prts_operator_log_entry(&prts->operators[i]);
-    }
-#endif // APP_RELEASE
+    prts->use_sd = use_sd;
 
     atomic_store(&prts->is_auto_switch_blocked, 0);
 
     spsc_bq_init(&prts->req_queue, 10);
+
+    prts_reload_assets(prts, true);
 
     log_info("==> PRTS will perform first switch...");
     // 进行第一次干员切换

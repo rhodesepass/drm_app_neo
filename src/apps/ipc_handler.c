@@ -148,6 +148,28 @@ inline static int handle_prts_set_blocked_auto_switch(apps_t *apps, ipc_req_t *r
     return calculate_ipc_resp_size_by_req(req->type);
 }
 
+inline static int handle_prts_reload_assets(apps_t *apps, ipc_req_t *req, ipc_resp_t *resp){
+    if(apps->prts == NULL){
+        log_error("handle_prts_reload_assets: prts is NULL");
+        resp->type = IPC_RESP_ERROR_INVALID_REQUEST;
+        return sizeof(ipc_resp_type_t);
+    }
+    ui_ipc_helper_req_t* helper_req = (ui_ipc_helper_req_t*)malloc(sizeof(ui_ipc_helper_req_t));
+    if(helper_req == NULL){
+        log_error("handle_prts_reload_assets: malloc failed");
+        resp->type = IPC_RESP_ERROR_NOMEM;
+        return sizeof(ipc_resp_type_t);
+    }
+    helper_req->type = UI_IPC_HELPER_REQ_TYPE_SET_CURRENT_SCREEN;
+    helper_req->target_screen = curr_screen_t_SCREEN_SPINNER;
+    helper_req->on_heap = true;
+    ui_ipc_helper_request(helper_req);
+
+    prts_request_reload_assets(apps->prts);
+    resp->type = IPC_RESP_OK;
+    return calculate_ipc_resp_size_by_req(req->type);
+}
+
 // =========================================
 // Settings 子模块 处理方法
 // =========================================
@@ -491,6 +513,8 @@ int apps_ipc_handler(apps_t *apps, uint8_t* rxbuf, size_t rxlen,uint8_t* txbuf, 
             return handle_prts_get_operator_info(apps, req, resp);
         case IPC_REQ_PRTS_SET_BLOCKED_AUTO_SWITCH:
             return handle_prts_set_blocked_auto_switch(apps, req, resp);
+        case IPC_REQ_PRTS_RELOAD_ASSETS:
+            return handle_prts_reload_assets(apps, req, resp);
         case IPC_REQ_SETTINGS_GET:
             return handle_settings_get(req, resp);
         case IPC_REQ_SETTINGS_SET:

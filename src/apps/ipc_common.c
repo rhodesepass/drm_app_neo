@@ -29,6 +29,9 @@ size_t calculate_ipc_req_size(ipc_req_type_t type){
         case IPC_REQ_PRTS_SET_BLOCKED_AUTO_SWITCH:
             size += sizeof(ipc_req_prts_set_blocked_auto_switch_data_t);
             break;
+        case IPC_REQ_PRTS_RELOAD_ASSETS:
+            // No additional data
+            break;
         case IPC_REQ_SETTINGS_GET:
             // No additional data
             break;
@@ -83,6 +86,9 @@ size_t calculate_ipc_resp_size_by_req(ipc_req_type_t type){
             size += sizeof(ipc_prts_operator_info_data_t);
             break;
         case IPC_REQ_PRTS_SET_BLOCKED_AUTO_SWITCH:
+            // No additional data
+            break;
+        case IPC_REQ_PRTS_RELOAD_ASSETS:
             // No additional data
             break;
         case IPC_REQ_SETTINGS_GET:
@@ -141,6 +147,9 @@ void ipc_print_req_type(ipc_req_type_t type){
             break;
         case IPC_REQ_PRTS_SET_BLOCKED_AUTO_SWITCH:
             log_debug("IPC_REQ_PRTS_SET_BLOCKED_AUTO_SWITCH");
+            break;
+        case IPC_REQ_PRTS_RELOAD_ASSETS:
+            log_debug("IPC_REQ_PRTS_RELOAD_ASSETS");
             break;
         case IPC_REQ_SETTINGS_GET:
             log_debug("IPC_REQ_SETTINGS_GET");
