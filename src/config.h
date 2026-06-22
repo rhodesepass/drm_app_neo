@@ -69,12 +69,17 @@
 
 
 // ========== Screen Configuration ==========
-#define USE_360_640_SCREEN
+// #define USE_360_640_SCREEN
 // #define USE_480_854_SCREEN
-// #define USE_720_1280_SCREEN
+#define USE_720_1280_SCREEN
 
 // resolution alternatives.
+// 设计基准为 360x640 (UI_SCALE=1)。T113 为整数 2x (UI_SCALE=2)，
+// 同比例 9:16，所有坐标/尺寸均为基准值的整数倍，详见 ui_metrics.h 的 S()。
 #if defined(USE_360_640_SCREEN)
+    // 单一缩放系数：F1C200s 基准档
+    #define UI_SCALE 1
+
     #define VIDEO_WIDTH 384
     #define VIDEO_HEIGHT 640
     #define UI_WIDTH 360
@@ -98,14 +103,14 @@
     #define UI_WARNING_Y 565
     #define UI_CONFIRM_Y (UI_HEIGHT - 125)
 
-    
+
     // UI-信息Overlay叠层 左上角的矩形偏移量
     #define OVERLAY_ARKNIGHTS_RECT_OFFSET_X 60
 
     // UI-信息Overlay叠层 下方信息区域 左偏移量
     #define OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X 70
 
-    
+
     // UI-信息Overlay叠层 下方信息区域 干员名 偏移量
     #define OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y 415
 
@@ -134,12 +139,72 @@
     #define OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y 100
 
 
-    
-    
+
+
 #elif defined(USE_480_854_SCREEN)
     #error "USE_480_854_SCREEN is not supported yet!"
 #elif defined(USE_720_1280_SCREEN)
-    #error "USE_720_1280_SCREEN is not supported yet!"
+    // 单一缩放系数：T113 档，整数 2x，全部为 360x640 基准的 2 倍
+    #define UI_SCALE 2
+
+    #define VIDEO_WIDTH 768
+    #define VIDEO_HEIGHT 1280
+    #define UI_WIDTH 720
+    #define UI_HEIGHT 1280
+    #define OVERLAY_WIDTH 720
+    #define OVERLAY_HEIGHT 1280
+    #define SCREEN_WIDTH 720
+    #define SCREEN_HEIGHT 1280
+
+    // 可见槽位是数量，不随分辨率缩放；仅条目高度 2x
+    #define UI_OPLIST_VISIBLE_SLOTS 8
+    #define UI_OPLIST_ITEM_HEIGHT 160
+
+    #define UI_APP_VISIBLE_SLOTS 12
+    #define UI_APP_ITEM_HEIGHT 160
+
+
+    // 干员列表和亮度设置的Y坐标
+    #define UI_OPLIST_Y 500
+    #define UI_SPINNER_INTRO_Y 1160
+    #define UI_MAINMENU_Y 380
+    #define UI_WARNING_Y 1130
+    #define UI_CONFIRM_Y (UI_HEIGHT - 250)
+
+
+    // UI-信息Overlay叠层 左上角的矩形偏移量
+    #define OVERLAY_ARKNIGHTS_RECT_OFFSET_X 120
+
+    // UI-信息Overlay叠层 下方信息区域 左偏移量
+    #define OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X 140
+
+
+    // UI-信息Overlay叠层 下方信息区域 干员名 偏移量
+    #define OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y 830
+
+    #define OVERLAY_ARKNIGHTS_UPPERLINE_OFFSET_Y 910
+    #define OVERLAY_ARKNIGHTS_LOWERLINE_OFFSET_Y 950
+    #define OVERLAY_ARKNIGHTS_LINE_WIDTH 560
+
+    #define OVERLAY_ARKNIGHTS_OPCODE_OFFSET_Y 914
+    #define OVERLAY_ARKNIGHTS_STAFF_TEXT_OFFSET_Y 960
+
+    #define OVERLAY_ARKNIGHTS_CLASS_ICON_OFFSET_Y 1050
+    #define OVERLAY_ARKNIGHTS_CLASS_ICON_WIDTH 100
+    #define OVERLAY_ARKNIGHTS_CLASS_ICON_HEIGHT 100
+    // UI-信息Overlay叠层 左下角“- Arknights -”矩形文字 偏移量
+    #define OVERLAY_ARKNIGHTS_AK_BAR_OFFSET_Y 1156
+    // UI-信息Overlay叠层 下方信息区域 辅助文字 偏移量
+    #define OVERLAY_ARKNIGHTS_AUX_TEXT_OFFSET_Y 1184
+    #define OVERLAY_ARKNIGHTS_AUX_TEXT_LINE_HEIGHT 30
+
+    // UI-信息Overlay叠层 左下角 条码 偏移量
+    #define OVERLAY_ARKNIGHTS_BARCODE_OFFSET_Y 900
+    #define OVERLAY_ARKNIGHTS_BARCODE_WIDTH 100
+    #define OVERLAY_ARKNIGHTS_BARCODE_HEIGHT 360
+
+    // UI-信息Overlay叠层 右上角 装饰箭头 偏移量
+    #define OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y 200
 #endif // USE_360_640_SCREEN, USE_480_854_SCREEN, USE_720_1280_SCREEN
 
 // ========== DRM Warpper Layer Configuration ==========

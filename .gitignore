@@ -5,3 +5,6 @@ build/
 epconfig.json
 appconfig.json
 001-dev-doc/
+
+# 字库为大二进制 (思源全量待 pyftsubset 子集化)，本地存放、不入 git 历史
+font/

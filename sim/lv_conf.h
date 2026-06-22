@@ -153,7 +153,7 @@
 /** Stack size of drawing thread.
  * NOTE: If FreeType or ThorVG is enabled, it is recommended to set it to 32KB or more.
  */
-#define LV_DRAW_THREAD_STACK_SIZE    (32 * 1024)        /**< [bytes] — FreeType 时需 >=32KB */
+#define LV_DRAW_THREAD_STACK_SIZE    (256 * 1024)       /**< [bytes] — FreeType CFF 解释器吃栈, sim 给足 */
 
 /** Thread priority of the drawing task.
  *  Higher values mean higher priority.
@@ -647,10 +647,11 @@
  *  #define LV_FONT_CUSTOM_DECLARE   LV_FONT_DECLARE(my_font_1) LV_FONT_DECLARE(my_font_2)
  *  @endcode
  */
-#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(ui_font_sourcesans_reg_14)
+/* sim: 不链接 EEZ 烘焙字体, 默认字体用内建 montserrat (仅作 LVGL 兜底, 实际文本走 FreeType) */
+#define LV_FONT_CUSTOM_DECLARE
 
 /** Always set a default font */
-#define LV_FONT_DEFAULT &ui_font_sourcesans_reg_14
+#define LV_FONT_DEFAULT &lv_font_montserrat_14
 
 /** Enable handling large font and/or fonts with a lot of characters.
  *  The limit depends on the font size, font face and bpp.
@@ -825,8 +826,8 @@
 /** A simple, impressive and very complete theme */
 #define LV_USE_THEME_DEFAULT 1
 #if LV_USE_THEME_DEFAULT
-    /** 0: Light mode; 1: Dark mode */
-    #define LV_THEME_DEFAULT_DARK 0
+    /** 0: Light mode; 1: Dark mode (与设备端一致, 深色) */
+    #define LV_THEME_DEFAULT_DARK 1
 
     /** 1: Enable grow on press */
     #define LV_THEME_DEFAULT_GROW 1
@@ -976,8 +977,8 @@
 /** FreeType library */
 #define LV_USE_FREETYPE 1
 #if LV_USE_FREETYPE
-    /** Let FreeType use LVGL memory and file porting (走 lv_fs, 盘符 'A') */
-    #define LV_FREETYPE_USE_LVGL_PORT 1
+    /** sim: 用 FreeType 自带文件 IO (直接传真实路径), 不走 lv_fs */
+    #define LV_FREETYPE_USE_LVGL_PORT 0
 
     /** Cache count of glyphs in FreeType, i.e. number of glyphs that can be cached.
      *  The higher the value, the more memory will be used. */
@@ -1216,7 +1217,7 @@
  *==================*/
 
 /** Use SDL to open window on PC and handle mouse and keyboard. */
-#define LV_USE_SDL              0
+#define LV_USE_SDL              1
 #if LV_USE_SDL
     #define LV_SDL_INCLUDE_PATH     <SDL2/SDL.h>
     #define LV_SDL_RENDER_MODE      LV_DISPLAY_RENDER_MODE_DIRECT   /**< LV_DISPLAY_RENDER_MODE_DIRECT is recommended for best performance */

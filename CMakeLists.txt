@@ -66,6 +66,7 @@ find_package(PNG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
+pkg_check_modules(FREETYPE REQUIRED freetype2)
 
 # ============================================================================
 # LVGL 配置
@@ -75,6 +76,8 @@ set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/src/lv_conf.h CACHE PATH "lv_conf.h p
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "Build LVGL examples" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "Build LVGL demos" FORCE)
 add_subdirectory(lvgl)
+# LVGL 开启 LV_USE_FREETYPE 后，其适配源需要 freetype 头
+target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS})
 
 # ============================================================================
 # 源文件
@@ -100,6 +103,8 @@ set(EPASS_SOURCES
   src/render/layer_animation.c
   src/render/lvgl_drm_warp.c
   src/render/fbdraw.c
+
+  src/ui/font_registry.c
 
   ${UI_SOURCES}
   src/ui/filemanager.c
@@ -148,6 +153,7 @@ target_include_directories(epass_drm_app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/eez_design/icon_header_gen
   ${LIBDRM_INCLUDE_DIRS}
   ${PNG_INCLUDE_DIR}
+  ${FREETYPE_INCLUDE_DIRS}
 )
 
 
@@ -200,6 +206,7 @@ target_link_libraries(epass_drm_app
   ${LIBEVDEV_LIBRARIES}
   ${LIBDRM_LIBRARIES}
   ${PNG_LIBRARIES}
+  ${FREETYPE_LIBRARIES}
   lvgl
 )
 
