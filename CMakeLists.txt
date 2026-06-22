@@ -162,8 +162,22 @@ target_include_directories(epass_drm_app PRIVATE
 # ============================================================================
 string(TIMESTAMP COMPILE_TIME "%Y-%m-%d %H:%M:%S")
 
+# 屏目标由构建注入 (覆盖 config.h 的兜底默认)
+set(EPASS_SCREEN "360x640" CACHE STRING "Target screen: 360x640 | 480x854 | 720x1280")
+if(EPASS_SCREEN STREQUAL "360x640")
+  set(EPASS_SCREEN_DEFINE USE_360_640_SCREEN)
+elseif(EPASS_SCREEN STREQUAL "480x854")
+  set(EPASS_SCREEN_DEFINE USE_480_854_SCREEN)
+elseif(EPASS_SCREEN STREQUAL "720x1280")
+  set(EPASS_SCREEN_DEFINE USE_720_1280_SCREEN)
+else()
+  message(FATAL_ERROR "Invalid EPASS_SCREEN: ${EPASS_SCREEN} (use 360x640 | 480x854 | 720x1280)")
+endif()
+message(STATUS "Screen target: ${EPASS_SCREEN} -> ${EPASS_SCREEN_DEFINE}")
+
 target_compile_definitions(epass_drm_app PRIVATE
   _DEFAULT_SOURCE
+  ${EPASS_SCREEN_DEFINE}
   EPASS_GIT_VERSION="${GIT_COMMIT}"
   EPASS_GIT_TAG="${GIT_TAG}"
   COMPILE_TIME="${COMPILE_TIME}"

@@ -37,9 +37,6 @@ add_executable(epass_ui_sim
   ${REPO}/src/ui_screens/styles.c
   ${REPO}/src/ui/font_registry.c
   ${REPO}/src/utils/log.c
-
-  # 复用 EEZ 的 PRTS logo 图片数据 (纯数据, 无 EEZ flow 依赖)
-  ${REPO}/eez_design/src/ui/ui_image_prts.c
 )
 
 target_include_directories(epass_ui_sim PRIVATE
@@ -53,9 +50,25 @@ target_include_directories(epass_ui_sim PRIVATE
   ${FREETYPE_INCLUDE_DIRS}
 )
 
-# 字体目录: sim 用仓库内 font/ 的绝对路径 (FreeType 直接读, 不走 lv_fs, 无盘符前缀)
+# 屏目标由构建注入 (覆盖 config.h 的兜底默认)：cmake -DEPASS_SCREEN=720x1280
+set(EPASS_SCREEN "360x640" CACHE STRING "Target screen: 360x640 | 480x854 | 720x1280")
+if(EPASS_SCREEN STREQUAL "360x640")
+  set(EPASS_SCREEN_DEFINE USE_360_640_SCREEN)
+elseif(EPASS_SCREEN STREQUAL "480x854")
+  set(EPASS_SCREEN_DEFINE USE_480_854_SCREEN)
+elseif(EPASS_SCREEN STREQUAL "720x1280")
+  set(EPASS_SCREEN_DEFINE USE_720_1280_SCREEN)
+else()
+  message(FATAL_ERROR "Invalid EPASS_SCREEN: ${EPASS_SCREEN} (use 360x640 | 480x854 | 720x1280)")
+endif()
+message(STATUS "Screen target: ${EPASS_SCREEN} -> ${EPASS_SCREEN_DEFINE}")
+
+# 字体目录: FreeType 直接读, 不走 lv_fs, 无盘符前缀
+# 图片目录: 走 lv_fs (libpng 解码), 需带盘符 'A:' 前缀
 target_compile_definitions(epass_ui_sim PRIVATE
+  ${EPASS_SCREEN_DEFINE}
   FONT_REGISTRY_DIR="${REPO}/font"
+  UI_IMG_DIR="A:${REPO}/font"
 )
 
 target_compile_options(epass_ui_sim PRIVATE -Wall -Wextra -Wno-unused-parameter)

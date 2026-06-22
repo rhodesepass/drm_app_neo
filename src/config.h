@@ -69,9 +69,12 @@
 
 
 // ========== Screen Configuration ==========
-// #define USE_360_640_SCREEN
-// #define USE_480_854_SCREEN
-#define USE_720_1280_SCREEN
+// 屏目标由构建系统注入：cmake -DEPASS_SCREEN=360x640 | 480x854 | 720x1280
+// (设备 CMakeLists 与 sim/CMakeLists 都支持该变量)。
+// 未注入时兜底默认 360x640 (F1C200s 主目标)，保证独立/clangd 也能解析。
+#if !defined(USE_360_640_SCREEN) && !defined(USE_480_854_SCREEN) && !defined(USE_720_1280_SCREEN)
+#define USE_360_640_SCREEN
+#endif
 
 // resolution alternatives.
 // 设计基准为 360x640 (UI_SCALE=1)。T113 为整数 2x (UI_SCALE=2)，
