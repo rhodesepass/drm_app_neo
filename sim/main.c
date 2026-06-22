@@ -7,6 +7,7 @@
 //
 #include <lvgl/lvgl.h>
 #include <SDL2/SDL.h>
+#include <stdlib.h>
 
 #include "config.h"
 #include "ui_metrics.h"
@@ -43,6 +44,12 @@ int main(int argc, char *argv[])
     screens_init();
     if (kb) {
         lv_indev_set_group(kb, screens_group());
+    }
+
+    // 调试便利：SIM_SCREEN=<id> 直接跳到某屏 (见 screen_id_t 顺序)
+    const char *scr = getenv("SIM_SCREEN");
+    if (scr) {
+        screen_show((screen_id_t)atoi(scr));
     }
 
     while (1) {

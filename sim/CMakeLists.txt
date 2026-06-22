@@ -33,8 +33,18 @@ add_executable(epass_ui_sim
   ${CMAKE_CURRENT_SOURCE_DIR}/sim_plane.c
 
   ${REPO}/src/ui_screens/screen_manager.c
-  ${REPO}/src/ui_screens/screens/screen_mainmenu.c
   ${REPO}/src/ui_screens/styles.c
+  ${REPO}/src/ui_screens/screens/screen_common.c
+  ${REPO}/src/ui_screens/screens/screen_mainmenu.c
+  ${REPO}/src/ui_screens/screens/screen_oplist.c
+  ${REPO}/src/ui_screens/screens/screen_sysinfo.c
+  ${REPO}/src/ui_screens/screens/screen_spinner.c
+  ${REPO}/src/ui_screens/screens/screen_displayimg.c
+  ${REPO}/src/ui_screens/screens/screen_filemanager.c
+  ${REPO}/src/ui_screens/screens/screen_settings.c
+  ${REPO}/src/ui_screens/screens/screen_applist.c
+  ${REPO}/src/ui_screens/screens/screen_warning.c
+  ${REPO}/src/ui_screens/screens/screen_confirm.c
   ${REPO}/src/ui/font_registry.c
   ${REPO}/src/utils/log.c
 )

@@ -21,6 +21,8 @@ typedef enum {
     SCREEN_FILEMANAGER,
     SCREEN_SETTINGS,
     SCREEN_APPLIST,
+    SCREEN_WARNING,
+    SCREEN_CONFIRM,
     SCREEN_COUNT
 } screen_id_t;
 

@@ -6,7 +6,15 @@
 #include <stdint.h>
 
 #include "screens/screen_mainmenu.h"
-// 铺其余屏时在此 include 各 screen_xxx.h
+#include "screens/screen_oplist.h"
+#include "screens/screen_sysinfo.h"
+#include "screens/screen_spinner.h"
+#include "screens/screen_displayimg.h"
+#include "screens/screen_filemanager.h"
+#include "screens/screen_settings.h"
+#include "screens/screen_applist.h"
+#include "screens/screen_warning.h"
+#include "screens/screen_confirm.h"
 
 typedef lv_obj_t *(*screen_create_fn)(void);
 typedef void (*screen_tick_fn)(void);
@@ -39,14 +47,16 @@ static void register_screens(void)
 {
     // 停靠 Y：mainmenu/oplist 是"滑到下方、上方露出立绘"的卡片；
     // 其余屏停靠 0 (满屏)；spinner 停在 SCREEN_HEIGHT (藏到屏幕下方)。
-    s_screens[SCREEN_MAINMENU]   = (screen_entry_t){ screen_mainmenu_create, screen_mainmenu_tick, NULL, UI_MAINMENU_Y };
-    s_screens[SCREEN_OPLIST]     = (screen_entry_t){ NULL, NULL, NULL, UI_OPLIST_Y };
-    s_screens[SCREEN_SYSINFO]    = (screen_entry_t){ NULL, NULL, NULL, 0 };
-    s_screens[SCREEN_SPINNER]    = (screen_entry_t){ NULL, NULL, NULL, SCREEN_HEIGHT };
-    s_screens[SCREEN_DISPLAYIMG] = (screen_entry_t){ NULL, NULL, NULL, 0 };
-    s_screens[SCREEN_FILEMANAGER]= (screen_entry_t){ NULL, NULL, NULL, 0 };
-    s_screens[SCREEN_SETTINGS]   = (screen_entry_t){ NULL, NULL, NULL, 0 };
-    s_screens[SCREEN_APPLIST]    = (screen_entry_t){ NULL, NULL, NULL, 0 };
+    s_screens[SCREEN_MAINMENU]   = (screen_entry_t){ screen_mainmenu_create,   screen_mainmenu_tick,   NULL, UI_MAINMENU_Y };
+    s_screens[SCREEN_OPLIST]     = (screen_entry_t){ screen_oplist_create,     NULL,                   NULL, UI_OPLIST_Y };
+    s_screens[SCREEN_SYSINFO]    = (screen_entry_t){ screen_sysinfo_create,    screen_sysinfo_tick,    NULL, 0 };
+    s_screens[SCREEN_SPINNER]    = (screen_entry_t){ screen_spinner_create,    NULL,                   NULL, SCREEN_HEIGHT };
+    s_screens[SCREEN_DISPLAYIMG] = (screen_entry_t){ screen_displayimg_create, screen_displayimg_tick, NULL, 0 };
+    s_screens[SCREEN_FILEMANAGER]= (screen_entry_t){ screen_filemanager_create,NULL,                   NULL, 0 };
+    s_screens[SCREEN_SETTINGS]   = (screen_entry_t){ screen_settings_create,   screen_settings_tick,   NULL, 0 };
+    s_screens[SCREEN_APPLIST]    = (screen_entry_t){ screen_applist_create,    NULL,                   NULL, 0 };
+    s_screens[SCREEN_WARNING]    = (screen_entry_t){ screen_warning_create,    NULL,                   NULL, UI_WARNING_Y };
+    s_screens[SCREEN_CONFIRM]    = (screen_entry_t){ screen_confirm_create,    NULL,                   NULL, UI_CONFIRM_Y };
 }
 
 static void load_now(screen_id_t id)
