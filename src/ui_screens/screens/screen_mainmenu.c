@@ -10,8 +10,12 @@
 #include "utils/log.h"
 #include "icons.h"
 
-// 主菜单 PRTS logo (复用 EEZ 的纯图片数据资源)
-LV_IMAGE_DECLARE(img_prts);
+// 主菜单 PRTS logo —— 运行时从文件系统(lv_fs)读取 PNG，不烘进二进制。
+// 图片目录(含 lv_fs 盘符)由编译期 UI_IMG_DIR 指定：sim 指向仓库 font/，设备指向 rootfs。
+#ifndef UI_IMG_DIR
+#define UI_IMG_DIR "A:/root/res"
+#endif
+#define LOGO_PRTS_PATH UI_IMG_DIR "/prts_64_inv.png"
 
 // 按钮图标实际像素 (360 基准, 随 S() 缩放, FreeType 矢量栅格化)
 #define PX_BTN_ICON 40
@@ -80,19 +84,19 @@ static lv_obj_t *grid_btn(lv_obj_t *parent, int x, int y,
 {
     lv_obj_t *o = lv_button_create(parent);
     lv_obj_set_pos(o, S(x), S(y));
-    lv_obj_set_size(o, S(97), S(112));
+    lv_obj_set_size(o, S(95), S(110));
     lv_obj_add_event_cb(o, cb, LV_EVENT_PRESSED, NULL);
     add_style_main_btn(o);
 
     lv_obj_t *ic = make_icon(o, icon, PX_BTN_ICON);
     lv_obj_set_style_align(ic, LV_ALIGN_TOP_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_y(ic, S(8));
+    lv_obj_set_y(ic, S(10));
 
     lv_obj_t *lbl = lv_label_create(o);
     lv_obj_set_size(lbl, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     add_style_label_large(lbl);
     lv_obj_set_style_align(lbl, LV_ALIGN_BOTTOM_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_y(lbl, S(-6));
+    lv_obj_set_y(lbl, S(-10));
     lv_label_set_text(lbl, text);
 
     return track_focus(o);
@@ -103,7 +107,7 @@ static lv_obj_t *small_btn(lv_obj_t *parent, int x, int y, int w,
 {
     lv_obj_t *o = lv_button_create(parent);
     lv_obj_set_pos(o, S(x), S(y));
-    lv_obj_set_size(o, S(w), S(52));
+    lv_obj_set_size(o, S(w), S(50));
     lv_obj_add_event_cb(o, cb, LV_EVENT_PRESSED, NULL);
     add_style_main_small_btn(o);
 
@@ -127,53 +131,55 @@ lv_obj_t *screen_mainmenu_create(void)
     // 顶部：logo + 标题
     {
         lv_obj_t *o = lv_image_create(root);
-        lv_obj_set_pos(o, S(14), S(8));
-        lv_image_set_src(o, &img_prts);
+        lv_obj_set_pos(o, S(15), S(10));
+        lv_image_set_src(o, LOGO_PRTS_PATH);
+        // 资源按 720(2x) 出图：720 档原生 100%(256)，360 档缩到 50%(128)
+        lv_image_set_scale(o, 128 * UI_SCALE);
     }
     {
         lv_obj_t *o = lv_label_create(root);
-        lv_obj_set_pos(o, S(51), S(11));
+        lv_obj_set_pos(o, S(55), S(10));
         add_style_label_large(o);
         lv_label_set_text(o, "主菜单");
     }
 
-    // 六宫格
-    grid_btn(root,  25,  48, UI_ICON_USER,          "干员",   on_oplist);
-    grid_btn(root, 130,  48, UI_ICON_IMAGES,        "扩列图", on_dispimg);
-    grid_btn(root, 235,  48, UI_ICON_BOX_ARCHIVE,   "应用",   on_apps);
-    grid_btn(root,  25, 166, UI_ICON_FILE,          "文件",   on_files);
-    grid_btn(root, 130, 166, UI_ICON_GEAR,          "设置",   on_settings);
-    grid_btn(root, 235, 166, UI_ICON_MOBILE_SCREEN, "设备",   on_sysinfo);
+    // 六宫格 (列 25/130/235，行 50/170，按钮 95x110，间距 10)
+    grid_btn(root,  25,  50, UI_ICON_USER,          "干员",   on_oplist);
+    grid_btn(root, 130,  50, UI_ICON_IMAGES,        "扩列图", on_dispimg);
+    grid_btn(root, 235,  50, UI_ICON_BOX_ARCHIVE,   "应用",   on_apps);
+    grid_btn(root,  25, 170, UI_ICON_FILE,          "文件",   on_files);
+    grid_btn(root, 130, 170, UI_ICON_GEAR,          "设置",   on_settings);
+    grid_btn(root, 235, 170, UI_ICON_MOBILE_SCREEN, "设备",   on_sysinfo);
 
     // 亮度：图标 + 滑条
     {
         lv_obj_t *ic = make_icon(root, UI_ICON_SUN, 28);
-        lv_obj_set_pos(ic, S(25), S(285));
+        lv_obj_set_pos(ic, S(25), S(290));
     }
     {
         self.brightness = lv_slider_create(root);
-        lv_obj_set_pos(self.brightness, S(59), S(292));
-        lv_obj_set_size(self.brightness, S(273), S(13));
+        lv_obj_set_pos(self.brightness, S(60), S(300));
+        lv_obj_set_size(self.brightness, S(270), S(10));
         lv_slider_set_range(self.brightness, 1, 9);
         lv_obj_add_event_cb(self.brightness, on_brightness, LV_EVENT_VALUE_CHANGED, NULL);
         track_focus(self.brightness);
     }
 
-    // 重启 / 关机
-    small_btn(root,  26, 316, 148, "重启程序", on_restart);
-    small_btn(root, 183, 317, 149, "关机",     on_shutdown);
+    // 重启 / 关机 (各 150x50，左右 margin 25 对称，间距 10)
+    small_btn(root,  25, 325, 150, "重启程序", on_restart);
+    small_btn(root, 185, 325, 150, "关机",     on_shutdown);
 
-    // 版本号 (tick 更新)
+    // 版本号 (tick 更新，接在版权第一行后)
     {
         self.version = lv_label_create(root);
-        lv_obj_set_pos(self.version, S(157), S(376));
+        lv_obj_set_pos(self.version, S(160), S(385));
         add_style_label_small(self.version);
         lv_label_set_text(self.version, "");
     }
     // 版权信息
     {
         lv_obj_t *o = lv_label_create(root);
-        lv_obj_set_pos(o, S(23), S(376));
+        lv_obj_set_pos(o, S(25), S(385));
         add_style_label_small(o);
         lv_label_set_text(o,
             "电子通行证播放程序\n罗德岛工程部 白银 <inapp@iccmc.cc> Et al.2026 \n"
