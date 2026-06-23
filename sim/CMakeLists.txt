@@ -25,12 +25,14 @@ add_subdirectory(${REPO}/lvgl ${CMAKE_BINARY_DIR}/lvgl)
 target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})
 
 # ============================================================================
-# 模拟器可执行
+# 模拟器可执行 —— 一次产出两档分辨率 (360x640 / 720x1280)，便于并排对比。
+# 源码与 liblvgl 共用，仅屏宏 (USE_*_SCREEN) 不同 → 每档一个 target。
 # ============================================================================
-add_executable(epass_ui_sim
+set(SIM_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/main.c
   ${CMAKE_CURRENT_SOURCE_DIR}/mock_backend.c
   ${CMAKE_CURRENT_SOURCE_DIR}/sim_plane.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim_sdl_window.c
 
   ${REPO}/src/ui_screens/screen_manager.c
   ${REPO}/src/ui_screens/styles.c
@@ -49,45 +51,36 @@ add_executable(epass_ui_sim
   ${REPO}/src/utils/log.c
 )
 
-target_include_directories(epass_ui_sim PRIVATE
-  ${REPO}
-  ${REPO}/lvgl
-  ${REPO}/src
-  ${REPO}/src/ui_screens
-  ${REPO}/src/ui_screens/screens
-  ${REPO}/eez_design/icon_header_gen
-  ${SDL2_INCLUDE_DIRS}
-  ${FREETYPE_INCLUDE_DIRS}
-)
+# name: 可执行名; screen_define: 屏宏 (覆盖 config.h 的兜底默认)
+function(add_sim_target name screen_define)
+  add_executable(${name} ${SIM_SOURCES})
+  target_include_directories(${name} PRIVATE
+    ${REPO}
+    ${REPO}/lvgl
+    ${REPO}/src
+    ${REPO}/src/ui_screens
+    ${REPO}/src/ui_screens/screens
+    ${REPO}/eez_design/icon_header_gen
+    ${SDL2_INCLUDE_DIRS}
+    ${FREETYPE_INCLUDE_DIRS}
+  )
+  # 字体目录: FreeType 直接读, 不走 lv_fs, 无盘符前缀
+  # 图片目录: 走 lv_fs (libpng 解码), 需带盘符 'A:' 前缀
+  target_compile_definitions(${name} PRIVATE
+    ${screen_define}
+    FONT_REGISTRY_DIR="${REPO}/font"
+    UI_IMG_DIR="A:${REPO}/font"
+  )
+  target_compile_options(${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  target_link_libraries(${name}
+    lvgl
+    ${SDL2_LIBRARIES}
+    ${FREETYPE_LIBRARIES}
+    ${PNG_LIBRARIES}
+    m
+    pthread
+  )
+endfunction()
 
-# 屏目标由构建注入 (覆盖 config.h 的兜底默认)：cmake -DEPASS_SCREEN=720x1280
-set(EPASS_SCREEN "360x640" CACHE STRING "Target screen: 360x640 | 480x854 | 720x1280")
-if(EPASS_SCREEN STREQUAL "360x640")
-  set(EPASS_SCREEN_DEFINE USE_360_640_SCREEN)
-elseif(EPASS_SCREEN STREQUAL "480x854")
-  set(EPASS_SCREEN_DEFINE USE_480_854_SCREEN)
-elseif(EPASS_SCREEN STREQUAL "720x1280")
-  set(EPASS_SCREEN_DEFINE USE_720_1280_SCREEN)
-else()
-  message(FATAL_ERROR "Invalid EPASS_SCREEN: ${EPASS_SCREEN} (use 360x640 | 480x854 | 720x1280)")
-endif()
-message(STATUS "Screen target: ${EPASS_SCREEN} -> ${EPASS_SCREEN_DEFINE}")
-
-# 字体目录: FreeType 直接读, 不走 lv_fs, 无盘符前缀
-# 图片目录: 走 lv_fs (libpng 解码), 需带盘符 'A:' 前缀
-target_compile_definitions(epass_ui_sim PRIVATE
-  ${EPASS_SCREEN_DEFINE}
-  FONT_REGISTRY_DIR="${REPO}/font"
-  UI_IMG_DIR="A:${REPO}/font"
-)
-
-target_compile_options(epass_ui_sim PRIVATE -Wall -Wextra -Wno-unused-parameter)
-
-target_link_libraries(epass_ui_sim
-  lvgl
-  ${SDL2_LIBRARIES}
-  ${FREETYPE_LIBRARIES}
-  ${PNG_LIBRARIES}
-  m
-  pthread
-)
+add_sim_target(epass_ui_sim_360x640  USE_360_640_SCREEN)
+add_sim_target(epass_ui_sim_720x1280 USE_720_1280_SCREEN)

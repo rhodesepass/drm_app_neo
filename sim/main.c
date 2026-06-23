@@ -14,6 +14,7 @@
 #include "ui_screens/screen_manager.h"
 #include "ui/font_registry.h"
 #include "utils/log.h"
+#include "sim_sdl_window.h"
 
 static uint32_t sim_tick_cb(void)
 {
@@ -30,21 +31,19 @@ int main(int argc, char *argv[])
     lv_init();
     lv_tick_set_cb(sim_tick_cb);
 
-    lv_display_t *disp = lv_sdl_window_create(UI_WIDTH, UI_HEIGHT);
+    lv_display_t *disp = sim_window_create(UI_WIDTH, UI_HEIGHT);
     if (!disp) {
         log_error("failed to create SDL window");
         return 1;
     }
 
-    lv_sdl_mouse_create();
-    lv_indev_t *kb = lv_sdl_keyboard_create();
+    // 物理键回调走导航(切屏)，对应设备侧 key_enc_evdev.input_cb。
+    sim_window_set_key_cb(screens_handle_key);
 
     // 字体须在建屏前就绪
     font_registry_init();
     screens_init();
-    if (kb) {
-        lv_indev_set_group(kb, screens_group());
-    }
+    lv_indev_set_group(sim_window_indev(), screens_group());
 
     // 调试便利：SIM_SCREEN=<id> 直接跳到某屏 (见 screen_id_t 顺序)
     const char *scr = getenv("SIM_SCREEN");
