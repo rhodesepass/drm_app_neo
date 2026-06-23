@@ -6,6 +6,9 @@
 
 #define LOGO UI_IMG_DIR "/prts_64_inv.png"
 
+// ---- 生命周期 ----
+void ui_backend_init(void *prts, void *apps) { (void)prts; (void)apps; }
+
 // ---- 通用 / 亮度 ----
 static int32_t s_brightness = 5;
 const char *ui_backend_version(void) { return "SIM-skeleton"; }
@@ -28,9 +31,11 @@ const char *ui_backend_sysinfo_text(void)
 }
 
 // ---- 扩列图 ----
-const char *ui_backend_dispimg_size(void)    { return "1/3"; }
-bool        ui_backend_dispimg_has_warning(void) { return false; }
-const char *ui_backend_dispimg_path(void)    { return "/dispimg/sample_001.png"; }
+const char *ui_backend_dispimg_size(void)    { return "1/1"; }
+bool        ui_backend_dispimg_has_warning(void) { return true; } // sim 无图，显示提示
+const char *ui_backend_dispimg_path(void)    { return ""; }
+bool        ui_backend_dispimg_is_gif(void)  { return false; }
+void        ui_backend_displayimg_key(uint32_t key) { (void)key; }
 
 // ---- 设置 ----
 static int s_sw_mode = 0, s_sw_interval = 1, s_usb_mode = 0;
@@ -61,6 +66,9 @@ bool ui_backend_oplist_get(int idx, ui_op_entry_t *out)
     *out = s_ops[idx];
     return true;
 }
+int  ui_backend_oplist_current(void) { return 0; }
+void ui_backend_oplist_select(int idx) { log_info("[mock] op select %d", idx); }
+void ui_backend_oplist_refresh(void)   { log_info("[mock] op refresh"); }
 
 // ---- 应用列表 ----
 static const ui_app_entry_t s_apps[] = {
@@ -74,3 +82,4 @@ bool ui_backend_applist_get(int idx, ui_app_entry_t *out)
     *out = s_apps[idx];
     return true;
 }
+void ui_backend_applist_select(int idx) { log_info("[mock] app select %d", idx); }

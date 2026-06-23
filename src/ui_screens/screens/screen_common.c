@@ -3,11 +3,17 @@
 #include "styles.h"
 #include "ui_metrics.h"
 
-lv_obj_t *ui_screen_root(void)
+lv_obj_t *ui_screen_root_bare(void)
 {
     lv_obj_t *root = lv_obj_create(NULL);
     lv_obj_set_size(root, S(UI_BASE_WIDTH), S(UI_BASE_HEIGHT));
     lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    return root;
+}
+
+lv_obj_t *ui_screen_root(void)
+{
+    lv_obj_t *root = ui_screen_root_bare();
     lv_obj_add_event_cb(root, ui_autofocus_cb, LV_EVENT_ALL, NULL);
     return root;
 }

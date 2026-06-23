@@ -4,6 +4,7 @@
 
 #include "screen_common.h"
 #include "screen_manager.h"
+#include "screen_confirm.h"
 #include "styles.h"
 #include "ui_backend.h"
 #include "ui_metrics.h"
@@ -17,7 +18,7 @@ static struct {
 } self;
 
 static void on_back(lv_event_t *e)   { (void)e; screen_show(SCREEN_MAINMENU); }
-static void on_format(lv_event_t *e) { (void)e; log_info("[sysinfo] format SD requested"); }
+static void on_format(lv_event_t *e) { (void)e; screen_confirm_show("确定格式化SD卡吗？", ui_hook_format_sd); }
 
 // 仪表盘式 arc (不可拖动) + 中心百分比
 static lv_obj_t *gauge(lv_obj_t *root, int x, int w, lv_obj_t **pct_out)

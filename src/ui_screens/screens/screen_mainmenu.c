@@ -27,8 +27,8 @@ static void on_apps(lv_event_t *e)     { (void)e; screen_show(SCREEN_APPLIST); }
 static void on_files(lv_event_t *e)    { (void)e; screen_show(SCREEN_FILEMANAGER); }
 static void on_settings(lv_event_t *e) { (void)e; screen_show(SCREEN_SETTINGS); }
 static void on_sysinfo(lv_event_t *e)  { (void)e; screen_show(SCREEN_SYSINFO); }
-static void on_restart(lv_event_t *e)  { (void)e; log_info("[mainmenu] restart app"); }
-static void on_shutdown(lv_event_t *e) { (void)e; log_info("[mainmenu] shutdown"); }
+static void on_restart(lv_event_t *e)  { (void)e; ui_hook_restart(); }
+static void on_shutdown(lv_event_t *e) { (void)e; ui_hook_shutdown_request(); }
 
 static void on_brightness(lv_event_t *e)
 {

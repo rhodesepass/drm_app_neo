@@ -21,8 +21,8 @@ static void on_sw_mode(lv_event_t *e)   { ui_backend_sw_mode_set(lv_dropdown_get
 static void on_sw_int(lv_event_t *e)    { ui_backend_sw_interval_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 static void on_usb(lv_event_t *e)       { ui_backend_usb_mode_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 // ---- 按钮 ----
-static void on_clear_cache(lv_event_t *e){ (void)e; log_info("[settings] clear cache"); }
-static void on_srgn(lv_event_t *e)       { (void)e; log_info("[settings] enter srgn_config"); }
+static void on_clear_cache(lv_event_t *e){ (void)e; /* 占位键: 吸收进设置屏首个 release，避免误触 slider */ }
+static void on_srgn(lv_event_t *e)       { (void)e; ui_hook_srgn_config(); }
 static void on_back(lv_event_t *e)       { (void)e; screen_show(SCREEN_MAINMENU); }
 
 static lv_obj_t *make_switch(lv_obj_t *root, int y, const char *text, bool on, lv_event_cb_t cb)

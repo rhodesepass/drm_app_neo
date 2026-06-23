@@ -17,6 +17,8 @@ extern "C" {
 
 // 创建一个满屏根容器 (S 缩放后的 360x640)，无内边距。
 lv_obj_t *ui_screen_root(void);
+// 同上但不挂自动聚焦 cb；需要自管导航 group 的屏(虚拟滚动列表)用。
+lv_obj_t *ui_screen_root_bare(void);
 
 // 左上角统一页头：PRTS logo + 标题。
 void ui_header(lv_obj_t *root, const char *title);

@@ -60,7 +60,6 @@ function(add_sim_target name screen_define)
     ${REPO}/src
     ${REPO}/src/ui_screens
     ${REPO}/src/ui_screens/screens
-    ${REPO}/eez_design/icon_header_gen
     ${SDL2_INCLUDE_DIRS}
     ${FREETYPE_INCLUDE_DIRS}
   )
