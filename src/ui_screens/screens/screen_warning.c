@@ -19,7 +19,7 @@ lv_obj_t *screen_warning_create(void)
     lv_obj_set_style_bg_color(root, lv_color_hex(0xffb93030), LV_PART_MAIN | LV_STATE_DEFAULT);
 
     self.icon = lv_label_create(root);
-    lv_obj_set_pos(self.icon, S(9), S(1));
+    lv_obj_set_pos(self.icon, S(5), S(5));
     add_style_fa_label(self.icon);
     lv_label_set_text(self.icon, self.i[0] ? self.i : UI_ICON_TRIANGLE_EXCLAMATION);
 

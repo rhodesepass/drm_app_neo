@@ -24,6 +24,8 @@ void ui_header(lv_obj_t *root, const char *title);
 // 居中文字大按钮；bg=0 用主题默认色；cb=NULL 不挂回调。
 lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
                          uint32_t bg, const char *text, lv_event_cb_t cb);
+lv_obj_t *ui_small_text_button(lv_obj_t *root, int x, int y, int w, int h,
+                         uint32_t bg, const char *text, lv_event_cb_t cb);
 
 // 进屏 LOAD_START 时自动把所有可聚焦后代(按钮/下拉/开关/滑条/roller)注册到导航 group。
 // 各屏 root 挂上它即可，无需手写 focus 列表。

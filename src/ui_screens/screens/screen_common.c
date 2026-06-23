@@ -17,10 +17,11 @@ void ui_header(lv_obj_t *root, const char *title)
     lv_obj_t *logo = lv_image_create(root);
     lv_obj_set_pos(logo, S(15), S(10));
     lv_image_set_src(logo, LOGO_PRTS_PATH);
-    lv_image_set_scale(logo, 128 * UI_SCALE); // 720 原生, 360 缩半
+    lv_image_set_pivot(logo, 0, 0);
+    lv_image_set_scale(logo, 128 * UI_SCALE);
 
     lv_obj_t *t = lv_label_create(root);
-    lv_obj_set_pos(t, S(55), S(15));
+    lv_obj_set_pos(t, S(55), S(14));
     add_style_label_large(t);
     lv_label_set_text(t, title);
 }
@@ -36,6 +37,22 @@ lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
 
     lv_obj_t *lbl = lv_label_create(o);
     add_style_label_large(lbl);
+    lv_obj_set_style_align(lbl, LV_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(lbl, text);
+    return o;
+}
+
+lv_obj_t *ui_small_text_button(lv_obj_t *root, int x, int y, int w, int h,
+    uint32_t bg, const char *text, lv_event_cb_t cb)
+{
+    lv_obj_t *o = lv_button_create(root);
+    lv_obj_set_pos(o, S(x), S(y));
+    lv_obj_set_size(o, S(w), S(h));
+    if (bg) lv_obj_set_style_bg_color(o, lv_color_hex(bg), LV_PART_MAIN | LV_STATE_DEFAULT);
+    if (cb) lv_obj_add_event_cb(o, cb, LV_EVENT_PRESSED, NULL);
+
+    lv_obj_t *lbl = lv_label_create(o);
+    add_style_label_small(lbl);
     lv_obj_set_style_align(lbl, LV_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(lbl, text);
     return o;

@@ -11,8 +11,7 @@
 #include "utils/log.h"
 #include "icons.h"
 
-// 按钮图标实际像素 (360 基准, 随 S() 缩放, FreeType 矢量栅格化)
-#define PX_BTN_ICON 40
+#define PX_BTN_ICON 55
 
 // 本屏私有状态：只存"之后还要访问"的少数控件。
 static struct {
@@ -37,7 +36,6 @@ static void on_brightness(lv_event_t *e)
     ui_backend_brightness_set(lv_slider_get_value(lv_event_get_target(e)));
 }
 
-// ---- 六宫格单格：图标(顶部居中) + 文字(底部居中) ----
 static void grid_btn(lv_obj_t *parent, int x, int y,
                      const char *icon, const char *text, lv_event_cb_t cb)
 {
@@ -56,7 +54,7 @@ static void grid_btn(lv_obj_t *parent, int x, int y,
     lv_obj_t *lbl = lv_label_create(o);
     add_style_label_large(lbl);
     lv_obj_set_style_align(lbl, LV_ALIGN_BOTTOM_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_y(lbl, S(-10));
+    lv_obj_set_y(lbl, S(0));
     lv_label_set_text(lbl, text);
 }
 

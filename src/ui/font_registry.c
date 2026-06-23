@@ -16,17 +16,20 @@
 #define FONT_REGISTRY_GLYPH_CACHE_CNT 256
 #endif
 
-// 每个角色对应的字体文件名与默认 style
+// 每个角色对应的字体文件名与默认 style。
+// lh_pct: 行高占字号的百分比, 用来覆写 FreeType 默认行高 (中文字体 hhea/typo metrics
+//   常带较大 line gap, 单行文字上下留白多)。0 = 保持字体默认 (多行正文要靠它撑行距)。
 typedef struct {
     const char *filename;
     lv_freetype_font_style_t style;
+    int lh_pct;
 } font_face_desc_t;
 
 static const font_face_desc_t s_faces[FONT_ROLE_COUNT] = {
-    [FONT_BODY]    = { "SourceHanSansSC-Regular.otf",        LV_FREETYPE_FONT_STYLE_NORMAL },
-    [FONT_TITLE]   = { "SourceHanSerifSC-Heavy.otf",         LV_FREETYPE_FONT_STYLE_NORMAL },
-    [FONT_DISPLAY] = { "BebasNeue.otf",                      LV_FREETYPE_FONT_STYLE_NORMAL },
-    [FONT_ICON]    = { "Font-Awesome-7-Free-Solid-900.otf",  LV_FREETYPE_FONT_STYLE_NORMAL },
+    [FONT_BODY]    = { "SourceHanSansSC-Regular.otf",        LV_FREETYPE_FONT_STYLE_NORMAL, 105   },
+    [FONT_TITLE]   = { "SourceHanSerifSC-Heavy.otf",         LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
+    [FONT_DISPLAY] = { "BebasNeue.otf",                      LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
+    [FONT_ICON]    = { "Font-Awesome-7-Free-Solid-900.otf",  LV_FREETYPE_FONT_STYLE_NORMAL, 0   },
 };
 
 // (role, px) -> lv_font_t* 缓存。组合很少，线性查找即可。
@@ -112,6 +115,17 @@ const lv_font_t *font_get(font_role_t role, int base_px)
     if (!font) {
         log_error("font_registry: failed to load %s @ %dpx", path, px);
         return LV_FONT_DEFAULT;
+    }
+
+    // 收紧单行字体行高 (减少上下留白, 便于垂直居中)。多行角色 lh_pct=0 保持默认。
+    if (s_faces[role].lh_pct > 0) {
+        font->line_height = (px * s_faces[role].lh_pct) / 100;
+    }
+
+    // 文字角色挂 fallback 到同字号 ICON 字体: 中文字体无 FontAwesome 字形, 否则
+    // dropdown 箭头(LV_SYMBOL_DOWN=U+F078)等混排符号会渲染成豆腐块。ICON 不设 fallback 避免递归。
+    if (role != FONT_ICON) {
+        font->fallback = font_get(FONT_ICON, base_px);
     }
 
     s_reg.entries[s_reg.count].role = role;

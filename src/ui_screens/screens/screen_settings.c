@@ -55,7 +55,7 @@ lv_obj_t *screen_settings_create(void)
     lv_obj_t *root = ui_screen_root();
     ui_header(root, "设备参数定值");
 
-    ui_text_button(root, 205, 8, 82, 32, 0, "清除缓存", on_clear_cache);
+    ui_small_text_button(root, 205, 8, 82, 32, 0, "清除缓存", on_clear_cache);
 
     make_switch(root, 49,  "低电量自动关机",        ui_backend_lowbat_trip_get(),  on_lowbat);
     make_switch(root, 93,  "(切换时)跳过入场动画",   ui_backend_no_intro_get(),     on_no_intro);

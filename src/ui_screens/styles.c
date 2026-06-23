@@ -5,7 +5,7 @@
 // 字号以 360 基准书写 (与 EEZ 烘焙字号对齐)，font_get 内部套 S()。
 #define PX_LABEL_LARGE 24
 #define PX_LABEL_SMALL 14
-#define PX_FA_LABEL    28
+#define PX_FA_LABEL    70
 
 // ---- label_large: 标题 ----
 static lv_style_t *style_label_large(void)
