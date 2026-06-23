@@ -82,8 +82,6 @@ target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS})
 # ============================================================================
 # 源文件
 # ============================================================================
-FILE(GLOB UI_SOURCES "eez_design/src/ui/*.c")
-
 set(EPASS_SOURCES
   src/main.c
 
@@ -105,20 +103,33 @@ set(EPASS_SOURCES
   src/render/fbdraw.c
 
   src/ui/font_registry.c
-
-  ${UI_SOURCES}
   src/ui/filemanager.c
-  src/ui/scr_transition.c
   src/ui/battery.c
-  src/ui/actions_warning.c
-  src/ui/actions_mainscreen.c
-  src/ui/actions_settings.c
-  src/ui/actions_displayimg.c
-  src/ui/actions_sysinfo.c
-  src/ui/actions_oplist.c
-  src/ui/actions_apps.c
-  src/ui/actions_confirm.c
   src/ui/ipc_helper.c
+
+  # overlay 仍用的烘焙字体 (FreeType 化属后续步骤; 已弃用 serif_heavy/fontawesome)
+  src/fonts/ui_font_bebas_40.c
+  src/fonts/ui_font_bebas_bold_10.c
+  src/fonts/ui_font_bebas_bold_72.c
+  src/fonts/ui_font_sourcesans_reg_14.c
+
+  # 手写 UI (取代 EEZ)
+  src/ui_screens/screen_manager.c
+  src/ui_screens/styles.c
+  src/ui_screens/screens/screen_common.c
+  src/ui_screens/screens/screen_mainmenu.c
+  src/ui_screens/screens/screen_oplist.c
+  src/ui_screens/screens/screen_sysinfo.c
+  src/ui_screens/screens/screen_spinner.c
+  src/ui_screens/screens/screen_displayimg.c
+  src/ui_screens/screens/screen_filemanager.c
+  src/ui_screens/screens/screen_settings.c
+  src/ui_screens/screens/screen_applist.c
+  src/ui_screens/screens/screen_warning.c
+  src/ui_screens/screens/screen_confirm.c
+  src/ui_screens/platform/ui_backend_device.c
+  src/ui_screens/platform/ui_plane_device.c
+  src/ui_screens/platform/ui_services_device.c
 
   src/overlay/overlay.c
   src/overlay/transitions.c
@@ -149,8 +160,8 @@ target_include_directories(epass_drm_app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
   ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/eez_design/src/ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/eez_design/icon_header_gen
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens/screens
   ${LIBDRM_INCLUDE_DIRS}
   ${PNG_INCLUDE_DIR}
   ${FREETYPE_INCLUDE_DIRS}

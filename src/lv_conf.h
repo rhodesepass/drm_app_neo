@@ -976,8 +976,10 @@
 /** FreeType library */
 #define LV_USE_FREETYPE 1
 #if LV_USE_FREETYPE
-    /** Let FreeType use LVGL memory and file porting (走 lv_fs, 盘符 'A') */
-    #define LV_FREETYPE_USE_LVGL_PORT 1
+    /** LVGL port (lv_ftsystem) 需要 FreeType 内部头(ftdebug.h 等)，buildroot 的 freetype2
+     *  未安装这些内部头 ⇒ 关掉 port，FreeType 直接用 stdio 读字体文件路径(无 lv_fs 盘符)。
+     *  字体目录见 font_registry 的 FONT_REGISTRY_DIR (设备默认 /root/res/fonts)。 */
+    #define LV_FREETYPE_USE_LVGL_PORT 0
 
     /** Cache count of glyphs in FreeType, i.e. number of glyphs that can be cached.
      *  The higher the value, the more memory will be used. */

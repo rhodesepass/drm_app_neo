@@ -6,9 +6,10 @@
 
 #include "utils/log.h"
 
-// 字体文件目录 (含 lv_fs 盘符前缀)。设备侧默认放 rootfs；sim 通过编译期覆盖。
+// 字体文件目录。FreeType 关了 LVGL port (PORT=0) ⇒ 直接走 stdio 文件路径，无 lv_fs 盘符。
+// 设备侧默认放 rootfs；sim 通过编译期覆盖。
 #ifndef FONT_REGISTRY_DIR
-#define FONT_REGISTRY_DIR "A:/root/res/fonts"
+#define FONT_REGISTRY_DIR "/root/res/fonts"
 #endif
 
 // FreeType 字形缓存条目数 (弱端取较小值，跑起来盯 RAM 再调)
