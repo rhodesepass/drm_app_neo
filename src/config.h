@@ -106,44 +106,6 @@
     #define UI_WARNING_Y 565
     #define UI_CONFIRM_Y (UI_HEIGHT - 125)
 
-
-    // UI-信息Overlay叠层 左上角的矩形偏移量
-    #define OVERLAY_ARKNIGHTS_RECT_OFFSET_X 60
-
-    // UI-信息Overlay叠层 下方信息区域 左偏移量
-    #define OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X 70
-
-
-    // UI-信息Overlay叠层 下方信息区域 干员名 偏移量
-    #define OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y 415
-
-    #define OVERLAY_ARKNIGHTS_UPPERLINE_OFFSET_Y 455
-    #define OVERLAY_ARKNIGHTS_LOWERLINE_OFFSET_Y 475
-    #define OVERLAY_ARKNIGHTS_LINE_WIDTH 280
-
-    #define OVERLAY_ARKNIGHTS_OPCODE_OFFSET_Y 457
-    #define OVERLAY_ARKNIGHTS_STAFF_TEXT_OFFSET_Y 480
-
-    #define OVERLAY_ARKNIGHTS_CLASS_ICON_OFFSET_Y 525
-    #define OVERLAY_ARKNIGHTS_CLASS_ICON_WIDTH 50
-    #define OVERLAY_ARKNIGHTS_CLASS_ICON_HEIGHT 50
-    // UI-信息Overlay叠层 左下角“- Arknights -”矩形文字 偏移量
-    #define OVERLAY_ARKNIGHTS_AK_BAR_OFFSET_Y 578
-    // UI-信息Overlay叠层 下方信息区域 辅助文字 偏移量
-    #define OVERLAY_ARKNIGHTS_AUX_TEXT_OFFSET_Y 592
-    #define OVERLAY_ARKNIGHTS_AUX_TEXT_LINE_HEIGHT 15
-
-    // UI-信息Overlay叠层 左下角 条码 偏移量
-    #define OVERLAY_ARKNIGHTS_BARCODE_OFFSET_Y 450
-    #define OVERLAY_ARKNIGHTS_BARCODE_WIDTH 50
-    #define OVERLAY_ARKNIGHTS_BARCODE_HEIGHT 180
-
-    // UI-信息Overlay叠层 右上角 装饰箭头 偏移量
-    #define OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y 100
-
-
-
-
 #elif defined(USE_480_854_SCREEN)
     #error "USE_480_854_SCREEN is not supported yet!"
 #elif defined(USE_720_1280_SCREEN)
@@ -174,41 +136,35 @@
     #define UI_WARNING_Y 1130
     #define UI_CONFIRM_Y (UI_HEIGHT - 250)
 
-
-    // UI-信息Overlay叠层 左上角的矩形偏移量
-    #define OVERLAY_ARKNIGHTS_RECT_OFFSET_X 120
-
-    // UI-信息Overlay叠层 下方信息区域 左偏移量
-    #define OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X 140
-
-
-    // UI-信息Overlay叠层 下方信息区域 干员名 偏移量
-    #define OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y 830
-
-    #define OVERLAY_ARKNIGHTS_UPPERLINE_OFFSET_Y 910
-    #define OVERLAY_ARKNIGHTS_LOWERLINE_OFFSET_Y 950
-    #define OVERLAY_ARKNIGHTS_LINE_WIDTH 560
-
-    #define OVERLAY_ARKNIGHTS_OPCODE_OFFSET_Y 914
-    #define OVERLAY_ARKNIGHTS_STAFF_TEXT_OFFSET_Y 960
-
-    #define OVERLAY_ARKNIGHTS_CLASS_ICON_OFFSET_Y 1050
-    #define OVERLAY_ARKNIGHTS_CLASS_ICON_WIDTH 100
-    #define OVERLAY_ARKNIGHTS_CLASS_ICON_HEIGHT 100
-    // UI-信息Overlay叠层 左下角“- Arknights -”矩形文字 偏移量
-    #define OVERLAY_ARKNIGHTS_AK_BAR_OFFSET_Y 1156
-    // UI-信息Overlay叠层 下方信息区域 辅助文字 偏移量
-    #define OVERLAY_ARKNIGHTS_AUX_TEXT_OFFSET_Y 1184
-    #define OVERLAY_ARKNIGHTS_AUX_TEXT_LINE_HEIGHT 30
-
-    // UI-信息Overlay叠层 左下角 条码 偏移量
-    #define OVERLAY_ARKNIGHTS_BARCODE_OFFSET_Y 900
-    #define OVERLAY_ARKNIGHTS_BARCODE_WIDTH 100
-    #define OVERLAY_ARKNIGHTS_BARCODE_HEIGHT 360
-
-    // UI-信息Overlay叠层 右上角 装饰箭头 偏移量
-    #define OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y 200
 #endif // USE_360_640_SCREEN, USE_480_854_SCREEN, USE_720_1280_SCREEN
+
+// ========== Overlay 信息叠层坐标 (360 基准 × UI_SCALE，9:16 整数倍缩放) ==========
+// config.h 在 ui_metrics.h 的 S() 定义之前被 include，故此处直接乘 UI_SCALE。
+// 左上角矩形 X 偏移
+#define OVERLAY_ARKNIGHTS_RECT_OFFSET_X     (60 * UI_SCALE)
+// 下方信息区 左偏移
+#define OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X (70 * UI_SCALE)
+// 干员名 Y 偏移
+#define OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y   (415 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_UPPERLINE_OFFSET_Y (455 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_LOWERLINE_OFFSET_Y (475 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_LINE_WIDTH        (280 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_OPCODE_OFFSET_Y   (457 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_STAFF_TEXT_OFFSET_Y (480 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_CLASS_ICON_OFFSET_Y (525 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_CLASS_ICON_WIDTH  (50 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_CLASS_ICON_HEIGHT (50 * UI_SCALE)
+// 左下角 "- Arknights -" 矩形文字 Y 偏移
+#define OVERLAY_ARKNIGHTS_AK_BAR_OFFSET_Y   (578 * UI_SCALE)
+// 辅助文字 Y 偏移
+#define OVERLAY_ARKNIGHTS_AUX_TEXT_OFFSET_Y (592 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_AUX_TEXT_LINE_HEIGHT (15 * UI_SCALE)
+// 左下角条码 偏移
+#define OVERLAY_ARKNIGHTS_BARCODE_OFFSET_Y  (450 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_BARCODE_WIDTH     (50 * UI_SCALE)
+#define OVERLAY_ARKNIGHTS_BARCODE_HEIGHT    (180 * UI_SCALE)
+// 右上角装饰箭头 Y 偏移
+#define OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y (100 * UI_SCALE)
 
 // ========== DRM Warpper Layer Configuration ==========
 #define DRM_WARPPER_LAYER_UI 2
@@ -315,7 +271,17 @@
 
 // ========== Cached Assets Configuration ==========
 #define CACHED_ASSETS_MAX_SIZE (VIDEO_HEIGHT * VIDEO_WIDTH * 3 / 2)
-#define CACHED_ASSETS_ASSET_PATH "/root/res/"
+// overlay 装饰图按分辨率分目录 (fbdraw 无缩放, 每档各出一套 PNG)。
+// 走 stbi_load 直读, 无 lv_fs 盘符; 可用 -DCACHED_ASSETS_ASSET_PATH 覆盖。
+#ifndef CACHED_ASSETS_ASSET_PATH
+    #if defined(USE_720_1280_SCREEN)
+        #define CACHED_ASSETS_ASSET_PATH "/root/res/720x1280/"
+    #elif defined(USE_480_854_SCREEN)
+        #define CACHED_ASSETS_ASSET_PATH "/root/res/480x854/"
+    #else
+        #define CACHED_ASSETS_ASSET_PATH "/root/res/360x640/"
+    #endif
+#endif
 #define CACHED_ASSETS_ASSET_PATH_AK_BAR CACHED_ASSETS_ASSET_PATH "ak_bar.png"
 #define CACHED_ASSETS_ASSET_PATH_BTM_LEFT_BAR CACHED_ASSETS_ASSET_PATH "btm_left_bar.png"
 #define CACHED_ASSETS_ASSET_PATH_TOP_LEFT_RECT CACHED_ASSETS_ASSET_PATH "top_left_rect.png"
