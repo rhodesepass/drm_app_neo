@@ -1,13 +1,11 @@
 // UI 电池电量指示
-#include "ui.h"
-#include "ui/actions_warning.h"
+#include "ui_screens/ui_services.h"
+#include "ui/font_registry.h"
 #include "utils/log.h"
-#include "ui/scr_transition.h"
 #include "config.h"
+#include "icons.h"
+#include "ui_metrics.h"
 #include "lvgl.h"
-#include <src/font/lv_font.h>
-#include <src/misc/lv_color.h>
-#include <src/widgets/label/lv_label.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -84,17 +82,14 @@ static void ui_battery_timer_cb(lv_timer_t * timer){
 
 }
 
-LV_FONT_DECLARE(ui_font_fontawesome);
-
 void ui_battery_init(){
 
     g_battery_timer = lv_timer_create(ui_battery_timer_cb, UI_BATTERY_TIMER_TICK_PERIOD / 1000, NULL);
     log_info("==> UI Battery Initialized!");
 
     g_battery_obj = lv_label_create(lv_layer_top());
-    lv_obj_set_pos(g_battery_obj, UI_WIDTH-UI_BATTERY_PADDING-UI_BATTERY_SIZE, UI_BATTERY_PADDING);
-    // lv_obj_set_size(g_battery_obj, UI_BATTERY_SIZE, UI_BATTERY_SIZE);
-    lv_obj_set_style_text_font(g_battery_obj, &ui_font_fontawesome, LV_PART_MAIN);
+    lv_obj_set_pos(g_battery_obj, UI_WIDTH - S(UI_BATTERY_PADDING) - S(UI_BATTERY_SIZE), S(UI_BATTERY_PADDING));
+    lv_obj_set_style_text_font(g_battery_obj, font_get(FONT_ICON, UI_BATTERY_SIZE), LV_PART_MAIN);
     lv_obj_set_style_text_color(g_battery_obj, lv_color_hex(0xffffffff), LV_PART_MAIN);
     lv_obj_set_style_transform_scale_x(g_battery_obj, 100, LV_PART_MAIN);
     lv_obj_set_style_transform_scale_y(g_battery_obj, 100, LV_PART_MAIN);

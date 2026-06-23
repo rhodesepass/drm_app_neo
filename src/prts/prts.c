@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/time.h>
-#include <ui/actions_warning.h>
+#include <ui_screens/ui_services.h>
 #include <utils/timer.h>
 #include <fcntl.h>
 #include "utils/log.h"
@@ -15,9 +15,7 @@
 #include <stdlib.h>
 #include "config.h"
 #include "utils/settings.h"
-#include "vars.h"
 #include "render/mediaplayer.h"
-#include "ui/scr_transition.h"
 #include "utils/misc.h"
 #include "ui/ipc_helper.h"
 

@@ -1,88 +1,61 @@
 #include "ui/filemanager.h"
-#include "ui.h"
+#include "ui_screens/screen_manager.h" // ui_hook_filemanager_*
 
 #include <ctype.h>
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
+#include <lvgl/lvgl.h>
 
 #include "config.h"
 #include "utils/log.h"
 #include "apps/apps.h"
 
-extern objects_t objects;
+static apps_t   *s_apps;
+static lv_obj_t *s_fe;   // lv_file_explorer
 
-extern groups_t groups;
-extern int g_running;
-extern int g_exitcode;
-
-#ifndef EXITCODE_APPSTART
-#define EXITCODE_APPSTART 2
-#endif
-
-static const char * strip_lv_fs_prefix(const char * path)
+void filemanager_init(apps_t *apps)
 {
-    if(!path) return path;
-    if(isalpha((unsigned char)path[0]) && path[1] == ':') return path + 2;
+    s_apps = apps;
+}
+
+static const char *strip_lv_fs_prefix(const char *path)
+{
+    if (!path) return path;
+    if (isalpha((unsigned char)path[0]) && path[1] == ':') return path + 2;
     return path;
 }
 
-static void file_explorer_event_handler(lv_event_t * e)
+static void file_explorer_event_handler(lv_event_t *e)
 {
-    if(lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-
-    lv_obj_t * fe = lv_event_get_target(e);
-    const char * cur_path = lv_file_explorer_get_current_path(fe);
-    const char * sel_fn = lv_file_explorer_get_selected_file_name(fe);
-
-    if(!cur_path || !sel_fn || sel_fn[0] == '\0') return;
-
-    const char *path_without_prefix = strip_lv_fs_prefix(cur_path);
-
-    apps_t *apps = (apps_t *)lv_obj_get_user_data(fe);
-    if(!apps){
-        log_error("apps is NULL");
-        return;
-    }
-
-    apps_try_launch_by_file(apps, path_without_prefix, sel_fn);
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    lv_obj_t *fe = lv_event_get_target(e);
+    const char *cur_path = lv_file_explorer_get_current_path(fe);
+    const char *sel_fn   = lv_file_explorer_get_selected_file_name(fe);
+    if (!cur_path || !sel_fn || sel_fn[0] == '\0') return;
+    if (!s_apps) { log_error("filemanager: apps is NULL"); return; }
+    apps_try_launch_by_file(s_apps, strip_lv_fs_prefix(cur_path), sel_fn);
 }
 
-static lv_obj_t * fe;
-void create_filemanager(apps_t *apps){
-    lv_obj_t *root = objects.file_container;
-    if(!root) {
-        return;
-    }
+// 设备实现 ui_hook_filemanager_mount: 在 container 内建 lv_file_explorer。
+void ui_hook_filemanager_mount(lv_obj_t *container)
+{
+    if (!container) return;
+    lv_obj_clean(container);
+    lv_obj_set_style_bg_color(container, lv_color_hex(0xf2f1f6), 0);
 
-    lv_obj_clean(root);
-
-    lv_obj_set_style_bg_color(root, lv_color_hex(0xf2f1f6), 0);
-
-    fe = lv_file_explorer_create(root);
-    lv_obj_set_style_bg_color(fe, lv_color_hex(0xf2f1f6), 0);
-
-    lv_obj_set_user_data(fe, apps);
-
-    lv_obj_set_size(fe, LV_PCT(100), LV_PCT(100));
-    lv_obj_center(fe);
-
-    lv_file_explorer_open_dir(fe, "A:/root/");
-
-    lv_obj_add_event_cb(fe, file_explorer_event_handler, LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t * file_table = lv_file_explorer_get_file_table(fe);
-    if(groups.op && file_table) {
-        lv_group_add_obj(groups.op, file_table);
-        lv_group_focus_obj(file_table);
-    }
+    s_fe = lv_file_explorer_create(container);
+    lv_obj_set_style_bg_color(s_fe, lv_color_hex(0xf2f1f6), 0);
+    lv_obj_set_size(s_fe, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(s_fe);
+    lv_file_explorer_open_dir(s_fe, "A:/root/");
+    lv_obj_add_event_cb(s_fe, file_explorer_event_handler, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
-void add_filemanager_to_group(){
-    lv_obj_t * file_table = lv_file_explorer_get_file_table(fe);
-    if(groups.op && file_table) {
-        lv_group_add_obj(groups.op, file_table);
+// 设备实现 ui_hook_filemanager_enter: 文件表加入导航 group 并聚焦。
+void ui_hook_filemanager_enter(lv_group_t *group)
+{
+    if (!s_fe || !group) return;
+    lv_obj_t *file_table = lv_file_explorer_get_file_table(s_fe);
+    if (file_table) {
+        lv_group_add_obj(group, file_table);
         lv_group_focus_obj(file_table);
     }
 }

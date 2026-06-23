@@ -1,14 +1,13 @@
 #include "apps/ipc_handler.h"
 #include "apps/ipc_common.h"
 #include "apps/apps_types.h"
-#include "vars.h"
+#include "ui_enums.h"
 #include <overlay/overlay.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ui/actions_warning.h>
+#include <ui_screens/ui_services.h>
 #include <ui/ipc_helper.h>
-#include <ui/scr_transition.h>
 #include <utils/log.h>
 #include <utils/settings.h>
 #include <render/mediaplayer.h>

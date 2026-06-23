@@ -2,27 +2,26 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
-#include <ui/actions_apps.h>
-#include <ui/actions_displayimg.h>
 #include <ui/ipc_helper.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 
+#include <lvgl/lvgl.h>
 #include "render/lvgl_drm_warp.h"
 #include "config.h"
 #include "render/layer_animation.h"
 #include "utils/log.h"
-#include "ui.h"
-#include "vars.h"
 #include "driver/key_enc_evdev.h"
 #include "ui/filemanager.h"
-#include "ui/actions_warning.h"
-#include "ui/actions_oplist.h"
+#include "ui/font_registry.h"
 #include "prts/prts.h"
 #include "ui/battery.h"
-#include "ui/actions_displayimg.h"
-#include "ui/actions_confirm.h"
+
+#include "ui_screens/screen_manager.h"
+#include "ui_screens/ui_backend.h"
+#include "ui_screens/ui_services.h"
+#include "ui_screens/ui_plane.h"
 
 static uint32_t lvgl_drm_warp_tick_get_cb(void)
 {
@@ -65,18 +64,21 @@ static void lvgl_drm_warp_flush_cb(lv_display_t * disp, const lv_area_t * area, 
 static void* lvgl_drm_warp_thread_entry(void *arg){
     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)arg;
     log_info("==> LVGL Thread Started!");
-    loadScreen(SCREEN_ID_SPINNER);
+    screen_show(SCREEN_SPINNER);
     while(atomic_load(&lvgl_drm_warp->running)){
         uint32_t idle_time = lv_timer_handler();
-        ui_tick();
+        screens_tick();
         usleep(idle_time * 1000);
     }
     log_info("==> LVGL Thread Ended!");
-    return NULL; 
+    return NULL;
 }
 
 
-extern void screen_key_event_cb(uint32_t key);
+// key_enc_evdev 的 input_cb：转发到手写屏的导航状态机。
+static void screen_key_event_cb(uint32_t key){
+    screens_handle_key(key);
+}
 void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper,layer_animation_t *layer_animation,prts_t *prts,apps_t *apps){
 
     lvgl_drm_warp->drm_warpper = drm_warpper;
@@ -131,22 +133,18 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     key_enc_evdev_init(&lvgl_drm_warp->key_enc_evdev);
     lvgl_drm_warp->keypad_indev = lvgl_drm_warp->key_enc_evdev.indev;
 
-    ui_create_groups();
-    lv_indev_set_group(lvgl_drm_warp->keypad_indev, groups.op);
+    // 手写 UI 起步：字体 -> 后端数据/动作 -> 平面滑动绑定 -> 建屏 -> 绑定导航 group。
+    font_registry_init();
+    ui_backend_init(prts, apps);
+    ui_plane_device_bind(layer_animation);
+    filemanager_init(apps);
+    screens_init();
+    lv_indev_set_group(lvgl_drm_warp->keypad_indev, screens_group());
 
-
-    // gui_app_create_ui(lvgl_drm_warp);
-    ui_init();
-    create_filemanager(apps);
-
-    // UI 连锁 组件
-    ui_warning_init();
-    ui_oplist_init(prts);
+    // 跨线程服务桥 (告警/确认队列 + timer) 与电量/IPC 组件
+    ui_services_init();
     ui_battery_init();
-    ui_displayimg_init();
-    ui_confirm_init();
     ui_ipc_helper_init();
-    ui_apps_init(apps);
 
     atomic_store(&lvgl_drm_warp->running, 1);
     if (pthread_create(&lvgl_drm_warp->lvgl_thread, NULL, lvgl_drm_warp_thread_entry, lvgl_drm_warp) != 0) {
@@ -164,9 +162,7 @@ void lvgl_drm_warp_destroy(lvgl_drm_warp_t *lvgl_drm_warp){
     atomic_store(&lvgl_drm_warp->running, 0);
     pthread_join(lvgl_drm_warp->lvgl_thread, NULL);
     key_enc_evdev_destroy(&lvgl_drm_warp->key_enc_evdev);
-    ui_warning_destroy();
+    ui_services_destroy();
     ui_battery_destroy();
-    ui_confirm_destroy();
     ui_ipc_helper_destroy();
-    ui_apps_destroy();
 }
