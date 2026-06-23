@@ -14,6 +14,10 @@
 extern "C" {
 #endif
 
+// ---- 生命周期 ----
+// 设备侧注入 prts/apps 句柄 (sim 忽略)。须在建屏前调。指针用 void* 以免本头依赖 prts/apps。
+void ui_backend_init(void *prts, void *apps);
+
 // ---- 通用 ----
 const char *ui_backend_version(void);
 
@@ -31,7 +35,8 @@ const char *ui_backend_sysinfo_text(void);
 // ---- 扩列图 ----
 const char *ui_backend_dispimg_size(void);
 bool        ui_backend_dispimg_has_warning(void); // true=无图，显示提示
-const char *ui_backend_dispimg_path(void);
+const char *ui_backend_dispimg_path(void);        // 当前图 lv_fs 路径 (含 "A:" 盘符)
+bool        ui_backend_dispimg_is_gif(void);       // 当前图是否 GIF
 
 // ---- 设置 (下拉为选中索引) ----
 int  ui_backend_sw_mode_get(void);      void ui_backend_sw_mode_set(int v);
@@ -50,6 +55,12 @@ typedef struct {
 } ui_op_entry_t;
 int  ui_backend_oplist_count(void);
 bool ui_backend_oplist_get(int idx, ui_op_entry_t *out);
+// 当前选中干员索引 (进屏时聚焦用)；无则 0。
+int  ui_backend_oplist_current(void);
+// 选中干员 (设备=prts_request_set_operator)。调用方随后切到 spinner。
+void ui_backend_oplist_select(int idx);
+// 重新加载干员素材 (设备=prts_request_reload_assets)。调用方随后切到 spinner。
+void ui_backend_oplist_refresh(void);
 
 // ---- 应用列表 ----
 typedef enum { UI_APP_FG, UI_APP_BG, UI_APP_STOPPED } ui_app_state_t;
@@ -62,6 +73,11 @@ typedef struct {
 } ui_app_entry_t;
 int  ui_backend_applist_count(void);
 bool ui_backend_applist_get(int idx, ui_app_entry_t *out);
+// 选中应用 (设备=按 type 启动/切后台/告警)。调用方随后切到 spinner。
+void ui_backend_applist_select(int idx);
+
+// ---- 扩列图按键导航 (←/→ 翻页) ----
+void ui_backend_displayimg_key(uint32_t key);
 
 #ifdef __cplusplus
 }

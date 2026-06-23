@@ -39,6 +39,26 @@ __attribute__((weak)) void ui_hook_displayimg_key(uint32_t key)
 {
     (void)key;
 }
+__attribute__((weak)) void ui_hook_restart(void)
+{
+    log_debug("[nav] restart request (no platform handler)");
+}
+__attribute__((weak)) void ui_hook_format_sd(void)
+{
+    log_debug("[nav] format SD request (no platform handler)");
+}
+__attribute__((weak)) void ui_hook_srgn_config(void)
+{
+    log_debug("[nav] srgn config request (no platform handler)");
+}
+__attribute__((weak)) void ui_hook_filemanager_mount(lv_obj_t *container)
+{
+    (void)container;
+}
+__attribute__((weak)) void ui_hook_filemanager_enter(lv_group_t *group)
+{
+    (void)group;
+}
 
 lv_group_t *screens_group(void) { return s_group; }
 screen_id_t screens_current(void) { return s_current; }
@@ -54,7 +74,7 @@ static void register_screens(void)
     s_screens[SCREEN_DISPLAYIMG] = (screen_entry_t){ screen_displayimg_create, screen_displayimg_tick, NULL, 0 };
     s_screens[SCREEN_FILEMANAGER]= (screen_entry_t){ screen_filemanager_create,NULL,                   NULL, 0 };
     s_screens[SCREEN_SETTINGS]   = (screen_entry_t){ screen_settings_create,   screen_settings_tick,   NULL, 0 };
-    s_screens[SCREEN_APPLIST]    = (screen_entry_t){ screen_applist_create,    NULL,                   NULL, 0 };
+    s_screens[SCREEN_APPLIST]    = (screen_entry_t){ screen_applist_create,    screen_applist_tick,    NULL, 0 };
     s_screens[SCREEN_WARNING]    = (screen_entry_t){ screen_warning_create,    NULL,                   NULL, UI_WARNING_Y };
     s_screens[SCREEN_CONFIRM]    = (screen_entry_t){ screen_confirm_create,    NULL,                   NULL, UI_CONFIRM_Y };
 }
@@ -127,6 +147,19 @@ void screens_tick(void)
 {
     if (s_screens[s_current].tick) {
         s_screens[s_current].tick();
+    }
+}
+
+void screens_rebuild(screen_id_t id)
+{
+    if (id < 0 || id >= SCREEN_COUNT || !s_screens[id].obj) {
+        return;
+    }
+    bool was_current = (s_current == id);
+    lv_obj_delete(s_screens[id].obj);
+    s_screens[id].obj = s_screens[id].create();
+    if (was_current) {
+        load_now(id);
     }
 }
 

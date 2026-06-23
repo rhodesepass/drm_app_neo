@@ -16,6 +16,10 @@ extern "C" {
 
 void ui_plane_move(int from_y, int to_y, int duration_us, int delay_us);
 
+// 设备侧注入 layer_animation 句柄 (在 lvgl_drm_warp_init 里调)。sim 不需要。
+// 用 void* 以免本头依赖 render/layer_animation.h。
+void ui_plane_device_bind(void *layer_animation);
+
 #ifdef __cplusplus
 }
 #endif

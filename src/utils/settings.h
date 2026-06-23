@@ -1,4 +1,4 @@
-#include "vars.h"
+#include "ui_enums.h"
 #include "config.h"
 #include <stdint.h>
 #include <pthread.h>
