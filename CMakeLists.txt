@@ -107,12 +107,6 @@ set(EPASS_SOURCES
   src/ui/battery.c
   src/ui/ipc_helper.c
 
-  # overlay 仍用的烘焙字体 (FreeType 化属后续步骤; 已弃用 serif_heavy/fontawesome)
-  src/fonts/ui_font_bebas_40.c
-  src/fonts/ui_font_bebas_bold_10.c
-  src/fonts/ui_font_bebas_bold_72.c
-  src/fonts/ui_font_sourcesans_reg_14.c
-
   # 手写 UI (取代 EEZ)
   src/ui_screens/screen_manager.c
   src/ui_screens/styles.c
