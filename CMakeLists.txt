@@ -134,6 +134,7 @@ set(EPASS_SOURCES
   src/utils/timer.c
   src/utils/settings.c
   src/utils/cacheassets.c
+  src/utils/respath.c
   src/utils/code128.c
   src/utils/cJSON.c
   src/utils/uuid.c
@@ -248,6 +249,33 @@ if(ENABLE_CEDARX)
 endif()
 
 # ============================================================================
-# 安装规则 (可选)
+# 资源拷贝：按 config.h 的 res/ 结构落到可执行文件同级
+#   assets/*.png   -> <exe>/res/
+#   font/*.otf     -> <exe>/res/fonts/      (子集化产物，见 tools/font_generate)
+#   assets/fallback/ -> <exe>/res/fallback/
+# 运行时由 respath 模块按 /proc/self/exe 解析这个目录。
+# 字体取 font/ 根下的裁剪版 (原件在 font/original/ 本地，不参与构建)。
+# ============================================================================
+set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
+set(FONT_DIR   ${CMAKE_SOURCE_DIR}/font)
+set(RES_OUT_DIR $<TARGET_FILE_DIR:epass_drm_app>/res)
+file(GLOB RES_PNG  CONFIGURE_DEPENDS ${ASSETS_DIR}/*.png)
+file(GLOB RES_FONT CONFIGURE_DEPENDS ${FONT_DIR}/*.otf)
+
+add_custom_command(TARGET epass_drm_app POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_PNG}  ${RES_OUT_DIR}/
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR}/fallback ${RES_OUT_DIR}/fallback
+  COMMENT "Copying assets -> res/ next to executable"
+  VERBATIM
+)
+
+# ============================================================================
+# 安装规则 (可选)：bin/epass_drm_app 与 bin/res/ 同级，保持运行时相对结构
 # ============================================================================
 install(TARGETS epass_drm_app DESTINATION bin)
+install(DIRECTORY ${ASSETS_DIR}/ DESTINATION bin/res
+        FILES_MATCHING PATTERN "*.png")
+install(FILES ${RES_FONT} DESTINATION bin/res/fonts)
+install(DIRECTORY ${ASSETS_DIR}/fallback DESTINATION bin/res)

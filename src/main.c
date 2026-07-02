@@ -19,6 +19,7 @@
 #include "utils/settings.h"
 #include "utils/timer.h"
 #include "utils/cacheassets.h"
+#include "utils/respath.h"
 #include "prts/prts.h"
 #include "utils/misc.h"
 
@@ -99,6 +100,10 @@ int main(int argc, char *argv[]){
     fputs(APP_BARNER, stderr);
     log_info("==> Starting EPass DRM APP!");
 
+    // ============ 资源目录解析 ===============
+    // 解析可执行文件同级 res/ 目录, 后续所有内置资源路径都基于它。
+    respath_init();
+
     // ============ DRM Warpper 初始化 ===============
     drm_warpper_init(&g_drm_warpper);
 
@@ -154,12 +159,12 @@ int main(int argc, char *argv[]){
         return -1;
     }
     cacheassets_init(&g_cacheassets, cache_buf, CACHED_ASSETS_MAX_SIZE);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_AK_BAR, CACHED_ASSETS_ASSET_PATH_AK_BAR);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_BTM_LEFT_BAR, CACHED_ASSETS_ASSET_PATH_BTM_LEFT_BAR);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RECT, CACHED_ASSETS_ASSET_PATH_TOP_LEFT_RECT);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RHODES, CACHED_ASSETS_ASSET_PATH_TOP_LEFT_RHODES);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_BAR, CACHED_ASSETS_ASSET_PATH_TOP_RIGHT_BAR);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_ARROW, CACHED_ASSETS_ASSET_PATH_TOP_RIGHT_ARROW);
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_AK_BAR, (char *)respath(CACHED_ASSETS_FILE_AK_BAR));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_BTM_LEFT_BAR, (char *)respath(CACHED_ASSETS_FILE_BTM_LEFT_BAR));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RECT, (char *)respath(CACHED_ASSETS_FILE_TOP_LEFT_RECT));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RHODES, (char *)respath(CACHED_ASSETS_FILE_TOP_LEFT_RHODES));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_BAR, (char *)respath(CACHED_ASSETS_FILE_TOP_RIGHT_BAR));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_ARROW, (char *)respath(CACHED_ASSETS_FILE_TOP_RIGHT_ARROW));
 
     log_info("Cached assets: %d", g_cacheassets.curr_size);
 

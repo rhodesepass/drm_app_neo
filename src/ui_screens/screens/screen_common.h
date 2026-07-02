@@ -9,11 +9,12 @@
 extern "C" {
 #endif
 
-// 图片目录(含 lv_fs 盘符)由构建注入；未注入默认 rootfs。PRTS logo 资源按 720(2x) 出图。
-#ifndef UI_IMG_DIR
-#define UI_IMG_DIR "A:/root/res"
-#endif
+// 图片目录(含 lv_fs 盘符)。sim 用 -DUI_IMG_DIR 注入仓库 font/；设备侧不定义此宏，
+// logo 路径运行时按可执行文件同级 res/ 解析 (见 screen_common.c)。PRTS logo 按 720(2x) 出图。
+#ifdef UI_IMG_DIR
 #define LOGO_PRTS_PATH UI_IMG_DIR "/prts_64_inv.png"
+#endif
+#define LOGO_PRTS_FILE "prts_64_inv.png"
 
 // 创建一个满屏根容器 (S 缩放后的 360x640)，无内边距。
 lv_obj_t *ui_screen_root(void);

@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include "utils/log.h"
 #include "utils/misc.h"
+#include "utils/respath.h"
 
 // 可选图片通用校验规则（优化版：仅检查文件存在性，不加载图片）：
 // - json字段不存在 / 非字符串 / 空字符串 => 视为不存在，dst置空
@@ -177,14 +178,14 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
     // icon: 可选，输出为 LVGL path（A: 前缀）；不存在则用默认 icon
     const char *icon = json_get_string(json, "icon");
     if (!icon || icon[0] == '\0') {
-        safe_strcpy(operator->icon_path, sizeof(operator->icon_path), PRTS_DEFAULT_ICON_PATH);
+        safe_strcpy(operator->icon_path, sizeof(operator->icon_path), respath_lvfs(RES_DEFAULT_ICON_FILE));
     } else {
         char abs_icon[256];
         abs_icon[0] = '\0';
         join_path(abs_icon, sizeof(abs_icon), path, icon);
         if (!file_exists_readable(abs_icon)) {
             parse_log_file(prts->parse_log_f, path, "icon 文件不存在，使用默认icon", PARSE_LOG_WARN);
-            safe_strcpy(operator->icon_path, sizeof(operator->icon_path), PRTS_DEFAULT_ICON_PATH);
+            safe_strcpy(operator->icon_path, sizeof(operator->icon_path), respath_lvfs(RES_DEFAULT_ICON_FILE));
         } else {
             set_lvgl_path(operator->icon_path, sizeof(operator->icon_path), abs_icon);
         }

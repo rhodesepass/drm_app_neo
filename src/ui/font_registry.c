@@ -7,9 +7,11 @@
 #include "utils/log.h"
 
 // 字体文件目录。FreeType 关了 LVGL port (PORT=0) ⇒ 直接走 stdio 文件路径，无 lv_fs 盘符。
-// 设备侧默认放 rootfs；sim 通过编译期覆盖。
+// sim 用 -DFONT_REGISTRY_DIR 指向仓库 font/；设备侧不定义此宏，运行时按可执行文件同级
+// res/fonts 解析 (见 respath)。
 #ifndef FONT_REGISTRY_DIR
-#define FONT_REGISTRY_DIR "/root/res/fonts"
+#include "config.h"
+#include "utils/respath.h"
 #endif
 
 // FreeType 字形缓存条目数 (弱端取较小值，跑起来盯 RAM 再调)
@@ -59,8 +61,13 @@ int font_registry_init(void)
     }
     s_reg.count = 0;
     s_reg.inited = true;
+#ifdef FONT_REGISTRY_DIR
     log_info("font_registry: initialized (dir=%s, glyph_cache=%d)",
              FONT_REGISTRY_DIR, FONT_REGISTRY_GLYPH_CACHE_CNT);
+#else
+    log_info("font_registry: initialized (dir=%s/%s, glyph_cache=%d)",
+             respath_dir(), RES_FONTS_SUBDIR, FONT_REGISTRY_GLYPH_CACHE_CNT);
+#endif
     return 0;
 }
 
@@ -105,7 +112,11 @@ const lv_font_t *font_get(font_role_t role, int base_px)
     }
 
     char path[256];
+#ifdef FONT_REGISTRY_DIR
     snprintf(path, sizeof(path), "%s/%s", FONT_REGISTRY_DIR, s_faces[role].filename);
+#else
+    snprintf(path, sizeof(path), "%s/%s/%s", respath_dir(), RES_FONTS_SUBDIR, s_faces[role].filename);
+#endif
 
     lv_font_t *font = lv_freetype_font_create(
         path,

@@ -1,6 +1,13 @@
 #pragma once
 #include "icons.h"
 
+// ========== Resource Layout ==========
+// 内置资源放在可执行文件同级的 RES_SUBDIR 子目录, 运行时由 respath 模块解析。
+// CMake 按本结构把仓库 assets/ 拷过去: 根 *.png, fonts/*.otf, fallback/。
+#define RES_SUBDIR "res"
+#define RES_FONTS_SUBDIR "fonts"
+#define RES_DEFAULT_ICON_FILE "defaulticon.png"
+
 // ========== Application Information ==========
 #define APP_SUBCODENAME "proj0cpy"
 #define APP_BARNER \
@@ -46,11 +53,11 @@
 #define PRTS_OPERATOR_PARSE_LOG "/root/asset.log"
 #define PRTS_ASSET_VERSION_NUMBER 1
 #define PRTS_ASSET_CONFIG_FILENAME "epconfig.json"
-#define PRTS_DEFAULT_ICON_PATH "A:/root/res/defaulticon.png"
 #define PRTS_ASSET_DIR "/assets/"
 #define PRTS_ASSET_DIR_SD SD_MOUNT_POINT "/assets/"
 #define PRTS_TICK_PERIOD (1000 * 1000)
-#define PRTS_FALLBACK_ASSET_DIR "/root/res/fallback/"
+// 相对 res/ 的内置资源 (运行时经 respath()/respath_lvfs() 解析到可执行文件同级)。
+#define PRTS_FALLBACK_ASSET_SUBDIR "fallback"
 
 // ========== Apps Configuration ==========
 #define APPS_MAX 64
@@ -58,7 +65,6 @@
 #define APPS_PARSE_LOG "/root/apps.log"
 #define APPS_CONFIG_VERSION 1
 #define APPS_CONFIG_FILENAME "appconfig.json"
-#define APPS_DEFAULT_ICON_PATH "A:/root/res/defaulticon.png"
 #define APPS_DIR "/app/"
 #define APPS_DIR_SD SD_MOUNT_POINT "/app/"
 #define APPS_BG_APP_CHECK_PERIOD (1000 * 1000)
@@ -271,23 +277,14 @@
 
 // ========== Cached Assets Configuration ==========
 #define CACHED_ASSETS_MAX_SIZE (VIDEO_HEIGHT * VIDEO_WIDTH * 3 / 2)
-// overlay 装饰图按分辨率分目录 (fbdraw 无缩放, 每档各出一套 PNG)。
-// 走 stbi_load 直读, 无 lv_fs 盘符; 可用 -DCACHED_ASSETS_ASSET_PATH 覆盖。
-#ifndef CACHED_ASSETS_ASSET_PATH
-    #if defined(USE_720_1280_SCREEN)
-        #define CACHED_ASSETS_ASSET_PATH "/root/res/720x1280/"
-    #elif defined(USE_480_854_SCREEN)
-        #define CACHED_ASSETS_ASSET_PATH "/root/res/480x854/"
-    #else
-        #define CACHED_ASSETS_ASSET_PATH "/root/res/360x640/"
-    #endif
-#endif
-#define CACHED_ASSETS_ASSET_PATH_AK_BAR CACHED_ASSETS_ASSET_PATH "ak_bar.png"
-#define CACHED_ASSETS_ASSET_PATH_BTM_LEFT_BAR CACHED_ASSETS_ASSET_PATH "btm_left_bar.png"
-#define CACHED_ASSETS_ASSET_PATH_TOP_LEFT_RECT CACHED_ASSETS_ASSET_PATH "top_left_rect.png"
-#define CACHED_ASSETS_ASSET_PATH_TOP_LEFT_RHODES CACHED_ASSETS_ASSET_PATH "top_left_rhodes.png"
-#define CACHED_ASSETS_ASSET_PATH_TOP_RIGHT_BAR CACHED_ASSETS_ASSET_PATH "top_right_bar.png"
-#define CACHED_ASSETS_ASSET_PATH_TOP_RIGHT_ARROW CACHED_ASSETS_ASSET_PATH "top_right_arrow.png"
+// overlay 装饰图只存一份 2x(720 基准)素材, 走 stbi_load 直读 (无 lv_fs 盘符), 文件名
+// 相对 res/, 运行时经 respath() 解析。1x 档由 cacheassets 加载时最近邻下采样到一半。
+#define CACHED_ASSETS_FILE_AK_BAR "ak_bar.png"
+#define CACHED_ASSETS_FILE_BTM_LEFT_BAR "btm_left_bar.png"
+#define CACHED_ASSETS_FILE_TOP_LEFT_RECT "top_left_rect.png"
+#define CACHED_ASSETS_FILE_TOP_LEFT_RHODES "top_left_rhodes.png"
+#define CACHED_ASSETS_FILE_TOP_RIGHT_BAR "top_right_bar.png"
+#define CACHED_ASSETS_FILE_TOP_RIGHT_ARROW "top_right_arrow.png"
 
 
 // ========== Exitcode Definition ==========

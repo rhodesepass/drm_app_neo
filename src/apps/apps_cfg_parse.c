@@ -2,6 +2,7 @@
 #include "apps/apps_cfg_parse.h"
 #include "utils/log.h"
 #include "utils/misc.h"
+#include "utils/respath.h"
 #include "utils/cJSON.h"
 #include "config.h"
 #include "utils/timer.h"
@@ -191,10 +192,10 @@ int apps_cfg_try_load(apps_t *apps,app_entry_t* app,char * app_dir,app_source_t 
             set_lvgl_path(app->icon_path, sizeof(app->icon_path), abs_icon);
         } else {
             parse_log_file(apps->parse_log_f, app_dir, "图标文件不存在, 使用默认图标", PARSE_LOG_WARN);
-            safe_strcpy(app->icon_path, sizeof(app->icon_path), APPS_DEFAULT_ICON_PATH);
+            safe_strcpy(app->icon_path, sizeof(app->icon_path), respath_lvfs(RES_DEFAULT_ICON_FILE));
         }
     } else {
-        safe_strcpy(app->icon_path, sizeof(app->icon_path), APPS_DEFAULT_ICON_PATH);
+        safe_strcpy(app->icon_path, sizeof(app->icon_path), respath_lvfs(RES_DEFAULT_ICON_FILE));
     }
 
     // 解析拓展名

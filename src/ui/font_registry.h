@@ -6,8 +6,8 @@
 // 字号以 360 基准书写，font_get 内部套 S() 换算到当前目标。
 // 句柄在 init / 进屏时建一次，按 (role, px) 缓存，严禁每帧重建。
 //
-// 字体文件目录由编译期宏 FONT_REGISTRY_DIR 指定 (含 lv_fs 盘符前缀，如 "A:/root/res/fonts")，
-// PC 模拟器通过 -DFONT_REGISTRY_DIR=... 覆盖为仓库内的 font/ 目录。
+// 字体走 FreeType stdio (LVGL port 关闭，无 lv_fs 盘符)。设备侧目录运行时按可执行文件
+// 同级 res/fonts 解析 (见 respath)；PC 模拟器用 -DFONT_REGISTRY_DIR=... 覆盖为仓库 font/。
 //
 #include <lvgl/lvgl.h>
 

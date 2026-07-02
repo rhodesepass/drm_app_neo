@@ -2,6 +2,9 @@
 #include "screen_manager.h"
 #include "styles.h"
 #include "ui_metrics.h"
+#ifndef LOGO_PRTS_PATH
+#include "utils/respath.h"
+#endif
 
 lv_obj_t *ui_screen_root_bare(void)
 {
@@ -22,7 +25,11 @@ void ui_header(lv_obj_t *root, const char *title)
 {
     lv_obj_t *logo = lv_image_create(root);
     lv_obj_set_pos(logo, S(15), S(10));
+#ifdef LOGO_PRTS_PATH
     lv_image_set_src(logo, LOGO_PRTS_PATH);
+#else
+    lv_image_set_src(logo, respath_lvfs(LOGO_PRTS_FILE));
+#endif
     lv_image_set_pivot(logo, 0, 0);
     lv_image_set_scale(logo, 128 * UI_SCALE);
 
