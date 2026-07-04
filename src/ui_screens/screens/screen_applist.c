@@ -191,6 +191,7 @@ static void on_load_start(lv_event_t *e)
     for (int i = 0; i < UI_APP_VISIBLE_SLOTS; i++)
         if (self.slots[i].app_index >= 0) lv_group_add_obj(g, self.slots[i].btn);
     lv_group_add_obj(g, self.back_btn);
+    add_style_focus(self.back_btn);
     if (self.total > 0) lv_group_focus_obj(self.slots[0].btn);
 }
 
@@ -214,6 +215,9 @@ lv_obj_t *screen_applist_create(void)
         lv_obj_set_flex_flow(self.scroll, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_scroll_dir(self.scroll, LV_DIR_VER);
         lv_obj_set_style_pad_all(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        // 主题 card 默认给了按 DPI 算的 pad_row(不走 S()，两档同像素)，会盖过条目自己的
+        // margin_top，导致间距不随分辨率缩放。清零，间距全由 op_entry 的 margin_top(S(5)) 定。
+        lv_obj_set_style_pad_row(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_width(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_bg_opa(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -221,7 +225,7 @@ lv_obj_t *screen_applist_create(void)
         update_visible_range(0);
     }
 
-    self.back_btn = ui_text_button(root, 23, 574, 316, 51, 0, "返回", on_back);
+    self.back_btn = ui_text_button(root, 23, 574, 316, 51, UI_SEM_DEFAULT, "返回", on_back);
 
     lv_obj_add_event_cb(root, on_load_start, LV_EVENT_SCREEN_LOAD_START, NULL);
     return root;

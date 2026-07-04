@@ -69,8 +69,8 @@ lv_obj_t *screen_sysinfo_create(void)
     add_style_label_small(self.info);
     lv_label_set_text(self.info, "");
 
-    ui_text_button(root, 27, 581, 149, 51, 0, "返回", on_back);
-    ui_text_button(root, 186, 580, 147, 52, 0xff8c0f0f, "格式化SD卡", on_format);
+    ui_text_button(root, 27, 581, 149, 51, UI_SEM_DEFAULT, "返回", on_back);
+    ui_text_button(root, 186, 580, 147, 52, UI_SEM_DANGER, "格式化SD卡", on_format);
 
     screen_sysinfo_tick();
     return root;

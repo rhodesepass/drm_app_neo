@@ -12,7 +12,9 @@
 #include "config.h"
 #include "ui_metrics.h"
 #include "ui_screens/screen_manager.h"
+#include "ui_screens/ui_backend.h"
 #include "ui/font_registry.h"
+#include "ui/ui_theme.h"
 #include "utils/log.h"
 #include "sim_sdl_window.h"
 
@@ -42,6 +44,7 @@ int main(int argc, char *argv[])
 
     // 字体须在建屏前就绪
     font_registry_init();
+    ui_theme_apply(ui_backend_theme_get());   // 应用默认主题(顺带把中文字体设成主题默认)
     screens_init();
     lv_indev_set_group(sim_window_indev(), screens_group());
 

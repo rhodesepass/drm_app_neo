@@ -11,6 +11,16 @@
 extern "C" {
 #endif
 
+// 语义底色 (随主题翻转)，用于按钮/面板底。DEFAULT = 走 LVGL 主题默认底。
+typedef enum {
+    UI_SEM_DEFAULT = 0,
+    UI_SEM_PRIMARY,
+    UI_SEM_WARNING,
+    UI_SEM_DANGER,
+    UI_SEM_SUCCESS,
+    UI_SEM_NEUTRAL,
+} ui_sem_t;
+
 void add_style_label_large(lv_obj_t *obj);     // 标题 (FONT_TITLE)
 void add_style_label_small(lv_obj_t *obj);     // 正文 (FONT_BODY)
 void add_style_fa_label(lv_obj_t *obj);        // 图标 (FONT_ICON)
@@ -23,6 +33,15 @@ void add_style_sd_flag(lv_obj_t *obj);         // "SD" 角标
 void add_style_app_bg_running(lv_obj_t *obj);  // 应用"后台"角标
 void add_style_app_fg(lv_obj_t *obj);          // 应用"前台"角标
 void add_style_app_bg_notrunning(lv_obj_t *obj);// 应用"未运行"角标
+
+void add_style_fill(lv_obj_t *obj, ui_sem_t sem); // 语义底色 (按钮/面板)
+void add_style_spinner_arc(lv_obj_t *obj);        // spinner 弧 (中性)
+void add_style_log_text(lv_obj_t *obj);           // 次要日志文字 (灰)
+void add_style_focus(lv_obj_t *obj);              // 加粗焦点外框 (可聚焦控件)
+void add_style_screen_bg(lv_obj_t *obj);          // 屏幕背景底 (随方案换)
+
+// 按当前调色板 (重)着色所有共享 style；由 ui_theme_apply() 调用以随主题翻转。
+void styles_apply_palette(void);
 
 #ifdef __cplusplus
 }

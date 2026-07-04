@@ -5,6 +5,7 @@
 //
 #include "ui_screens/ui_backend.h"
 #include "ui_screens/ui_services.h"
+#include "ui/ui_theme.h"
 
 #include <lvgl/lvgl.h>   // LV_KEY_*
 #include "config.h"
@@ -194,6 +195,16 @@ void ui_backend_no_overlay_set(bool v)
     g_settings.ctrl_word.no_overlay_block = v;
     settings_unlock(&g_settings);
     settings_update(&g_settings);
+}
+
+int  ui_backend_theme_get(void) { return g_settings.theme_id; }
+void ui_backend_theme_set(int id)
+{
+    settings_lock(&g_settings);
+    g_settings.theme_id = (uint8_t)id;
+    settings_unlock(&g_settings);
+    settings_update(&g_settings);
+    ui_theme_apply(id);
 }
 
 // ================= 存储 / sysinfo (原 actions_sysinfo.c) =================

@@ -48,6 +48,7 @@ set(SIM_SOURCES
   ${REPO}/src/ui_screens/screens/screen_warning.c
   ${REPO}/src/ui_screens/screens/screen_confirm.c
   ${REPO}/src/ui/font_registry.c
+  ${REPO}/src/ui/ui_theme.c
   ${REPO}/src/utils/log.c
 )
 

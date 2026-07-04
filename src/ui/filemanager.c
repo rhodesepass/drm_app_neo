@@ -7,6 +7,7 @@
 #include "config.h"
 #include "utils/log.h"
 #include "apps/apps.h"
+#include "ui/ui_theme.h"
 
 static apps_t   *s_apps;
 static lv_obj_t *s_fe;   // lv_file_explorer
@@ -39,10 +40,10 @@ void ui_hook_filemanager_mount(lv_obj_t *container)
 {
     if (!container) return;
     lv_obj_clean(container);
-    lv_obj_set_style_bg_color(container, lv_color_hex(0xf2f1f6), 0);
+    lv_obj_set_style_bg_color(container, ui_color(UI_C_SURFACE), 0);
 
     s_fe = lv_file_explorer_create(container);
-    lv_obj_set_style_bg_color(s_fe, lv_color_hex(0xf2f1f6), 0);
+    lv_obj_set_style_bg_color(s_fe, ui_color(UI_C_SURFACE), 0);
     lv_obj_set_size(s_fe, LV_PCT(100), LV_PCT(100));
     lv_obj_center(s_fe);
     lv_file_explorer_open_dir(s_fe, "A:/root/");

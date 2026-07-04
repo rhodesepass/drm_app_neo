@@ -45,6 +45,8 @@ int  ui_backend_usb_mode_get(void);     void ui_backend_usb_mode_set(int v);
 bool ui_backend_lowbat_trip_get(void);  void ui_backend_lowbat_trip_set(bool v);
 bool ui_backend_no_intro_get(void);     void ui_backend_no_intro_set(bool v);
 bool ui_backend_no_overlay_get(void);   void ui_backend_no_overlay_set(bool v);
+// 配色方案索引 (见 ui_theme 预设)。set 会持久化并立即应用 (ui_theme_apply)。
+int  ui_backend_theme_get(void);        void ui_backend_theme_set(int id);
 
 // ---- 干员列表 ----
 typedef struct {

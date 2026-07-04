@@ -6,10 +6,24 @@
 #include "ui_backend.h"
 #include "ui_metrics.h"
 #include "ui/font_registry.h"
+#include "ui/ui_theme.h"
 #include "utils/log.h"
 
+#include <stdio.h>
+
+// 把配色方案名拼成 dropdown 的换行分隔选项串 (随预设表自动增减)。
+static const char *theme_options(void)
+{
+    static char buf[256];
+    int n = ui_theme_count(), len = 0;
+    for (int i = 0; i < n && len < (int)sizeof(buf); i++) {
+        len += snprintf(buf + len, sizeof(buf) - len, "%s%s", i ? "\n" : "", ui_theme_name(i));
+    }
+    return buf;
+}
+
 static struct {
-    lv_obj_t *sw_mode, *sw_int, *usb;   // 下拉
+    lv_obj_t *sw_mode, *sw_int, *usb, *theme;   // 下拉
 } self;
 
 // ---- 开关回调 ----
@@ -20,6 +34,7 @@ static void on_no_overlay(lv_event_t *e){ ui_backend_no_overlay_set(lv_obj_has_s
 static void on_sw_mode(lv_event_t *e)   { ui_backend_sw_mode_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 static void on_sw_int(lv_event_t *e)    { ui_backend_sw_interval_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 static void on_usb(lv_event_t *e)       { ui_backend_usb_mode_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
+static void on_theme(lv_event_t *e)     { ui_backend_theme_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 // ---- 按钮 ----
 static void on_clear_cache(lv_event_t *e){ (void)e; /* 占位键: 吸收进设置屏首个 release，避免误触 slider */ }
 static void on_srgn(lv_event_t *e)       { (void)e; ui_hook_srgn_config(); }
@@ -55,7 +70,7 @@ lv_obj_t *screen_settings_create(void)
     lv_obj_t *root = ui_screen_root();
     ui_header(root, "设备参数定值");
 
-    ui_small_text_button(root, 205, 8, 82, 32, 0, "清除缓存", on_clear_cache);
+    ui_small_text_button(root, 205, 8, 82, 32, UI_SEM_DEFAULT, "清除缓存", on_clear_cache);
 
     make_switch(root, 49,  "低电量自动关机",        ui_backend_lowbat_trip_get(),  on_lowbat);
     make_switch(root, 93,  "(切换时)跳过入场动画",   ui_backend_no_intro_get(),     on_no_intro);
@@ -67,9 +82,11 @@ lv_obj_t *screen_settings_create(void)
                                  "1分钟\n3分钟\n5分钟\n10分钟\n30分钟", ui_backend_sw_interval_get(), on_sw_int);
     self.usb     = make_dropdown(root, 22, 292, 151, 263, "USB模式",
                                  "文件(MTP)\nShell(串口)\n网络(rndis)\n仅充电\n管理器APP", ui_backend_usb_mode_get(), on_usb);
+    self.theme   = make_dropdown(root, 195, 292, 144, 263, "主题",
+                                 theme_options(), ui_backend_theme_get(), on_theme);
 
-    ui_text_button(root, 23, 513, 316, 52, 0xff8c0f0f, "进入底层设置srgn_config", on_srgn);
-    ui_text_button(root, 23, 574, 316, 51, 0, "返回", on_back);
+    ui_text_button(root, 23, 513, 316, 52, UI_SEM_DANGER, "进入底层设置srgn_config", on_srgn);
+    ui_text_button(root, 23, 574, 316, 51, UI_SEM_DEFAULT, "返回", on_back);
 
     return root;
 }
@@ -86,4 +103,5 @@ void screen_settings_tick(void)
     sync_dd(self.sw_mode, ui_backend_sw_mode_get());
     sync_dd(self.sw_int,  ui_backend_sw_interval_get());
     sync_dd(self.usb,     ui_backend_usb_mode_get());
+    sync_dd(self.theme,   ui_backend_theme_get());
 }

@@ -40,7 +40,7 @@ lv_obj_t *screen_filemanager_create(void)
 
     ui_hook_filemanager_mount(content); // 设备: 清空 content 并建 explorer
 
-    s_back = ui_text_button(root, 23, 574, 316, 51, 0, "返回", on_back);
+    s_back = ui_text_button(root, 23, 574, 316, 51, UI_SEM_DEFAULT, "返回", on_back);
 
     lv_obj_add_event_cb(root, on_load_start, LV_EVENT_SCREEN_LOAD_START, NULL);
     return root;

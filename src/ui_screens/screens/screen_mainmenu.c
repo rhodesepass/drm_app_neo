@@ -48,13 +48,21 @@ static void grid_btn(lv_obj_t *parent, int x, int y,
     lv_obj_t *ic = lv_label_create(o);
     lv_obj_set_style_text_font(ic, font_get(FONT_ICON, PX_BTN_ICON), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_align(ic, LV_ALIGN_TOP_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+#if defined(USE_720_1280_SCREEN)
     lv_obj_set_y(ic, S(10));
+#else if defined(USE_360_640_SCREEN)
+    lv_obj_set_y(ic, S(5));
+#endif
     lv_label_set_text(ic, icon);
 
     lv_obj_t *lbl = lv_label_create(o);
     add_style_label_large(lbl);
     lv_obj_set_style_align(lbl, LV_ALIGN_BOTTOM_MID, LV_PART_MAIN | LV_STATE_DEFAULT);
+#ifdef USE_720_1280_SCREEN
     lv_obj_set_y(lbl, S(0));
+#else if defined(USE_360_640_SCREEN)
+    lv_obj_set_y(lbl, S(5));
+#endif
     lv_label_set_text(lbl, text);
 }
 
@@ -88,9 +96,9 @@ lv_obj_t *screen_mainmenu_create(void)
 
     // 重启 / 关机 (各 150x50，左右 margin 25 对称，间距 10)
     {
-        lv_obj_t *b = ui_text_button(root, 25, 325, 150, 50, 0, "重启程序", on_restart);
+        lv_obj_t *b = ui_text_button(root, 25, 325, 150, 50, UI_SEM_DEFAULT, "重启程序", on_restart);
         add_style_main_small_btn(b);
-        lv_obj_t *b2 = ui_text_button(root, 185, 325, 150, 50, 0, "关机", on_shutdown);
+        lv_obj_t *b2 = ui_text_button(root, 185, 325, 150, 50, UI_SEM_DEFAULT, "关机", on_shutdown);
         add_style_main_small_btn(b2);
     }
 

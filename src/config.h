@@ -39,7 +39,7 @@
 // ========== Settings Configuration ==========
 #define SETTINGS_FILE_PATH "/root/epass_cfg.bin"
 #define SETTINGS_MAGIC 0x45504153434F4E46
-#define SETTINGS_VERSION 2
+#define SETTINGS_VERSION 4
 #define SETTINGS_BRIGHTNESS_PATH "/sys/class/backlight/backlight/brightness"
 
 // ========== Storage Configuration ==========
@@ -136,12 +136,12 @@
     #define SCREEN_WIDTH 720
     #define SCREEN_HEIGHT 1280
 
-    // 可见槽位是数量，不随分辨率缩放；仅条目高度 2x
-    #define UI_OPLIST_VISIBLE_SLOTS 8
-    #define UI_OPLIST_ITEM_HEIGHT 160
+    // 可见槽位是数量，不随分辨率缩放；
+    #define UI_OPLIST_VISIBLE_SLOTS 12
+    #define UI_OPLIST_ITEM_HEIGHT 80
 
     #define UI_APP_VISIBLE_SLOTS 12
-    #define UI_APP_ITEM_HEIGHT 160
+    #define UI_APP_ITEM_HEIGHT 80
 
 
     // 干员列表和亮度设置的Y坐标

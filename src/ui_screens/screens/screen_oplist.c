@@ -171,6 +171,8 @@ static void on_load_start(lv_event_t *e)
         if (self.slots[i].op_index >= 0) lv_group_add_obj(g, self.slots[i].btn);
     lv_group_add_obj(g, self.refresh_btn);
     lv_group_add_obj(g, self.menu_btn);
+    add_style_focus(self.refresh_btn);
+    add_style_focus(self.menu_btn);
 
     refocus_op(cur);
 }
@@ -195,6 +197,9 @@ lv_obj_t *screen_oplist_create(void)
         lv_obj_set_flex_flow(self.scroll, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_scroll_dir(self.scroll, LV_DIR_VER);
         lv_obj_set_style_pad_all(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        // 主题 card 默认给了按 DPI 算的 pad_row(不走 S()，两档同像素)，会盖过条目自己的
+        // margin_top，导致间距不随分辨率缩放。清零，间距全由 op_entry 的 margin_top(S(5)) 定。
+        lv_obj_set_style_pad_row(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_width(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_bg_opa(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -202,8 +207,8 @@ lv_obj_t *screen_oplist_create(void)
         update_visible_range(0);
     }
 
-    self.refresh_btn = ui_text_button(root, 17, 327, 159, 51, 0xff149b5b, "刷新列表", on_refresh);
-    self.menu_btn    = ui_text_button(root, 187, 327, 157, 51, 0, "主菜单", on_menu);
+    self.refresh_btn = ui_text_button(root, 17, 327, 159, 51, UI_SEM_SUCCESS, "刷新列表", on_refresh);
+    self.menu_btn    = ui_text_button(root, 187, 327, 157, 51, UI_SEM_DEFAULT, "主菜单", on_menu);
 
     lv_obj_add_event_cb(root, on_load_start, LV_EVENT_SCREEN_LOAD_START, NULL);
     return root;

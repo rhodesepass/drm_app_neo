@@ -26,7 +26,7 @@ static void on_proceed(lv_event_t *e)
 lv_obj_t *screen_confirm_create(void)
 {
     lv_obj_t *root = ui_screen_root();
-    lv_obj_set_style_bg_color(root, lv_color_hex(0xff9b861f), LV_PART_MAIN | LV_STATE_DEFAULT);
+    add_style_fill(root, UI_SEM_WARNING);
 
     lv_obj_t *icon = lv_label_create(root);
     lv_obj_set_pos(icon, S(14), S(4)); add_style_fa_label(icon);
@@ -41,8 +41,8 @@ lv_obj_t *screen_confirm_create(void)
     add_style_label_large(self.title);
     lv_label_set_text(self.title, self.t);
 
-    ui_text_button(root, 28, 70, 149, 51, 0xff6c6666, "取消", on_cancel);
-    ui_text_button(root, 187, 69, 147, 52, 0xffb10a0a, "确定", on_proceed);
+    ui_text_button(root, 28, 70, 149, 51, UI_SEM_NEUTRAL, "取消", on_cancel);
+    ui_text_button(root, 187, 69, 147, 52, UI_SEM_DANGER, "确定", on_proceed);
 
     return root;
 }

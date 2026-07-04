@@ -103,6 +103,7 @@ set(EPASS_SOURCES
   src/render/fbdraw.c
 
   src/ui/font_registry.c
+  src/ui/ui_theme.c
   src/ui/filemanager.c
   src/ui/battery.c
   src/ui/ipc_helper.c

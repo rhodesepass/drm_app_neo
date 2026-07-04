@@ -826,7 +826,6 @@
 /** A simple, impressive and very complete theme */
 #define LV_USE_THEME_DEFAULT 1
 #if LV_USE_THEME_DEFAULT
-    /** 0: Light mode; 1: Dark mode (与设备端一致, 深色) */
     #define LV_THEME_DEFAULT_DARK 1
 
     /** 1: Enable grow on press */

@@ -11,6 +11,7 @@ lv_obj_t *ui_screen_root_bare(void)
     lv_obj_t *root = lv_obj_create(NULL);
     lv_obj_set_size(root, S(UI_BASE_WIDTH), S(UI_BASE_HEIGHT));
     lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    add_style_screen_bg(root);  // 方案背景底 (confirm/warning 之后自己盖 fill)
     return root;
 }
 
@@ -40,12 +41,12 @@ void ui_header(lv_obj_t *root, const char *title)
 }
 
 lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
-                         uint32_t bg, const char *text, lv_event_cb_t cb)
+                         ui_sem_t sem, const char *text, lv_event_cb_t cb)
 {
     lv_obj_t *o = lv_button_create(root);
     lv_obj_set_pos(o, S(x), S(y));
     lv_obj_set_size(o, S(w), S(h));
-    if (bg) lv_obj_set_style_bg_color(o, lv_color_hex(bg), LV_PART_MAIN | LV_STATE_DEFAULT);
+    add_style_fill(o, sem);
     if (cb) lv_obj_add_event_cb(o, cb, LV_EVENT_PRESSED, NULL);
 
     lv_obj_t *lbl = lv_label_create(o);
@@ -56,12 +57,12 @@ lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
 }
 
 lv_obj_t *ui_small_text_button(lv_obj_t *root, int x, int y, int w, int h,
-    uint32_t bg, const char *text, lv_event_cb_t cb)
+    ui_sem_t sem, const char *text, lv_event_cb_t cb)
 {
     lv_obj_t *o = lv_button_create(root);
     lv_obj_set_pos(o, S(x), S(y));
     lv_obj_set_size(o, S(w), S(h));
-    if (bg) lv_obj_set_style_bg_color(o, lv_color_hex(bg), LV_PART_MAIN | LV_STATE_DEFAULT);
+    add_style_fill(o, sem);
     if (cb) lv_obj_add_event_cb(o, cb, LV_EVENT_PRESSED, NULL);
 
     lv_obj_t *lbl = lv_label_create(o);
@@ -82,6 +83,7 @@ static void add_focusables(lv_obj_t *parent, lv_group_t *g)
             lv_obj_check_type(c, &lv_slider_class) ||
             lv_obj_check_type(c, &lv_roller_class)) {
             lv_group_add_obj(g, c);
+            add_style_focus(c);
         }
         add_focusables(c, g);
     }

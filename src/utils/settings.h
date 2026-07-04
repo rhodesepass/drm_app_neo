@@ -20,6 +20,7 @@ typedef struct {
     sw_mode_t switch_mode;
     usb_mode_t usb_mode;
     settings_ctrl_word_t ctrl_word;
+    uint8_t theme_id;     // 配色方案索引 (见 ui_theme 预设表, 0=深色)
     pthread_mutex_t mtx;
 } settings_t;
 

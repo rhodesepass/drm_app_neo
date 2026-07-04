@@ -13,7 +13,7 @@ lv_obj_t *screen_spinner_create(void)
     lv_obj_set_size(sp, S(44), S(44));
     lv_obj_set_style_arc_width(sp, S(6), LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_arc_width(sp, S(6), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_arc_color(sp, lv_color_hex(0xffcdd0d3), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    add_style_spinner_arc(sp);
 
     lv_obj_t *status = lv_label_create(root);
     lv_obj_set_pos(status, S(80), S(24));
@@ -23,7 +23,7 @@ lv_obj_t *screen_spinner_create(void)
     lv_obj_t *log = lv_label_create(root);
     lv_obj_set_pos(log, S(230), S(0));
     add_style_label_small(log);
-    lv_obj_set_style_text_color(log, lv_color_hex(0xffa4a4a4), LV_PART_MAIN | LV_STATE_DEFAULT);
+    add_style_log_text(log);
     lv_label_set_text(log,
         "RDEP Connection\n==> Rhodes Island\n[OK] TLS Handshake\n[OK] ::43232->::22");
 

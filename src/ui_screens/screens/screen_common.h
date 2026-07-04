@@ -4,6 +4,7 @@
 // 不是 EEZ 那种全局表，只是消除 9 个屏的重复样板。
 //
 #include <lvgl/lvgl.h>
+#include "styles.h"   // ui_sem_t
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,11 +25,12 @@ lv_obj_t *ui_screen_root_bare(void);
 // 左上角统一页头：PRTS logo + 标题。
 void ui_header(lv_obj_t *root, const char *title);
 
-// 居中文字大按钮；bg=0 用主题默认色；cb=NULL 不挂回调。
+// 居中文字大按钮；sem=UI_SEM_DEFAULT 走主题默认底色；cb=NULL 不挂回调。
+// 语义底色随主题翻转 (见 add_style_fill)。
 lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
-                         uint32_t bg, const char *text, lv_event_cb_t cb);
+                         ui_sem_t sem, const char *text, lv_event_cb_t cb);
 lv_obj_t *ui_small_text_button(lv_obj_t *root, int x, int y, int w, int h,
-                         uint32_t bg, const char *text, lv_event_cb_t cb);
+                         ui_sem_t sem, const char *text, lv_event_cb_t cb);
 
 // 进屏 LOAD_START 时自动把所有可聚焦后代(按钮/下拉/开关/滑条/roller)注册到导航 group。
 // 各屏 root 挂上它即可，无需手写 focus 列表。

@@ -2,6 +2,7 @@
 // sim 后端桩 —— 实现 ui_backend.h，喂占位数据让手写屏脱离设备子系统在桌面跑。
 //
 #include "ui_screens/ui_backend.h"
+#include "ui/ui_theme.h"
 #include "utils/log.h"
 
 #define LOGO UI_IMG_DIR "/prts_64_inv.png"
@@ -52,6 +53,9 @@ bool ui_backend_no_intro_get(void) { return s_no_intro; }
 void ui_backend_no_intro_set(bool v) { s_no_intro = v; log_info("[mock] no_intro=%d", v); }
 bool ui_backend_no_overlay_get(void) { return s_no_overlay; }
 void ui_backend_no_overlay_set(bool v) { s_no_overlay = v; log_info("[mock] no_overlay=%d", v); }
+static int s_theme = 0;
+int  ui_backend_theme_get(void) { return s_theme; }
+void ui_backend_theme_set(int id) { s_theme = id; log_info("[mock] theme=%d (%s)", id, ui_theme_name(id)); ui_theme_apply(id); }
 
 // ---- 干员列表 ----
 static const ui_op_entry_t s_ops[] = {
