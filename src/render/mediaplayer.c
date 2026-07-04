@@ -234,10 +234,10 @@ static void *mp_decoder_thread(void *param)
                     continue;
                 }
 
-                if (picture->nWidth != MEDIAPLAYER_FRAME_WIDTH ||
-                    picture->nHeight != MEDIAPLAYER_FRAME_HEIGHT) {
+                if (picture->nWidth != mp->frame_width ||
+                    picture->nHeight != mp->frame_height) {
                     log_error("err size, expect %dx%d, actual %dx%d",
-                              MEDIAPLAYER_FRAME_WIDTH, MEDIAPLAYER_FRAME_HEIGHT,
+                              mp->frame_width, mp->frame_height,
                               picture->nWidth, picture->nHeight);
                     ReturnPicture(decoder, picture);
                     pthread_rwlock_wrlock(&mp->thread.rwlock);
@@ -349,24 +349,34 @@ int mediaplayer_destroy(mediaplayer_t *mp)
     return 0;
 }
 
-int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
+// main.c 提供，按解码尺寸选 modeset buffer(720 档旧素材走 DEFE 放大)
+extern int video_layer_ensure_mount(int src_w, int src_h);
+
+static bool mp_size_supported(int w, int h)
 {
-    if (!mp || !file) {
-        log_error("invalid params");
+    if (w == VIDEO_WIDTH && h == VIDEO_HEIGHT)
+        return true;
+#ifdef VIDEO_LEGACY_WIDTH
+    if (w == VIDEO_LEGACY_WIDTH && h == VIDEO_LEGACY_HEIGHT)
+        return true;
+#endif
+    return false;
+}
+
+int mediaplayer_remount_video_layer(mediaplayer_t *mp)
+{
+    if (!mp) {
         return -1;
     }
+    int w = mp->frame_width  ? mp->frame_width  : VIDEO_WIDTH;
+    int h = mp->frame_height ? mp->frame_height : VIDEO_HEIGHT;
+    // play_video 已在同一 middle_cb 里挂载过，尺寸未变时这里自动跳过
+    return video_layer_ensure_mount(w, h);
+}
 
-    if (atomic_load(&mp->running)) {
-        log_error("mediaplayer is running");
-        return -1;
-    }
-
-    // 每次开始之前都需要reset cache
-    drm_warpper_reset_cache_ioctl(mp->drm_warpper);
-
-    memset(mp->input_uri, 0, sizeof(mp->input_uri));
-    snprintf(mp->input_uri, sizeof(mp->input_uri), "file://%s", file);
-
+/* play_video/start 的公共段：input_uri 已就绪，走 parser→decoder→双线程 */
+static int mp_prepare_and_spawn(mediaplayer_t *mp)
+{
     mp->memops = MemAdapterGetOpsS();
     if (!mp->memops) {
         log_error("MemAdapterGetOpsS err");
@@ -396,7 +406,20 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
         return -1;
     }
 
-    
+    struct CdxProgramS *program =
+        &mp->media_info.program[mp->media_info.programIndex];
+
+    // 解码前先按 parser 尺寸把关并挂载：此时旧线程已 join、屏上是黑帧，
+    // modeset 无并发帧提交；同尺寸时 ensure_mount 为 no-op
+    if (!mp_size_supported(program->video[0].nWidth, program->video[0].nHeight)) {
+        log_error("unsupported video size %dx%d",
+                  program->video[0].nWidth, program->video[0].nHeight);
+        mp_cleanup_internal(mp);
+        return -1;
+    }
+    mp->frame_width  = program->video[0].nWidth;
+    mp->frame_height = program->video[0].nHeight;
+    video_layer_ensure_mount(mp->frame_width, mp->frame_height);
 
     mp->decoder = CreateVideoDecoder();
     if (!mp->decoder) {
@@ -409,9 +432,6 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
     VideoStreamInfo vInfo;
     memset(&vConfig, 0, sizeof(VConfig));
     memset(&vInfo, 0, sizeof(VideoStreamInfo));
-
-    struct CdxProgramS *program =
-        &mp->media_info.program[mp->media_info.programIndex];
 
     /* only use first video stream */
     vInfo.eCodecFormat          = program->video[0].eCodecFormat;
@@ -468,28 +488,28 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
         return -1;
     }
 
-    // /* wait for both threads to finish */
-    // pthread_join(mp->parser_thread, NULL);
-    // pthread_join(mp->decoder_thread, NULL);
-    // mp->running = 0;
-
-    // /* check final state */
-    // pthread_rwlock_rdlock(&mp->thread.rwlock);
-    // int final_state = mp->thread.state;
-    // pthread_rwlock_unlock(&mp->thread.rwlock);
-
-    // mp_cleanup_internal(mp);
-
-    // if (final_state & (MEDIAPLAYER_PARSER_ERROR | MEDIAPLAYER_DECODER_ERROR)) {
-    //     log_error("play failed, err state");
-    //     return -1;
-    // }
-    // if (!(final_state & MEDIAPLAYER_DECODE_FINISH)) {
-    //     log_error("decode failed, no frame");
-    //     return -1;
-    // }
-
     return 0;
+}
+
+int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
+{
+    if (!mp || !file) {
+        log_error("invalid params");
+        return -1;
+    }
+
+    if (atomic_load(&mp->running)) {
+        log_error("mediaplayer is running");
+        return -1;
+    }
+
+    // 每次开始之前都需要reset cache
+    drm_warpper_reset_cache_ioctl(mp->drm_warpper);
+
+    memset(mp->input_uri, 0, sizeof(mp->input_uri));
+    snprintf(mp->input_uri, sizeof(mp->input_uri), "file://%s", file);
+
+    return mp_prepare_and_spawn(mp);
 }
 
 extern buffer_object_t g_video_buf;
@@ -576,103 +596,9 @@ int mediaplayer_start(mediaplayer_t *mp)
         return -1;
     }
 
-    mp->memops = MemAdapterGetOpsS();
-    if (!mp->memops) {
-        log_error("MemAdapterGetOpsS err");
-        return -1;
-    }
-    CdcMemOpen(mp->memops);
-
-    memset(&mp->source, 0, sizeof(CdxDataSourceT));
-    memset(&mp->media_info, 0, sizeof(CdxMediaInfoT));
-
-    mp->source.uri = mp->input_uri;
-
-    int force_exit = 0;
-    CdxStreamT *stream = NULL;
-    int ret = CdxParserPrepare(&mp->source, 0, &mp->parser_mutex,
-                               &force_exit, &mp->parser, &stream, NULL, NULL);
-    if (ret < 0 || !mp->parser) {
-        log_error("CdxParserPrepare err");
-        mp_cleanup_internal(mp);
-        return -1;
-    }
-
-    ret = CdxParserGetMediaInfo(mp->parser, &mp->media_info);
+    int ret = mp_prepare_and_spawn(mp);
     if (ret != 0) {
-        log_error("CdxParserGetMediaInfo err");
-        mp_cleanup_internal(mp);
-        return -1;
-    }
-
-    mp->decoder = CreateVideoDecoder();
-    if (!mp->decoder) {
-        log_error("CreateVideoDecoder err");
-        mp_cleanup_internal(mp);
-        return -1;
-    }
-
-    VConfig vConfig;
-    VideoStreamInfo vInfo;
-    memset(&vConfig, 0, sizeof(VConfig));
-    memset(&vInfo, 0, sizeof(VideoStreamInfo));
-
-    struct CdxProgramS *program =
-        &mp->media_info.program[mp->media_info.programIndex];
-
-    /* only use first video stream */
-    vInfo.eCodecFormat          = program->video[0].eCodecFormat;
-    vInfo.nWidth                = program->video[0].nWidth;
-    vInfo.nHeight               = program->video[0].nHeight;
-    vInfo.nFrameRate            = program->video[0].nFrameRate;
-    vInfo.nFrameDuration        = program->video[0].nFrameDuration;
-    vInfo.nAspectRatio          = program->video[0].nAspectRatio;
-    vInfo.bIs3DStream           = program->video[0].bIs3DStream;
-    vInfo.nCodecSpecificDataLen = program->video[0].nCodecSpecificDataLen;
-    vInfo.pCodecSpecificData    = program->video[0].pCodecSpecificData;
-
-    mp->framerate = vInfo.nFrameRate;
-
-    vConfig.eOutputPixelFormat  = PIXEL_FORMAT_YUV_MB32_420;
-    vConfig.nDeInterlaceHoldingFrameBufferNum = BUF_CNT_4_DI;
-    vConfig.nDisplayHoldingFrameBufferNum = BUF_CNT_4_LIST;
-    vConfig.nRotateHoldingFrameBufferNum = BUF_CNT_4_ROTATE;
-    vConfig.nDecodeSmoothFrameBufferNum = BUF_CNT_4_SMOOTH;
-    vConfig.memops = mp->memops;
-    vConfig.nVbvBufferSize = VBVBUFFERSIZE;
-
-    ret = InitializeVideoDecoder(mp->decoder, &vInfo, &vConfig);
-    if (ret != 0) {
-        log_error("InitializeVideoDecoder err");
-        mp_cleanup_internal(mp);
-        return -1;
-    }
-
-    /* reset thread flags */
-    pthread_rwlock_wrlock(&mp->thread.rwlock);
-    mp->thread.end_of_stream = 0;
-    mp->thread.state = 0;
-    mp->thread.requested_stop = 0;
-    pthread_rwlock_unlock(&mp->thread.rwlock);
-
-    atomic_store(&mp->running, 1);
-
-    if (pthread_create(&mp->parser_thread, NULL, mp_parser_thread, mp) != 0) {
-        log_error("parser create err");
-        atomic_store(&mp->running, 0);
-        mp_cleanup_internal(mp);
-        return -1;
-    }
-
-    if (pthread_create(&mp->decoder_thread, NULL, mp_decoder_thread, mp) != 0) {
-        log_error("decoder create err");
-        pthread_rwlock_wrlock(&mp->thread.rwlock);
-        mp->thread.requested_stop = 1;
-        pthread_rwlock_unlock(&mp->thread.rwlock);
-        pthread_join(mp->parser_thread, NULL);
-        atomic_store(&mp->running, 0);
-        mp_cleanup_internal(mp);
-        return -1;
+        return ret;
     }
 
     log_info("playback started");

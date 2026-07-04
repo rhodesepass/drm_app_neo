@@ -1,0 +1,86 @@
+cmake_minimum_required(VERSION 3.10)
+project(epass_ui_sim C)
+
+# 仓库根目录 (sim 的上一级)
+set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# ============================================================================
+# 依赖
+# ============================================================================
+find_package(PkgConfig REQUIRED)
+find_package(PNG REQUIRED)
+pkg_check_modules(SDL2 REQUIRED sdl2)
+pkg_check_modules(FREETYPE REQUIRED freetype2)
+
+# ============================================================================
+# LVGL (用 sim 专用的 lv_conf.h: 开 SDL + FreeType)
+# ============================================================================
+set(LV_BUILD_CONF_PATH ${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h CACHE PATH "lv_conf.h path" FORCE)
+set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
+add_subdirectory(${REPO}/lvgl ${CMAKE_BINARY_DIR}/lvgl)
+target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})
+
+# ============================================================================
+# 模拟器可执行 —— 一次产出两档分辨率 (360x640 / 720x1280)，便于并排对比。
+# 源码与 liblvgl 共用，仅屏宏 (USE_*_SCREEN) 不同 → 每档一个 target。
+# ============================================================================
+set(SIM_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/main.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/mock_backend.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim_plane.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim_sdl_window.c
+
+  ${REPO}/src/ui_screens/screen_manager.c
+  ${REPO}/src/ui_screens/styles.c
+  ${REPO}/src/ui_screens/screens/screen_common.c
+  ${REPO}/src/ui_screens/screens/screen_mainmenu.c
+  ${REPO}/src/ui_screens/screens/screen_oplist.c
+  ${REPO}/src/ui_screens/screens/screen_sysinfo.c
+  ${REPO}/src/ui_screens/screens/screen_spinner.c
+  ${REPO}/src/ui_screens/screens/screen_displayimg.c
+  ${REPO}/src/ui_screens/screens/screen_filemanager.c
+  ${REPO}/src/ui_screens/screens/screen_settings.c
+  ${REPO}/src/ui_screens/screens/screen_applist.c
+  ${REPO}/src/ui_screens/screens/screen_warning.c
+  ${REPO}/src/ui_screens/screens/screen_confirm.c
+  ${REPO}/src/ui/font_registry.c
+  ${REPO}/src/ui/ui_theme.c
+  ${REPO}/src/utils/log.c
+)
+
+# name: 可执行名; screen_define: 屏宏 (覆盖 config.h 的兜底默认)
+function(add_sim_target name screen_define)
+  add_executable(${name} ${SIM_SOURCES})
+  target_include_directories(${name} PRIVATE
+    ${REPO}
+    ${REPO}/lvgl
+    ${REPO}/src
+    ${REPO}/src/ui_screens
+    ${REPO}/src/ui_screens/screens
+    ${SDL2_INCLUDE_DIRS}
+    ${FREETYPE_INCLUDE_DIRS}
+  )
+  # 字体目录: FreeType 直接读, 不走 lv_fs, 无盘符前缀
+  # 图片目录: 走 lv_fs (libpng 解码), 需带盘符 'A:' 前缀
+  target_compile_definitions(${name} PRIVATE
+    ${screen_define}
+    FONT_REGISTRY_DIR="${REPO}/font"
+    UI_IMG_DIR="A:${REPO}/font"
+  )
+  target_compile_options(${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  target_link_libraries(${name}
+    lvgl
+    ${SDL2_LIBRARIES}
+    ${FREETYPE_LIBRARIES}
+    ${PNG_LIBRARIES}
+    m
+    pthread
+  )
+endfunction()
+
+add_sim_target(epass_ui_sim_360x640  USE_360_640_SCREEN)
+add_sim_target(epass_ui_sim_720x1280 USE_720_1280_SCREEN)

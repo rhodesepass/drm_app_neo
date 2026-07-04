@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include "utils/log.h"
 #include "utils/misc.h"
+#include "utils/respath.h"
 
 // 可选图片通用校验规则（优化版：仅检查文件存在性，不加载图片）：
 // - json字段不存在 / 非字符串 / 空字符串 => 视为不存在，dst置空
@@ -177,14 +178,14 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
     // icon: 可选，输出为 LVGL path（A: 前缀）；不存在则用默认 icon
     const char *icon = json_get_string(json, "icon");
     if (!icon || icon[0] == '\0') {
-        safe_strcpy(operator->icon_path, sizeof(operator->icon_path), PRTS_DEFAULT_ICON_PATH);
+        safe_strcpy(operator->icon_path, sizeof(operator->icon_path), respath_lvfs(RES_DEFAULT_ICON_FILE));
     } else {
         char abs_icon[256];
         abs_icon[0] = '\0';
         join_path(abs_icon, sizeof(abs_icon), path, icon);
         if (!file_exists_readable(abs_icon)) {
             parse_log_file(prts->parse_log_f, path, "icon 文件不存在，使用默认icon", PARSE_LOG_WARN);
-            safe_strcpy(operator->icon_path, sizeof(operator->icon_path), PRTS_DEFAULT_ICON_PATH);
+            safe_strcpy(operator->icon_path, sizeof(operator->icon_path), respath_lvfs(RES_DEFAULT_ICON_FILE));
         } else {
             set_lvgl_path(operator->icon_path, sizeof(operator->icon_path), abs_icon);
         }
@@ -209,14 +210,18 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         cJSON_Delete(json);
         return -1;
     }
-    operator->disp_type = DISPLAY_480_854
+    operator->disp_type = DISPLAY_480_854;
 #elif defined(USE_720_1280_SCREEN)
-    if (strcmp(screen, "720x1280") != 0) {
+    // 兼容 360x640 旧素材：视频由 DEFE 硬件放大，图片按 UI_SCALE 软件放大
+    if (strcmp(screen, "720x1280") == 0) {
+        operator->disp_type = DISPLAY_720_1280;
+    } else if (strcmp(screen, "360x640") == 0) {
+        operator->disp_type = DISPLAY_360_640;
+    } else {
         parse_log_file(prts->parse_log_f, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
         cJSON_Delete(json);
         return -1;
     }
-    operator->disp_type = DISPLAY_720_1280;
 #endif
 
 
@@ -369,6 +374,12 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
             return -1;
         }
     }
+
+    // 旧素材(360 基准)的用户图片在 720p 档加载后需软件放大
+    int upscale = (operator->disp_type == DISPLAY_360_640 && UI_SCALE > 1) ? UI_SCALE : 1;
+    operator->opinfo_params.src_upscale = upscale;
+    operator->transition_in.src_upscale = upscale;
+    operator->transition_loop.src_upscale = upscale;
 
     cJSON_Delete(json);
     return 0;

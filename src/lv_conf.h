@@ -153,7 +153,7 @@
 /** Stack size of drawing thread.
  * NOTE: If FreeType or ThorVG is enabled, it is recommended to set it to 32KB or more.
  */
-#define LV_DRAW_THREAD_STACK_SIZE    (8 * 1024)         /**< [bytes]*/
+#define LV_DRAW_THREAD_STACK_SIZE    (32 * 1024)        /**< [bytes] — FreeType 时需 >=32KB */
 
 /** Thread priority of the drawing task.
  *  Higher values mean higher priority.
@@ -647,10 +647,10 @@
  *  #define LV_FONT_CUSTOM_DECLARE   LV_FONT_DECLARE(my_font_1) LV_FONT_DECLARE(my_font_2)
  *  @endcode
  */
-#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(ui_font_sourcesans_reg_14)
+#define LV_FONT_CUSTOM_DECLARE
 
 /** Always set a default font */
-#define LV_FONT_DEFAULT &ui_font_sourcesans_reg_14
+#define LV_FONT_DEFAULT &lv_font_montserrat_14
 
 /** Enable handling large font and/or fonts with a lot of characters.
  *  The limit depends on the font size, font face and bpp.
@@ -974,9 +974,11 @@
 #define LV_USE_BARCODE 0
 
 /** FreeType library */
-#define LV_USE_FREETYPE 0
+#define LV_USE_FREETYPE 1
 #if LV_USE_FREETYPE
-    /** Let FreeType use LVGL memory and file porting */
+    /** LVGL port (lv_ftsystem) 需要 FreeType 内部头(ftdebug.h 等)，buildroot 的 freetype2
+     *  未安装这些内部头 ⇒ 关掉 port，FreeType 直接用 stdio 读字体文件路径(无 lv_fs 盘符)。
+     *  字体目录见 font_registry 的 FONT_REGISTRY_DIR (设备默认 /root/res/fonts)。 */
     #define LV_FREETYPE_USE_LVGL_PORT 0
 
     /** Cache count of glyphs in FreeType, i.e. number of glyphs that can be cached.

@@ -66,6 +66,7 @@ find_package(PNG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
+pkg_check_modules(FREETYPE REQUIRED freetype2)
 
 # ============================================================================
 # LVGL 配置
@@ -75,12 +76,12 @@ set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/src/lv_conf.h CACHE PATH "lv_conf.h p
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "Build LVGL examples" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "Build LVGL demos" FORCE)
 add_subdirectory(lvgl)
+# LVGL 开启 LV_USE_FREETYPE 后，其适配源需要 freetype 头
+target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS})
 
 # ============================================================================
 # 源文件
 # ============================================================================
-FILE(GLOB UI_SOURCES "eez_design/src/ui/*.c")
-
 set(EPASS_SOURCES
   src/main.c
 
@@ -101,19 +102,29 @@ set(EPASS_SOURCES
   src/render/lvgl_drm_warp.c
   src/render/fbdraw.c
 
-  ${UI_SOURCES}
+  src/ui/font_registry.c
+  src/ui/ui_theme.c
   src/ui/filemanager.c
-  src/ui/scr_transition.c
   src/ui/battery.c
-  src/ui/actions_warning.c
-  src/ui/actions_mainscreen.c
-  src/ui/actions_settings.c
-  src/ui/actions_displayimg.c
-  src/ui/actions_sysinfo.c
-  src/ui/actions_oplist.c
-  src/ui/actions_apps.c
-  src/ui/actions_confirm.c
   src/ui/ipc_helper.c
+
+  # 手写 UI (取代 EEZ)
+  src/ui_screens/screen_manager.c
+  src/ui_screens/styles.c
+  src/ui_screens/screens/screen_common.c
+  src/ui_screens/screens/screen_mainmenu.c
+  src/ui_screens/screens/screen_oplist.c
+  src/ui_screens/screens/screen_sysinfo.c
+  src/ui_screens/screens/screen_spinner.c
+  src/ui_screens/screens/screen_displayimg.c
+  src/ui_screens/screens/screen_filemanager.c
+  src/ui_screens/screens/screen_settings.c
+  src/ui_screens/screens/screen_applist.c
+  src/ui_screens/screens/screen_warning.c
+  src/ui_screens/screens/screen_confirm.c
+  src/ui_screens/platform/ui_backend_device.c
+  src/ui_screens/platform/ui_plane_device.c
+  src/ui_screens/platform/ui_services_device.c
 
   src/overlay/overlay.c
   src/overlay/transitions.c
@@ -124,10 +135,12 @@ set(EPASS_SOURCES
   src/utils/timer.c
   src/utils/settings.c
   src/utils/cacheassets.c
+  src/utils/respath.c
   src/utils/code128.c
   src/utils/cJSON.c
   src/utils/uuid.c
   src/utils/misc.c
+  src/utils/imgscale.c
 )
 
 # 如果 Cedarx 可用，添加 mediaplayer
@@ -135,93 +148,99 @@ if(ENABLE_CEDARX)
   list(APPEND EPASS_SOURCES src/render/mediaplayer.c)
 endif()
 
-add_executable(epass_drm_app ${EPASS_SOURCES})
-
-# ============================================================================
-# 包含目录
-# ============================================================================
-target_include_directories(epass_drm_app PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/eez_design/src/ui
-  ${CMAKE_CURRENT_SOURCE_DIR}/eez_design/icon_header_gen
-  ${LIBDRM_INCLUDE_DIRS}
-  ${PNG_INCLUDE_DIR}
-)
-
-
-# ============================================================================
-# 编译定义
-# ============================================================================
 string(TIMESTAMP COMPILE_TIME "%Y-%m-%d %H:%M:%S")
 
-target_compile_definitions(epass_drm_app PRIVATE
-  _DEFAULT_SOURCE
-  EPASS_GIT_VERSION="${GIT_COMMIT}"
-  EPASS_GIT_TAG="${GIT_TAG}"
-  COMPILE_TIME="${COMPILE_TIME}"
-)
-
-# 如果 Cedarx 可用，定义宏
-if(ENABLE_CEDARX)
-  target_compile_definitions(epass_drm_app PRIVATE HAVE_CEDARX=1)
-else()
-  target_compile_definitions(epass_drm_app PRIVATE HAVE_CEDARX=0)
-endif()
+set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
+set(FONT_DIR   ${CMAKE_SOURCE_DIR}/font)
+file(GLOB RES_PNG  CONFIGURE_DEPENDS ${ASSETS_DIR}/*.png)
+file(GLOB RES_FONT CONFIGURE_DEPENDS ${FONT_DIR}/*.otf)
 
 # ============================================================================
-# 编译选项
+# 可执行 —— 一次产出两档分辨率 (360x640 / 720x1280)，源码共用，仅屏宏不同。
+# name: 可执行名; screen_define: 屏宏 (覆盖 config.h 的兜底默认)
 # ============================================================================
-target_compile_options(epass_drm_app PRIVATE
-  -Wall -Wextra -Wno-unused-parameter
-  -Wno-format-truncation
-  -ffile-prefix-map=${CMAKE_SOURCE_DIR}/src/=/
-  ${LIBEVDEV_CFLAGS_OTHER}
-  $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
-)
+function(add_epass_target name screen_define)
+  add_executable(${name} ${EPASS_SOURCES})
+  target_include_directories(${name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens/screens
+    ${LIBDRM_INCLUDE_DIRS}
+    ${PNG_INCLUDE_DIR}
+    ${FREETYPE_INCLUDE_DIRS}
+  )
+  target_compile_definitions(${name} PRIVATE
+    _DEFAULT_SOURCE
+    ${screen_define}
+    EPASS_GIT_VERSION="${GIT_COMMIT}"
+    EPASS_GIT_TAG="${GIT_TAG}"
+    COMPILE_TIME="${COMPILE_TIME}"
+  )
+  if(ENABLE_CEDARX)
+    target_compile_definitions(${name} PRIVATE HAVE_CEDARX=1)
+  else()
+    target_compile_definitions(${name} PRIVATE HAVE_CEDARX=0)
+  endif()
+  target_compile_options(${name} PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -Wno-format-truncation
+    -ffile-prefix-map=${CMAKE_SOURCE_DIR}/src/=/
+    ${LIBEVDEV_CFLAGS_OTHER}
+    $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
+  )
+  target_link_libraries(${name}
+    m
+    dl
+    pthread
+    rt
+    ${LIBEVDEV_LIBRARIES}
+    ${LIBDRM_LIBRARIES}
+    ${PNG_LIBRARIES}
+    ${FREETYPE_LIBRARIES}
+    lvgl
+  )
+  if(ENABLE_CEDARX)
+    target_link_libraries(${name}
+      MemAdapter
+      vdecoder
+      VE
+      videoengine
+      cdc_base
+      cdx_parser
+      cdx_stream
+      cdx_base
+      cdx_common
+      ssl
+      crypto
+    )
+  endif()
+
+  # 资源拷贝：按 config.h 的 res/ 结构落到可执行文件同级
+  set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
+  add_custom_command(TARGET ${name} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_PNG}  ${RES_OUT_DIR}/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR}/fallback ${RES_OUT_DIR}/fallback
+    COMMENT "Copying assets -> res/ next to ${name}"
+    VERBATIM
+  )
+endfunction()
 
 target_compile_options(lvgl PRIVATE
   $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
 )
 
+add_epass_target(app_360 USE_360_640_SCREEN)
+add_epass_target(app_720 USE_720_1280_SCREEN)
 
 # ============================================================================
-# 链接库
+# 安装规则 (可选)：bin/app_* 与 bin/res/ 同级，保持运行时相对结构
 # ============================================================================
-target_link_libraries(epass_drm_app
-  # 数学库和系统库
-  m
-  dl
-  pthread
-  rt
-
-  # 外部依赖
-  ${LIBEVDEV_LIBRARIES}
-  ${LIBDRM_LIBRARIES}
-  ${PNG_LIBRARIES}
-  lvgl
-)
-
-# 如果 Cedarx 可用，链接 Cedarx 库
-if(ENABLE_CEDARX)
-  target_link_libraries(epass_drm_app
-    MemAdapter
-    vdecoder
-    VE
-    videoengine
-    cdc_base
-    cdx_parser
-    cdx_stream
-    cdx_base
-    cdx_common
-    # libcdx_stream 和 libcdx_parser 依赖 OpenSSL
-    ssl
-    crypto
-  )
-endif()
-
-# ============================================================================
-# 安装规则 (可选)
-# ============================================================================
-install(TARGETS epass_drm_app DESTINATION bin)
+install(TARGETS app_360 app_720 DESTINATION bin)
+install(DIRECTORY ${ASSETS_DIR}/ DESTINATION bin/res
+        FILES_MATCHING PATTERN "*.png")
+install(FILES ${RES_FONT} DESTINATION bin/res/fonts)
+install(DIRECTORY ${ASSETS_DIR}/fallback DESTINATION bin/res)

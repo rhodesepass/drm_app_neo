@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <utils/settings.h>
 #include "utils/spsc_queue.h"
-#include "vars.h"
+#include "ui_enums.h"
 
 typedef enum {
     DISPLAY_360_640 = 0,

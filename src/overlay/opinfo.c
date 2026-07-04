@@ -5,35 +5,27 @@
 #include "utils/timer.h"
 #include "utils/stb_image.h"
 #include "config.h"
+#include "ui_metrics.h"
 #include "render/fbdraw.h"
 #include "utils/cacheassets.h"
+#include "utils/imgscale.h"
+#include "ui/font_registry.h"
 #include <src/misc/lv_text_private.h>
 #include <stdint.h>
 #include <unistd.h>
-
-LV_FONT_DECLARE(ui_font_bebas_40);
-LV_FONT_DECLARE(ui_font_bebas_bold_10);
-LV_FONT_DECLARE(ui_font_bebas_bold_72);
-LV_FONT_DECLARE(ui_font_sourcesans_reg_14);
-
-
 #include <string.h>
 
 void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params){
-    drm_warpper_queue_item_t* item;
     fbdraw_fb_t fbdst,fbsrc;
     fbdraw_rect_t dst_rect,src_rect;
 
     overlay->request_abort = 0;
 
+    // 先把图层挪到屏外再直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
 
-    // 此处亦有等待vsync的功能。
-    // get a free buffer to draw on
-
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    uint32_t* vaddr = (uint32_t*)item->mount.arg0;
+    uint32_t* vaddr = (uint32_t*)overlay->overlay_buf.vaddr;
 
     memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
 
@@ -58,8 +50,7 @@ void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params){
 
         fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
     }
-    
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
+
     overlay->overlay_used = 1;
 
     layer_animation_ease_in_out_move(
@@ -71,7 +62,7 @@ void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params){
     );
 }
 
-// 标记这个buffer里面这个元素有没有更新过
+// 标记这个元素有没有更新过
 typedef struct{
     unsigned int operator_name : 1 ;
     unsigned int operator_code : 1 ;
@@ -131,25 +122,61 @@ typedef struct {
 
     int arrow_y_value;
 
-    // double buffer control.
-    int curr_buffer;
-    arknights_overlay_update_t buf1_update;
-    arknights_overlay_update_t buf2_update;
+    arknights_overlay_update_t update;
 } arknights_overlay_worker_data_t;
 
 
-static void draw_color_fade(uint32_t* vaddr,int radius,uint32_t color){
-    for(int x=0; x < radius; x++){
-        for(int y=0; y < radius; y++){
-            if(x+y > radius - 2){
-                break;
-            }
-            uint8_t alpha = 255 - ((x+y)*255 / radius);
-            int real_x = OVERLAY_WIDTH - x - 1;
-            int real_y = OVERLAY_HEIGHT - y - 1;
-            *((uint32_t *)(vaddr) + real_x + real_y * OVERLAY_WIDTH) = (color & 0x00FFFFFF) | (alpha << 24);
+// radius 是 360 基准的逻辑单位；物理上每个逻辑像素画成 UI_SCALE×UI_SCALE 的块，
+// 块内共享一个 alpha，保证 720 下渐变的物理尺寸和 360 一致。
+//
+// fade 三角和 logo 在右下角是同一片区域。单 buffer 直绘时如果“先画 fade 再贴 logo”
+// 分两次落盘，扫描线会抓到没有 logo 的中间态闪一下。所以每行先在栈上(cached)把
+// fade + logo 合成出最终像素，再一次 memcpy 进显存：每个像素每帧只写一次最终值。
+// 三角以外的 logo 像素跳过不画（logo 淡入头几帧三角还没长满时不透明度极低，无感）。
+static void draw_color_fade_and_logo(uint32_t* vaddr,int radius,uint32_t color,
+                                     uint32_t* logo_addr,int logo_w,int logo_h,int logo_opacity){
+    if(radius < 2){
+        return;
+    }
 
+    // alpha 只依赖逻辑坐标 x+y，先查表算好，省掉每像素一次除法
+    uint8_t alpha_lut[radius];
+    for(int s = 0; s <= radius - 2; s++){
+        alpha_lut[s] = 255 - (s * 255 / radius);
+    }
+
+    const int logo_x0 = OVERLAY_WIDTH - logo_w - S(10);
+    const int logo_y0 = OVERLAY_HEIGHT - logo_h - S(10);
+    const uint32_t rgb = color & 0x00FFFFFF;
+
+    uint32_t row[S(radius - 1)];
+
+    for(int py = 0; py < S(radius - 1); py++){
+        int ly = py / UI_SCALE;
+        int span = S(radius - 1 - ly);   // 本行 fade 覆盖的像素数，靠右边缘对齐
+        int fby = OVERLAY_HEIGHT - 1 - py;
+        int row_x0 = OVERLAY_WIDTH - span;
+
+        for(int i = 0; i < span; i++){
+            int px = span - 1 - i;       // px: 距右边缘的距离
+            row[i] = rgb | ((uint32_t)alpha_lut[px / UI_SCALE + ly] << 24);
         }
+
+        if(logo_addr && logo_opacity > 0){
+            int lrow = fby - logo_y0;
+            if(lrow >= 0 && lrow < logo_h){
+                for(int lcol = 0; lcol < logo_w; lcol++){
+                    int i = logo_x0 + lcol - row_x0;
+                    if(i < 0 || i >= span) continue;
+                    uint32_t px32 = logo_addr[lrow * logo_w + lcol];
+                    uint8_t a = (px32 >> 24) & 0xFF;
+                    if(logo_opacity != 255) a = (uint8_t)(((uint32_t)a * logo_opacity + 127u) / 255u);
+                    fbdraw_blend_over_at(&row[i], (px32 >> 16) & 0xFF, (px32 >> 8) & 0xFF, px32 & 0xFF, a);
+                }
+            }
+        }
+
+        memcpy(vaddr + fby * OVERLAY_WIDTH + row_x0, row, (size_t)span * 4);
     }
 }
 // 绘制arknights overlay的worker.
@@ -172,8 +199,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_NAME_START_FRAME && data->operator_name_cpidx != data->operator_name_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_NAME_FRAME_PER_CODEPOINT == 0){
             data->operator_name_cpidx++;
-            data->buf1_update.operator_name = 1;
-            data->buf2_update.operator_name = 1;
+            data->update.operator_name = 1;
         }
     }
 
@@ -181,8 +207,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_CODE_START_FRAME && data->operator_code_cpidx != data->operator_code_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_CODE_FRAME_PER_CODEPOINT == 0){
             data->operator_code_cpidx++;
-            data->buf1_update.operator_code = 1;
-            data->buf2_update.operator_code = 1;
+            data->update.operator_code = 1;
         }
     }
 
@@ -190,8 +215,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_START_FRAME && data->stuff_text_cpidx != data->stuff_text_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_FRAME_PER_CODEPOINT == 0){
             data->stuff_text_cpidx++;
-            data->buf1_update.staff_text = 1;
-            data->buf2_update.staff_text = 1;
+            data->update.staff_text = 1;
         }
     }
 
@@ -199,8 +223,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_AUX_TEXT_START_FRAME && data->aux_text_cpidx != data->aux_text_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_AUX_TEXT_FRAME_PER_CODEPOINT == 0){
             data->aux_text_cpidx++;
-            data->buf1_update.aux_text = 1;
-            data->buf2_update.aux_text = 1;
+            data->update.aux_text = 1;
         }
     }
 
@@ -210,16 +233,14 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_CLASSICON_START_FRAME && data->class_icon_state != ANIMATION_EINK_CONTENT){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_CLASSICON_FRAME_PER_STATE == 0){
             data->class_icon_state++;
-            data->buf1_update.class_icon = 1;
-            data->buf2_update.class_icon = 1;
+            data->update.class_icon = 1;
         }
     }
 
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_BARCODE_START_FRAME && data->barcode_state != ANIMATION_EINK_CONTENT){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_BARCODE_FRAME_PER_STATE == 0){
             data->barcode_state++;
-            data->buf1_update.barcode = 1;
-            data->buf2_update.barcode = 1;
+            data->update.barcode = 1;
         }
     }
     // == BARCODE 和 CLASSICON 的 Eink效果 end ==
@@ -230,8 +251,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         if(data->color_fade_value >= OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE){
             data->color_fade_value = OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE;
         }
-        data->buf1_update.fade_color = 1;
-        data->buf2_update.fade_color = 1;
+        data->update.fade_color = 1;
     }
     // == color fade 和 logo fade end ==
 
@@ -241,12 +261,10 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         if(data->logo_fade_value >= 255){
             data->logo_fade_value = 255;
         }
-        data->buf1_update.logo_fade = 1;
-        data->buf2_update.logo_fade = 1;
+        data->update.logo_fade = 1;
         // logo 和 colorfade是冲突的 
         // colorfade 也需要重画
-        data->buf1_update.fade_color = 1;
-        data->buf2_update.fade_color = 1;
+        data->update.fade_color = 1;
     }
     // == logo swipe end ==
 
@@ -254,22 +272,19 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
 
     int ak_bar_swipe_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_START_FRAME;
     if (ak_bar_swipe_frame >= 0 && ak_bar_swipe_frame < OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_FRAME_COUNT){
-        data->buf1_update.ak_bar_swipe = 1;
-        data->buf2_update.ak_bar_swipe = 1;
+        data->update.ak_bar_swipe = 1;
     }
 
     // division line start
 
     int div_line_upper_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_LINE_UPPER_START_FRAME;
     if (div_line_upper_frame >= 0 && div_line_upper_frame < OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT){
-        data->buf1_update.div_line_upper = 1;
-        data->buf2_update.div_line_upper = 1;
+        data->update.div_line_upper = 1;
     }
 
     int div_line_lower_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_LINE_LOWER_START_FRAME;
     if (div_line_lower_frame >= 0 && div_line_lower_frame < OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT){
-        data->buf1_update.div_line_lower = 1;
-        data->buf2_update.div_line_lower = 1;
+        data->update.div_line_lower = 1;
     }
     // log_trace("arknights_overlay_worker: curr_frame=%d", data->curr_frame);
     // log_trace("operator_name_cpidx=%d,operator_name_cpcnt=%d", data->operator_name_cpidx, data->operator_name_cpcnt);
@@ -299,17 +314,9 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
 
     int asset_w, asset_h;
     uint8_t* asset_addr;
-    arknights_overlay_update_t * update;
-    if(data->curr_buffer == 0){
-        update = &data->buf1_update;
-    }
-    else{
-        update = &data->buf2_update;
-    }
+    arknights_overlay_update_t * update = &data->update;
 
-    drm_warpper_queue_item_t* item;
-    drm_warpper_dequeue_free_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    uint32_t* vaddr = (uint32_t*)item->mount.arg0;
+    uint32_t* vaddr = (uint32_t*)data->overlay->overlay_buf.vaddr;
 
     fbdraw_fb_t fbdst;
     fbdraw_fb_t fbsrc;
@@ -334,7 +341,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         fbdraw_text_range(
             &fbdst, &dst_rect, 
             params->operator_name, 
-            &ui_font_bebas_40, 
+            font_get(FONT_DISPLAY, 40), 
             0xFFFFFFFF,0, 
             data->operator_name_cpidx, data->operator_name_cpidx + 1
         );
@@ -350,7 +357,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         fbdraw_text_range(
             &fbdst, &dst_rect, 
             params->operator_code, 
-            &ui_font_sourcesans_reg_14, 
+            font_get(FONT_BODY, 14), 
             0xFFFFFFFF,0, 
             data->operator_code_cpidx, data->operator_code_cpidx + 1
         );
@@ -366,7 +373,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         fbdraw_text_range(
             &fbdst, &dst_rect, 
             params->staff_text, 
-            &ui_font_sourcesans_reg_14, 
+            font_get(FONT_BODY, 14), 
             0xFFFFFFFF,0, 
             data->stuff_text_cpidx, data->stuff_text_cpidx + 1
         );
@@ -381,9 +388,9 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
 
         fbdraw_text_range(
             &fbdst, &dst_rect, 
-            params->aux_text, 
-            &ui_font_sourcesans_reg_14, 
-            0xFFFFFFFF,14, 
+            params->aux_text,
+            font_get(FONT_BODY, 14),
+            0xFFFFFFFF,S(14),
             data->aux_text_cpidx, data->aux_text_cpidx + 1
         );
         update->aux_text = 0;
@@ -392,7 +399,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
 
     // == BARCODE 和 CLASSICON 的 Eink效果 start ==
     if(update->barcode){
-        dst_rect.x = 1;
+        dst_rect.x = S(1);
         dst_rect.y = OVERLAY_ARKNIGHTS_BARCODE_OFFSET_Y;
         dst_rect.w = OVERLAY_ARKNIGHTS_BARCODE_WIDTH;
         dst_rect.h = OVERLAY_ARKNIGHTS_BARCODE_HEIGHT;
@@ -413,7 +420,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
             //does nothing
         }   
         else{
-            fbdraw_barcode_rot90(&fbdst, &dst_rect, params->barcode_text, &ui_font_sourcesans_reg_14);
+            fbdraw_barcode_rot90(&fbdst, &dst_rect, params->barcode_text, font_get(FONT_BODY, 14));
         }
 
         update->barcode = 0;
@@ -457,26 +464,14 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     }
     // == BARCODE 和 CLASSICON 的 Eink效果 end ==
 
-    // == color fade start
-    if(update->fade_color){
-        draw_color_fade(vaddr, data->color_fade_value, params->color);
+    // == color fade + logo：右下角同一片区域，合成后单次落盘，避免竞争闪烁
+    if(update->fade_color || update->logo_fade){
+        draw_color_fade_and_logo(
+            vaddr, data->color_fade_value, params->color,
+            params->logo_addr, params->logo_w, params->logo_h,
+            data->logo_fade_value
+        );
         update->fade_color = 0;
-    }
-
-    // == logo fade start
-    if(update->logo_fade){
-        fbsrc.vaddr = (uint32_t*)params->logo_addr;
-        fbsrc.width = params->logo_w;
-        fbsrc.height = params->logo_h;
-        src_rect.x = 0;
-        src_rect.y = 0;
-        src_rect.w = params->logo_w;
-        src_rect.h = params->logo_h;
-        dst_rect.x = OVERLAY_WIDTH - data->params->logo_w - 10;
-        dst_rect.y = OVERLAY_HEIGHT - data->params->logo_h - 10;
-        dst_rect.w = params->logo_w;
-        dst_rect.h = params->logo_h;
-        fbdraw_alpha_opacity_rect(&fbsrc, &fbdst, &src_rect, &dst_rect, data->logo_fade_value);
         update->logo_fade = 0;
     }
 
@@ -505,7 +500,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
         dst_rect.y = OVERLAY_ARKNIGHTS_UPPERLINE_OFFSET_Y;
         dst_rect.w = data->div_line_bezeir_values[div_line_upper_frame];
-        dst_rect.h = 1;
+        dst_rect.h = S(1);
         fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
 
         update->div_line_upper = 0;
@@ -515,7 +510,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
         dst_rect.y = OVERLAY_ARKNIGHTS_LOWERLINE_OFFSET_Y;
         dst_rect.w = data->div_line_bezeir_values[div_line_lower_frame];
-        dst_rect.h = 1;
+        dst_rect.h = S(1);
         fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
 
         update->div_line_lower = 0;
@@ -557,8 +552,6 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         data->arrow_y_value = asset_h;
     }
 
-    drm_warpper_enqueue_display_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
-    data->curr_buffer = !data->curr_buffer;
     data->curr_frame++;
 }
 
@@ -641,12 +634,12 @@ static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* 
 
     // TOP_RIGHT_BAR 自定义文字（空格前 faux bold，空格后常规）
     if (params->top_right_bar_text[0] != '\0') {
-        // 用黑色覆盖图片内嵌文字（图片内坐标 42,314 ~ 52,416）
+        // 用黑色覆盖图片内嵌文字（图片内基准坐标 42,314 ~ 52,416，随分辨率 S()）
         int bar_screen_x = OVERLAY_WIDTH - asset_w;
-        dst_rect.x = bar_screen_x + 42;
-        dst_rect.y = 314;
-        dst_rect.w = 10;
-        dst_rect.h = 102;
+        dst_rect.x = bar_screen_x + S(42);
+        dst_rect.y = S(314);
+        dst_rect.w = S(10);
+        dst_rect.h = S(102);
         fbdraw_fill_rect(&fbdst, &dst_rect, 0xFF000000);
 
         const char *space = strchr(params->top_right_bar_text, ' ');
@@ -657,29 +650,29 @@ static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* 
             bold_part[bold_len] = '\0';
             const char *reg_part = space + 1;
 
-            int32_t bold_px = fbdraw_text_width(bold_part, &ui_font_bebas_bold_10, 2);
-            int32_t space_gap = 6;
+            int32_t bold_px = fbdraw_text_width(bold_part, font_get(FONT_DISPLAY, 10), S(2));
+            int32_t space_gap = S(6);
 
-            // Faux bold: 渲染两次，第二次 x+1 偏移加粗笔画
-            fbdraw_rect_t r = { dst_rect.x, dst_rect.y, 10, bold_px };
-            fbdraw_text_rot90(&fbdst, &r, bold_part, &ui_font_bebas_bold_10, 0xFFFFFFFF, 2);
-            fbdraw_rect_t r_fb = { dst_rect.x + 1, dst_rect.y, 10, bold_px };
-            fbdraw_text_rot90(&fbdst, &r_fb, bold_part, &ui_font_bebas_bold_10, 0xFFFFFFFF, 2);
+            // Faux bold: 渲染两次，第二次 x+S(1) 偏移加粗笔画
+            fbdraw_rect_t r = { dst_rect.x, dst_rect.y, S(10), bold_px };
+            fbdraw_text_rot90(&fbdst, &r, bold_part, font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
+            fbdraw_rect_t r_fb = { dst_rect.x + S(1), dst_rect.y, S(10), bold_px };
+            fbdraw_text_rot90(&fbdst, &r_fb, bold_part, font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
 
             // Regular: 渲染一次（无 faux bold）
             int32_t reg_y = dst_rect.y + bold_px + space_gap;
             int32_t reg_h = dst_rect.y + dst_rect.h - reg_y;
             if (reg_h > 0 && reg_part[0] != '\0') {
-                fbdraw_rect_t r2 = { dst_rect.x, reg_y, 10, reg_h };
-                fbdraw_text_rot90(&fbdst, &r2, reg_part, &ui_font_bebas_bold_10, 0xFFFFFFFF, 2);
+                fbdraw_rect_t r2 = { dst_rect.x, reg_y, S(10), reg_h };
+                fbdraw_text_rot90(&fbdst, &r2, reg_part, font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
             }
         } else {
             // 无空格，全部 faux bold
             fbdraw_text_rot90(&fbdst, &dst_rect, params->top_right_bar_text,
-                              &ui_font_bebas_bold_10, 0xFFFFFFFF, 2);
-            fbdraw_rect_t r_fb = { dst_rect.x + 1, dst_rect.y, dst_rect.w, dst_rect.h };
+                              font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
+            fbdraw_rect_t r_fb = { dst_rect.x + S(1), dst_rect.y, dst_rect.w, dst_rect.h };
             fbdraw_text_rot90(&fbdst, &r_fb, params->top_right_bar_text,
-                              &ui_font_bebas_bold_10, 0xFFFFFFFF, 2);
+                              font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
         }
     }
 
@@ -687,10 +680,10 @@ static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* 
     if (params->rhodes_text[0] != '\0') {
         // 用户自定义文字替代 logo（顺时针旋转 +90° 显示，72px Bold）
         dst_rect.x = 0;
-        dst_rect.y = 5;
-        dst_rect.w = 67;
-        dst_rect.h = OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y - 5;
-        fbdraw_text_rot90(&fbdst, &dst_rect, params->rhodes_text, &ui_font_bebas_bold_72, 0xFFFFFFFF, 0);
+        dst_rect.y = S(5);
+        dst_rect.w = S(67);
+        dst_rect.h = OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y - S(5);
+        fbdraw_text_rot90(&fbdst, &dst_rect, params->rhodes_text, font_get(FONT_DISPLAY, 72), 0xFFFFFFFF, 0);
     } else {
         // 默认缓存图
         cacheassets_get_asset_from_global(CACHE_ASSETS_TOP_LEFT_RHODES, &asset_w, &asset_h, &asset_addr);
@@ -714,24 +707,13 @@ static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* 
 }
 
 void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params){
-    drm_warpper_queue_item_t* item;
-    uint32_t* vaddr;
-
     log_info("overlay_opinfo_show_arknights");
 
+    // 先把图层挪到屏外再直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
 
-    // 清空双缓冲buffer
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    vaddr = (uint32_t*)item->mount.arg0;
-    init_template_arknights_overlay(vaddr, params);
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
-
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    vaddr = (uint32_t*)item->mount.arg0;
-    init_template_arknights_overlay(vaddr, params);
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
+    init_template_arknights_overlay((uint32_t*)overlay->overlay_buf.vaddr, params);
 
     static arknights_overlay_worker_data_t data;
     memset(&data, 0, sizeof(arknights_overlay_worker_data_t));
@@ -798,11 +780,21 @@ void overlay_opinfo_load_image(olopinfo_params_t* params){
     }
     if(params->type == OPINFO_TYPE_IMAGE){
         load_img_assets(params->image_path, &params->image_addr, &params->image_w, &params->image_h);
+        if(params->image_addr){
+            imgscale_upscale_nn_rgba(&params->image_addr, &params->image_w, &params->image_h, params->src_upscale);
+        }
         log_debug("loaded image: %s, w: %d, h: %d", params->image_path, params->image_w, params->image_h);
     }
     else if(params->type == OPINFO_TYPE_ARKNIGHTS){
         load_img_assets(params->class_path, &params->class_addr, &params->class_w, &params->class_h);
         load_img_assets(params->logo_path, &params->logo_addr, &params->logo_w, &params->logo_h);
+        // class/logo 也是用户图，旧素材同样按基准放大
+        if(params->class_addr){
+            imgscale_upscale_nn_rgba(&params->class_addr, &params->class_w, &params->class_h, params->src_upscale);
+        }
+        if(params->logo_addr){
+            imgscale_upscale_nn_rgba(&params->logo_addr, &params->logo_w, &params->logo_h, params->src_upscale);
+        }
         log_debug("loaded class: %s, w: %d, h: %d", params->class_path, params->class_w, params->class_h);
         log_debug("loaded logo: %s, w: %d, h: %d", params->logo_path, params->logo_w, params->logo_h);
     }

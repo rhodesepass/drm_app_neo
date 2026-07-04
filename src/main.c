@@ -1,7 +1,7 @@
 #include <apps/apps.h>
 #include <stdio.h>
 #include <string.h>
-#include <ui/actions_warning.h>
+#include <ui_screens/ui_services.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <signal.h>
@@ -19,6 +19,7 @@
 #include "utils/settings.h"
 #include "utils/timer.h"
 #include "utils/cacheassets.h"
+#include "utils/respath.h"
 #include "prts/prts.h"
 #include "utils/misc.h"
 
@@ -35,6 +36,11 @@ prts_t g_prts;
 apps_t g_apps;
 
 buffer_object_t g_video_buf;
+#ifdef VIDEO_LEGACY_WIDTH
+// 旧素材(384x640)modeset 专用：frontend 的读取 stride 取自所挂 fb 的 pitch，
+// 必须用与解码帧同宽的 fb 才能让 DEFE 正确读取再放大
+buffer_object_t g_video_buf_legacy;
+#endif
 
 int g_running = 1;
 int g_exitcode = 0;
@@ -47,8 +53,43 @@ void signal_handler(int sig)
     g_exitcode = 0;
 }
 
+// video 层按解码尺寸挂载；尺寸未变时跳过(真 modeset 慢，见 srgn_drm.h)
+// 返回 -1 表示不支持的尺寸
+//
+// FB 按 VE 输出尺寸(VIDEO_WIDTH/HEIGHT，32 对齐)分配；VIDEO_WIDTH 通常 > 屏幕真实
+// 宽度(对齐 padding)。挂载统一走 src 裁窗 + dst=屏幕真实尺寸:
+//   当代素材:crop 左 SCREEN_WIDTH×SCREEN_HEIGHT，dst 同尺寸，1:1 不缩放(裁掉右侧 padding)。
+//   旧素材(384x640,真实 360x640):crop 左 360×640，再 DEFE 放大到 720×1280(等比 2x)，
+//     padding 被裁窗排除不参与缩放采样。
+int video_layer_ensure_mount(int src_w, int src_h){
+    static int s_mounted_w = 0;
+    static int s_mounted_h = 0;
+
+    if (src_w == s_mounted_w && src_h == s_mounted_h)
+        return 0;
+
+    if (src_w == VIDEO_WIDTH && src_h == VIDEO_HEIGHT) {
+        drm_warpper_mount_layer_cropped(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                        &g_video_buf, SCREEN_WIDTH, SCREEN_HEIGHT);
+#ifdef VIDEO_LEGACY_WIDTH
+    } else if (src_w == VIDEO_LEGACY_WIDTH && src_h == VIDEO_LEGACY_HEIGHT) {
+        drm_warpper_mount_layer_rect(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                     &g_video_buf_legacy,
+                                     VIDEO_LEGACY_CROP_WIDTH, VIDEO_LEGACY_HEIGHT,
+                                     SCREEN_WIDTH, SCREEN_HEIGHT);
+#endif
+    } else {
+        log_error("unsupported video size %dx%d", src_w, src_h);
+        return -1;
+    }
+
+    s_mounted_w = src_w;
+    s_mounted_h = src_h;
+    return 0;
+}
+
 void mount_video_layer_callback(void *userdata,bool is_last){
-    drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &g_video_buf);
+    mediaplayer_remount_video_layer(&g_mediaplayer);
     drm_warpper_set_layer_coord(&g_drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0,0);
 }
 
@@ -99,6 +140,10 @@ int main(int argc, char *argv[]){
     fputs(APP_BARNER, stderr);
     log_info("==> Starting EPass DRM APP!");
 
+    // ============ 资源目录解析 ===============
+    // 解析可执行文件同级 res/ 目录, 后续所有内置资源路径都基于它。
+    respath_init();
+
     // ============ DRM Warpper 初始化 ===============
     drm_warpper_init(&g_drm_warpper);
 
@@ -135,11 +180,28 @@ int main(int argc, char *argv[]){
 
     // 填充video buffer，防止闪烁。
     fill_nv12_buffer_with_color(
-        g_video_buf.vaddr, 
-        VIDEO_WIDTH, 
-        VIDEO_HEIGHT, 
+        g_video_buf.vaddr,
+        VIDEO_WIDTH,
+        VIDEO_HEIGHT,
         0xff000000
     );
+
+#ifdef VIDEO_LEGACY_WIDTH
+    drm_warpper_allocate_buffer_sized(
+        &g_drm_warpper,
+        DRM_WARPPER_LAYER_VIDEO,
+        VIDEO_LEGACY_WIDTH,
+        VIDEO_LEGACY_HEIGHT,
+        &g_video_buf_legacy
+    );
+    // 同样填黑：脏 buffer 参与 modeset 会闪绿(见上方 FIXME)
+    fill_nv12_buffer_with_color(
+        g_video_buf_legacy.vaddr,
+        VIDEO_LEGACY_WIDTH,
+        VIDEO_LEGACY_HEIGHT,
+        0xff000000
+    );
+#endif
 
     // mediaplayer_set_video(&g_mediaplayer, "/assets/MS/loop.mp4");
     // mediaplayer_start(&g_mediaplayer);
@@ -154,12 +216,12 @@ int main(int argc, char *argv[]){
         return -1;
     }
     cacheassets_init(&g_cacheassets, cache_buf, CACHED_ASSETS_MAX_SIZE);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_AK_BAR, CACHED_ASSETS_ASSET_PATH_AK_BAR);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_BTM_LEFT_BAR, CACHED_ASSETS_ASSET_PATH_BTM_LEFT_BAR);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RECT, CACHED_ASSETS_ASSET_PATH_TOP_LEFT_RECT);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RHODES, CACHED_ASSETS_ASSET_PATH_TOP_LEFT_RHODES);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_BAR, CACHED_ASSETS_ASSET_PATH_TOP_RIGHT_BAR);
-    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_ARROW, CACHED_ASSETS_ASSET_PATH_TOP_RIGHT_ARROW);
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_AK_BAR, (char *)respath(CACHED_ASSETS_FILE_AK_BAR));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_BTM_LEFT_BAR, (char *)respath(CACHED_ASSETS_FILE_BTM_LEFT_BAR));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RECT, (char *)respath(CACHED_ASSETS_FILE_TOP_LEFT_RECT));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_LEFT_RHODES, (char *)respath(CACHED_ASSETS_FILE_TOP_LEFT_RHODES));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_BAR, (char *)respath(CACHED_ASSETS_FILE_TOP_RIGHT_BAR));
+    cacheassets_put_asset(&g_cacheassets, CACHE_ASSETS_TOP_RIGHT_ARROW, (char *)respath(CACHED_ASSETS_FILE_TOP_RIGHT_ARROW));
 
     log_info("Cached assets: %d", g_cacheassets.curr_size);
 

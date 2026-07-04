@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/time.h>
-#include <ui/actions_warning.h>
+#include <ui_screens/ui_services.h>
 #include <utils/timer.h>
 #include <fcntl.h>
 #include "utils/log.h"
@@ -15,10 +15,9 @@
 #include <stdlib.h>
 #include "config.h"
 #include "utils/settings.h"
-#include "vars.h"
 #include "render/mediaplayer.h"
-#include "ui/scr_transition.h"
 #include "utils/misc.h"
+#include "utils/respath.h"
 #include "ui/ipc_helper.h"
 
 extern settings_t g_settings;
@@ -478,7 +477,7 @@ static void prts_reload_assets(prts_t* prts,bool is_first_load) {
     if(prts->operator_count == 0){
         log_warn("no assets loaded, using fallback");
         ui_warning(UI_WARNING_NO_ASSETS);
-        prts_operator_try_load(prts, &prts->operators[0], PRTS_FALLBACK_ASSET_DIR, PRTS_SOURCE_NAND, 0);
+        prts_operator_try_load(prts, &prts->operators[0], (char *)respath(PRTS_FALLBACK_ASSET_SUBDIR), PRTS_SOURCE_NAND, 0);
         prts->operator_count = 1;
     }
 

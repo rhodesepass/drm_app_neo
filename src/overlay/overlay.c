@@ -111,31 +111,11 @@ void overlay_worker_schedule(overlay_t* overlay,void (*func)(void *userdata,int 
 
 int overlay_init(overlay_t* overlay,drm_warpper_t* drm_warpper,layer_animation_t* layer_animation){
 
-    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_1);
-    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_2);
+    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf);
 
-    memset(overlay->overlay_buf_1.vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
-    memset(overlay->overlay_buf_2.vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
+    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
 
-    overlay->overlay_buf_1_item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_NORMAL;
-    overlay->overlay_buf_1_item.mount.arg0 = (uint32_t)overlay->overlay_buf_1.vaddr;
-    overlay->overlay_buf_1_item.mount.arg1 = 0;
-    overlay->overlay_buf_1_item.mount.arg2 = 0;
-    overlay->overlay_buf_1_item.userdata = (void*)&overlay->overlay_buf_1;
-    overlay->overlay_buf_1_item.on_heap = false;
-
-    overlay->overlay_buf_2_item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_NORMAL;
-    overlay->overlay_buf_2_item.mount.arg0 = (uint32_t)overlay->overlay_buf_2.vaddr;
-    overlay->overlay_buf_2_item.mount.arg1 = 0;
-    overlay->overlay_buf_2_item.mount.arg2 = 0;
-    overlay->overlay_buf_2_item.userdata = (void*)&overlay->overlay_buf_2;
-    overlay->overlay_buf_2_item.on_heap = false;
-
-    drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, OVERLAY_WIDTH, 0, &overlay->overlay_buf_1);
-
-    // 先把两个buffer都提交一次，形成队列的初始状态（一个显示中，一个等待取回）
-    drm_warpper_enqueue_display_item(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_1_item);
-    drm_warpper_enqueue_display_item(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_2_item);
+    drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, OVERLAY_WIDTH, 0, &overlay->overlay_buf);
 
     overlay->drm_warpper = drm_warpper;
     overlay->layer_animation = layer_animation;
@@ -144,8 +124,7 @@ int overlay_init(overlay_t* overlay,drm_warpper_t* drm_warpper,layer_animation_t
     if (pthread_create(&overlay->worker.thread, NULL, overlay_worker_thread, overlay) != 0) {
         log_error("Failed to create overlay worker thread");
         atomic_store(&overlay->worker.running, 0);
-        drm_warpper_free_buffer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_1);
-        drm_warpper_free_buffer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_2);
+        drm_warpper_free_buffer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf);
         return -1;
     }
 
@@ -157,8 +136,7 @@ int overlay_destroy(overlay_t* overlay){
     atomic_store(&overlay->worker.running, 0);
     pthread_cond_signal(&overlay->worker.cond);
     pthread_join(overlay->worker.thread, NULL);
-    drm_warpper_free_buffer(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_1);
-    drm_warpper_free_buffer(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf_2);
+    drm_warpper_free_buffer(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf);
     return 0;
 }
 

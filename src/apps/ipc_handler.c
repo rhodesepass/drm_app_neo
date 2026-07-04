@@ -1,14 +1,13 @@
 #include "apps/ipc_handler.h"
 #include "apps/ipc_common.h"
 #include "apps/apps_types.h"
-#include "vars.h"
+#include "ui_enums.h"
 #include <overlay/overlay.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ui/actions_warning.h>
+#include <ui_screens/ui_services.h>
 #include <ui/ipc_helper.h>
-#include <ui/scr_transition.h>
 #include <utils/log.h>
 #include <utils/settings.h>
 #include <render/mediaplayer.h>
@@ -311,6 +310,8 @@ inline static int handle_overlay_schedule_transition(apps_t *apps, ipc_req_t *re
     params->image_w = 0;
     params->image_h = 0;
     params->image_addr = NULL;
+    // IPC 路径不带 epconfig，图片视为当前分辨率基准，不放大
+    params->src_upscale = 1;
     
     // 加载图片。如果image_path为空 自动不加载。
     overlay_transition_load_image(params);
@@ -400,6 +401,8 @@ inline static int handle_overlay_schedule_transition_video(apps_t *apps, ipc_req
     params->image_w = 0;
     params->image_h = 0;
     params->image_addr = NULL;
+    // IPC 路径不带 epconfig，图片视为当前分辨率基准，不放大
+    params->src_upscale = 1;
     
     // 加载图片
     overlay_transition_load_image(params);
