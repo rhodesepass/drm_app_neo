@@ -69,8 +69,13 @@ int drm_warpper_destroy(drm_warpper_t *drm_warpper);
 int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int height,drm_warpper_layer_mode_t mode);
 int drm_warpper_destroy_layer(drm_warpper_t *drm_warpper,int layer_id);
 int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf);
-// dst != buf 尺寸时走 DEFE 硬件缩放,仅 MB32_NV12(video)层支持
+// 通用:src=(0,0,src_w,src_h) 从 buf 左上角裁,dst=(x,y,dst_w,dst_h) 屏幕显示区。
+// src != dst 走 DEFE 硬件缩放;src_w<buf->width 裁掉对齐 padding。裁切与缩放可组合。仅 MB32_NV12(video)层支持缩放。
+int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int src_w,int src_h,int dst_w,int dst_h);
+// dst != buf 尺寸时走 DEFE 硬件缩放(src 恒为整幅 buf)
 int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int dst_w,int dst_h);
+// 源裁切:src 只取 buf 左上角 crop_w×crop_h,1:1 贴屏(dst 同尺寸,无缩放),裁掉对齐 padding。
+int drm_warpper_mount_layer_cropped(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int crop_w,int crop_h);
 
 
 int drm_warpper_allocate_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf);

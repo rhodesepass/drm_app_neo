@@ -426,9 +426,13 @@ int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_objec
 
 
 
-// src(buf 全幅) != dst 时由 DEFE frontend 做硬件缩放,仅 video 层(MB32 NV12)可用;
-// DEBE 无 scaler,UI/overlay 层 src 必须等于 dst
-int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int dst_w,int dst_h){
+// 通用挂载:src 矩形(0,0,src_w,src_h)从 buf 左上角裁,dst 矩形(x,y,dst_w,dst_h)是屏幕显示区。
+//   src==dst        -> 1:1
+//   src<dst / src>dst -> DEFE frontend 硬件缩放(仅 MB32 NV12 video 层;DEBE 无 scaler)
+//   src_w<buf->width -> 裁掉右侧对齐 padding
+// 三者可组合:如 src=(360,720) dst=(720,H) 即"先裁左 360 再放大到 720"。
+int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,
+                                 int src_w,int src_h,int dst_w,int dst_h){
     int ret;
     ret = drmModeSetPlane(drm_warpper->fd,
         drm_warpper->plane_res->planes[layer_id],
@@ -438,13 +442,23 @@ int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x
         x, y,
         dst_w, dst_h,
         0, 0,
-        (buf->width) << 16, (buf->height) << 16
+        src_w << 16, src_h << 16
     );
     if (ret < 0)
         log_error("drmModeSetPlane err %d", ret);
     return ret;
 }
 
+// src 恒为整幅 buf,dst != buf 时走 DEFE 缩放
+int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int dst_w,int dst_h){
+    return drm_warpper_mount_layer_rect(drm_warpper, layer_id, x, y, buf, buf->width, buf->height, dst_w, dst_h);
+}
+
 int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf){
-    return drm_warpper_mount_layer_scaled(drm_warpper, layer_id, x, y, buf, buf->width, buf->height);
+    return drm_warpper_mount_layer_rect(drm_warpper, layer_id, x, y, buf, buf->width, buf->height, buf->width, buf->height);
+}
+
+// src=dst=crop:只取 buf 左上角 crop_w×crop_h,1:1 贴屏,裁掉右侧/下方对齐 padding,不缩放
+int drm_warpper_mount_layer_cropped(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int crop_w,int crop_h){
+    return drm_warpper_mount_layer_rect(drm_warpper, layer_id, x, y, buf, crop_w, crop_h, crop_w, crop_h);
 }

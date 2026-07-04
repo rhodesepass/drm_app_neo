@@ -118,14 +118,16 @@
     // 单一缩放系数：T113 档，整数 2x，全部为 360x640 基准的 2 倍
     #define UI_SCALE 2
 
-    #define VIDEO_WIDTH 768
+    #define VIDEO_WIDTH 736
     #define VIDEO_HEIGHT 1280
 
-    // 兼容 360x640 时代旧素材：视频编码为 384x640(32 对齐)，
-    // 由 DEFE frontend 在扫描输出时硬件放大 2x 到 768x1280。
+    // 兼容 360x640 时代旧素材：真实内容 360x640，编码宽按 32 对齐补到 384(FB 按 384 分配)。
+    // 挂载时先用 src 裁窗取左 360x640(丢掉右 24px 对齐 padding，避免其参与缩放采样)，
+    // 再由 DEFE frontend 硬件放大到屏幕 720x1280(等比 2x)。
     // 仅 720 档定义；未定义时 legacy 路径整体不编译。
-    #define VIDEO_LEGACY_WIDTH 384
+    #define VIDEO_LEGACY_WIDTH 384          // 对齐后编码宽，FB 分配用
     #define VIDEO_LEGACY_HEIGHT 640
+    #define VIDEO_LEGACY_CROP_WIDTH 360     // 真实内容宽(裁窗)，高无 padding 用 VIDEO_LEGACY_HEIGHT
 
     #define UI_WIDTH 720
     #define UI_HEIGHT 1280

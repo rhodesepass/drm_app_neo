@@ -55,6 +55,12 @@ void signal_handler(int sig)
 
 // video 层按解码尺寸挂载；尺寸未变时跳过(真 modeset 慢，见 srgn_drm.h)
 // 返回 -1 表示不支持的尺寸
+//
+// FB 按 VE 输出尺寸(VIDEO_WIDTH/HEIGHT，32 对齐)分配；VIDEO_WIDTH 通常 > 屏幕真实
+// 宽度(对齐 padding)。挂载统一走 src 裁窗 + dst=屏幕真实尺寸:
+//   当代素材:crop 左 SCREEN_WIDTH×SCREEN_HEIGHT，dst 同尺寸，1:1 不缩放(裁掉右侧 padding)。
+//   旧素材(384x640,真实 360x640):crop 左 360×640，再 DEFE 放大到 720×1280(等比 2x)，
+//     padding 被裁窗排除不参与缩放采样。
 int video_layer_ensure_mount(int src_w, int src_h){
     static int s_mounted_w = 0;
     static int s_mounted_h = 0;
@@ -63,11 +69,14 @@ int video_layer_ensure_mount(int src_w, int src_h){
         return 0;
 
     if (src_w == VIDEO_WIDTH && src_h == VIDEO_HEIGHT) {
-        drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &g_video_buf);
+        drm_warpper_mount_layer_cropped(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                        &g_video_buf, SCREEN_WIDTH, SCREEN_HEIGHT);
 #ifdef VIDEO_LEGACY_WIDTH
     } else if (src_w == VIDEO_LEGACY_WIDTH && src_h == VIDEO_LEGACY_HEIGHT) {
-        drm_warpper_mount_layer_scaled(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
-                                       &g_video_buf_legacy, VIDEO_WIDTH, VIDEO_HEIGHT);
+        drm_warpper_mount_layer_rect(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                     &g_video_buf_legacy,
+                                     VIDEO_LEGACY_CROP_WIDTH, VIDEO_LEGACY_HEIGHT,
+                                     SCREEN_WIDTH, SCREEN_HEIGHT);
 #endif
     } else {
         log_error("unsupported video size %dx%d", src_w, src_h);
