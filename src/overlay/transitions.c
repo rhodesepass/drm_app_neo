@@ -39,11 +39,15 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
     drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
     uint32_t* vaddr = (uint32_t*)item->mount.arg0;
 
-    for(int y = 0; y < OVERLAY_HEIGHT; y++){
-        for(int x = 0; x < OVERLAY_WIDTH; x++){
-            vaddr[x + y * OVERLAY_WIDTH] = params->background_color;
-        }
-    }
+    fbdst.vaddr = vaddr;
+    fbdst.width = OVERLAY_WIDTH;
+    fbdst.height = OVERLAY_HEIGHT;
+
+    dst_rect.x = 0;
+    dst_rect.y = 0;
+    dst_rect.w = OVERLAY_WIDTH;
+    dst_rect.h = OVERLAY_HEIGHT;
+    fbdraw_fill_rect(&fbdst, &dst_rect, params->background_color);
 
     if(params->image_addr){
         fbsrc.vaddr = params->image_addr;
@@ -54,10 +58,6 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
         src_rect.y = 0;
         src_rect.w = params->image_w;
         src_rect.h = params->image_h;
-
-        fbdst.vaddr = vaddr;
-        fbdst.width = OVERLAY_WIDTH;
-        fbdst.height = OVERLAY_HEIGHT;
 
         dst_rect.x = OVERLAY_WIDTH / 2  - params->image_w / 2;
         dst_rect.y = OVERLAY_HEIGHT / 2 - params->image_h / 2;
@@ -112,11 +112,15 @@ void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_p
     drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
     uint32_t* vaddr = (uint32_t*)item->mount.arg0;
 
-    for(int y = 0; y < OVERLAY_HEIGHT; y++){
-        for(int x = 0; x < OVERLAY_WIDTH; x++){
-            vaddr[x + y * OVERLAY_WIDTH] = params->background_color;
-        }
-    }
+    fbdst.vaddr = vaddr;
+    fbdst.width = OVERLAY_WIDTH;
+    fbdst.height = OVERLAY_HEIGHT;
+
+    dst_rect.x = 0;
+    dst_rect.y = 0;
+    dst_rect.w = OVERLAY_WIDTH;
+    dst_rect.h = OVERLAY_HEIGHT;
+    fbdraw_fill_rect(&fbdst, &dst_rect, params->background_color);
 
     if(params->image_addr){
         fbsrc.vaddr = params->image_addr;
@@ -126,9 +130,6 @@ void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_p
         src_rect.y = 0;
         src_rect.w = params->image_w;
         src_rect.h = params->image_h;
-        fbdst.vaddr = vaddr;
-        fbdst.width = OVERLAY_WIDTH;
-        fbdst.height = OVERLAY_HEIGHT;
         dst_rect.x = OVERLAY_WIDTH / 2  - params->image_w / 2;
         dst_rect.y = OVERLAY_HEIGHT / 2 - params->image_h / 2;
         dst_rect.w = params->image_w;

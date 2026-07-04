@@ -8,11 +8,17 @@
 #include "lvgl/src/font/lv_font.h"
 #include "lvgl/src/misc/lv_text_private.h"
 
-static inline uint32_t argb8888_blend_over(uint32_t dst, uint8_t src_r, uint8_t src_g, uint8_t src_b, uint8_t src_a)
+// dst 可能指向 uncached 显存：读回代价远高于写。
+// 只有半透明像素才回读，opaque 直接写、全透明直接跳过。
+static inline void argb8888_blend_over_at(uint32_t* dst_p, uint8_t src_r, uint8_t src_g, uint8_t src_b, uint8_t src_a)
 {
-    if(src_a == 0) return dst;
-    if(src_a == 255) return (0xFFu << 24) | ((uint32_t)src_r << 16) | ((uint32_t)src_g << 8) | (uint32_t)src_b;
+    if(src_a == 0) return;
+    if(src_a == 255) {
+        *dst_p = (0xFFu << 24) | ((uint32_t)src_r << 16) | ((uint32_t)src_g << 8) | (uint32_t)src_b;
+        return;
+    }
 
+    const uint32_t dst = *dst_p;
     const uint8_t dst_a = (dst >> 24) & 0xFF;
     const uint8_t dst_r = (dst >> 16) & 0xFF;
     const uint8_t dst_g = (dst >> 8) & 0xFF;
@@ -20,7 +26,10 @@ static inline uint32_t argb8888_blend_over(uint32_t dst, uint8_t src_r, uint8_t 
 
     const uint32_t inv_sa = 255u - src_a;
     const uint32_t out_a = (uint32_t)src_a + ((uint32_t)dst_a * inv_sa + 127u) / 255u;
-    if(out_a == 0) return 0;
+    if(out_a == 0) {
+        *dst_p = 0;
+        return;
+    }
 
     /* 用预乘中间量计算，最终存回“非预乘(straight) ARGB8888” */
     const uint32_t out_r_premul = (uint32_t)src_r * src_a + (((uint32_t)dst_r * dst_a) * inv_sa + 127u) / 255u;
@@ -31,33 +40,69 @@ static inline uint32_t argb8888_blend_over(uint32_t dst, uint8_t src_r, uint8_t 
     const uint8_t out_g = (uint8_t)((out_g_premul + out_a / 2u) / out_a);
     const uint8_t out_b = (uint8_t)((out_b_premul + out_a / 2u) / out_a);
 
-    return ((uint32_t)out_a << 24) | ((uint32_t)out_r << 16) | ((uint32_t)out_g << 8) | (uint32_t)out_b;
+    *dst_p = ((uint32_t)out_a << 24) | ((uint32_t)out_r << 16) | ((uint32_t)out_g << 8) | (uint32_t)out_b;
 }
 
 void fbdraw_fill_rect(fbdraw_fb_t* fb, fbdraw_rect_t* rect, uint32_t color){
-    for(int y = rect->y; y < rect->y + rect->h; y++){
-        for(int x = rect->x; x < rect->x + rect->w; x++){
-            fb->vaddr[y * fb->width + x] = color;
+    int x = rect->x;
+    int y = rect->y;
+    int w = rect->w;
+    int h = rect->h;
+
+    if(x < 0){ w += x; x = 0; }
+    if(y < 0){ h += y; y = 0; }
+    if(x + w > fb->width) w = fb->width - x;
+    if(y + h > fb->height) h = fb->height - y;
+    if(w <= 0 || h <= 0) return;
+
+    uint32_t* dst = fb->vaddr + y * fb->width + x;
+
+    // 显存是 uncached/写合并映射，逐像素 str 吃不满总线；
+    // 四字节相同的颜色直接走 memset，其余先在栈上(cached)铺一行模板，
+    // 再整行 memcpy，让 libc 用 ldm/stm 突发写。
+    const uint8_t c0 = color & 0xFF;
+    if(c0 == ((color >> 8) & 0xFF) && c0 == ((color >> 16) & 0xFF) && c0 == (color >> 24)){
+        for(int j = 0; j < h; j++){
+            memset(dst, c0, (size_t)w * 4);
+            dst += fb->width;
         }
+        return;
     }
 
+    uint32_t row[w];
+    for(int i = 0; i < w; i++) row[i] = color;
+    for(int j = 0; j < h; j++){
+        memcpy(dst, row, (size_t)w * 4);
+        dst += fb->width;
+    }
 }
 
 void fbdraw_copy_rect(fbdraw_fb_t* src_fb, fbdraw_fb_t* dst_fb, fbdraw_rect_t* src_rect, fbdraw_rect_t* dst_rect){
-    for(int y = dst_rect->y; y < dst_rect->y + dst_rect->h; y++){
-        for(int x = dst_rect->x; x < dst_rect->x + dst_rect->w; x++){
-            int src_x = src_rect->x + (x - dst_rect->x);
-            int src_y = src_rect->y + (y - dst_rect->y);
+    int w = src_rect->w < dst_rect->w ? src_rect->w : dst_rect->w;
+    int h = src_rect->h < dst_rect->h ? src_rect->h : dst_rect->h;
+    int sx = src_rect->x;
+    int sy = src_rect->y;
+    int dx = dst_rect->x;
+    int dy = dst_rect->y;
 
-            if(src_x >= src_rect->x && src_x < src_rect->x + src_rect->w &&
-            src_y >= src_rect->y && src_y < src_rect->y + src_rect->h &&
-            x >= 0 && x < dst_fb->width && y >= 0 && y < dst_fb->height &&
-            src_x >= 0 && src_x < src_fb->width &&
-            src_y >= 0 && src_y < src_fb->height) 
-            {
-                dst_fb->vaddr[y * dst_fb->width + x] = src_fb->vaddr[src_y * src_fb->width + src_x];
-            }
-        }
+    // 任一侧起点越界时，两侧起点同步平移，保持 src/dst 像素对应关系
+    int d;
+    if((d = -sx) > 0){ sx += d; dx += d; w -= d; }
+    if((d = -dx) > 0){ sx += d; dx += d; w -= d; }
+    if((d = -sy) > 0){ sy += d; dy += d; h -= d; }
+    if((d = -dy) > 0){ sy += d; dy += d; h -= d; }
+    if((d = sx + w - src_fb->width) > 0) w -= d;
+    if((d = dx + w - dst_fb->width) > 0) w -= d;
+    if((d = sy + h - src_fb->height) > 0) h -= d;
+    if((d = dy + h - dst_fb->height) > 0) h -= d;
+    if(w <= 0 || h <= 0) return;
+
+    const uint32_t* src = src_fb->vaddr + sy * src_fb->width + sx;
+    uint32_t* dst = dst_fb->vaddr + dy * dst_fb->width + dx;
+    for(int j = 0; j < h; j++){
+        memcpy(dst, src, (size_t)w * 4);
+        src += src_fb->width;
+        dst += dst_fb->width;
     }
 }
 
@@ -147,7 +192,7 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     uint32_t * dst = fb->vaddr + px + py * fb->width;
-                    *dst = argb8888_blend_over(*dst, src_r, src_g, src_b, pixel_alpha);
+                    argb8888_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
                 }
             }
         }
@@ -218,7 +263,7 @@ void fbdraw_text_vertical(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     uint32_t * dst = fb->vaddr + px + py * fb->width;
-                    *dst = argb8888_blend_over(*dst, src_r, src_g, src_b, pixel_alpha);
+                    argb8888_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
                 }
             }
         }
@@ -253,7 +298,7 @@ void fbdraw_text_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect,
             uint8_t pa = (pixel >> 24) & 0xFF;
             if (pa == 0) continue;
             uint32_t *dst = &fb->vaddr[y * fb->width + x];
-            *dst = argb8888_blend_over(*dst, (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF, pa);
+            argb8888_blend_over_at(dst, (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF, pa);
         }
     }
 
@@ -341,7 +386,7 @@ void fbdraw_text_range(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, c
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     uint32_t * dst = fb->vaddr + px + py * fb->width;
-                    *dst = argb8888_blend_over(*dst, src_r, src_g, src_b, pixel_alpha);
+                    argb8888_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
                 }
             }
         }
@@ -439,7 +484,7 @@ void fbdraw_alpha_opacity_rect(fbdraw_fb_t* src_fb, fbdraw_fb_t* dst_fb, fbdraw_
             const uint8_t b = src_px & 0xFF;
 
             uint32_t * dst = dst_fb->vaddr + y * dst_fb->width + x;
-            *dst = argb8888_blend_over(*dst, r, g, b, a);
+            argb8888_blend_over_at(dst, r, g, b, a);
         }
     }
 }

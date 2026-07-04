@@ -135,16 +135,22 @@ typedef struct {
 
 
 static void draw_color_fade(uint32_t* vaddr,int radius,uint32_t color){
-    for(int x=0; x < radius; x++){
-        for(int y=0; y < radius; y++){
-            if(x+y > radius - 2){
-                break;
-            }
-            uint8_t alpha = 255 - ((x+y)*255 / radius);
-            int real_x = OVERLAY_WIDTH - x - 1;
-            int real_y = OVERLAY_HEIGHT - y - 1;
-            *((uint32_t *)(vaddr) + real_x + real_y * OVERLAY_WIDTH) = (color & 0x00FFFFFF) | (alpha << 24);
+    if(radius < 2){
+        return;
+    }
 
+    // alpha 只依赖 x+y，先查表算好，省掉每像素一次除法
+    uint8_t alpha_lut[radius];
+    for(int s = 0; s <= radius - 2; s++){
+        alpha_lut[s] = 255 - (s * 255 / radius);
+    }
+
+    // 内层沿 x 递增走，写地址连续，写合并才能生效
+    for(int y = 0; y <= radius - 2; y++){
+        int x_max = radius - 2 - y;
+        uint32_t* row = vaddr + (OVERLAY_HEIGHT - 1 - y) * OVERLAY_WIDTH;
+        for(int x = x_max; x >= 0; x--){
+            row[OVERLAY_WIDTH - 1 - x] = (color & 0x00FFFFFF) | ((uint32_t)alpha_lut[x + y] << 24);
         }
     }
 }
