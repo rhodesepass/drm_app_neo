@@ -24,20 +24,16 @@ static void oltr_callback_cleanup(void* userdata,bool is_last){
 
 // 渐变过渡，准备完成后无耗时操作，不需要使用worker。
 void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_params_t* params){
-    drm_warpper_queue_item_t* item;
     fbdraw_fb_t fbsrc,fbdst;
     fbdraw_rect_t src_rect,dst_rect;
 
     overlay->request_abort = 0;
 
+    // alpha 置 0 后直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
 
-    // 此处亦有等待vsync的功能。
-    // get a free buffer to draw on
-
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    uint32_t* vaddr = (uint32_t*)item->mount.arg0;
+    uint32_t* vaddr = (uint32_t*)overlay->overlay_buf.vaddr;
 
     fbdst.vaddr = vaddr;
     fbdst.width = OVERLAY_WIDTH;
@@ -65,8 +61,6 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
         dst_rect.h = params->image_h;
         fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
     }
-
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
 
     // 渐变到图层
     layer_animation_fade_in(
@@ -97,20 +91,16 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
 
 // 贝塞尔函数移动过渡。 不需要使用worker
 void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_params_t* params){
-    drm_warpper_queue_item_t* item;
     fbdraw_fb_t fbsrc,fbdst;
     fbdraw_rect_t src_rect,dst_rect;
 
     overlay->request_abort = 0;
 
+    // 先挪到屏外再直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, SCREEN_WIDTH, 0);
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
 
-    // 此处亦有等待vsync的功能。
-    // get a free buffer to draw on
-
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    uint32_t* vaddr = (uint32_t*)item->mount.arg0;
+    uint32_t* vaddr = (uint32_t*)overlay->overlay_buf.vaddr;
 
     fbdst.vaddr = vaddr;
     fbdst.width = OVERLAY_WIDTH;
@@ -136,8 +126,6 @@ void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_p
         dst_rect.h = params->image_h;
         fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
     }
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
-
 
     layer_animation_ease_out_move(
         overlay->layer_animation, 
@@ -221,10 +209,7 @@ static void swipe_worker(void *userdata,int skipped_frames){
         return;
     }
     
-    drm_warpper_set_layer_coord(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
-    drm_warpper_queue_item_t* item;
-    drm_warpper_dequeue_free_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    uint32_t* vaddr = (uint32_t*)item->mount.arg0;
+    uint32_t* vaddr = (uint32_t*)data->overlay->overlay_buf.vaddr;
 
 
     // 状态转移 START
@@ -236,13 +221,13 @@ static void swipe_worker(void *userdata,int skipped_frames){
     if (data->curr_frame < data->frames_per_stage){
         draw_state = SWIPE_DRAW_CONTENT;
 
+        // 单 buffer 内容累积，每帧只需推进一帧
         draw_start_x = data->bezeir_values[data->curr_frame];
-        if(data->curr_frame < 2){
-            draw_start_x = 0;    
+        if(data->curr_frame == 0){
+            draw_start_x = 0;
         }
-        // double buffer，一次性需要推进两帧的内容
-        if(data->curr_frame + 2 < data->frames_per_stage){
-            draw_end_x = data->bezeir_values[data->curr_frame + 2];
+        if(data->curr_frame + 1 < data->frames_per_stage){
+            draw_end_x = data->bezeir_values[data->curr_frame + 1];
         }
         else{
             draw_end_x = UI_WIDTH;
@@ -262,13 +247,13 @@ static void swipe_worker(void *userdata,int skipped_frames){
     }
     else{
         draw_state = SWIPE_DRAW_CLEAR;
-        draw_start_x = data->bezeir_values[data->curr_frame - 2 * data->frames_per_stage];
-        // 进入本状态的头两帧（两个buffer）都从最左边画起
-        if(data->curr_frame - 2 * data->frames_per_stage < 2){
+        int stage_frame = data->curr_frame - 2 * data->frames_per_stage;
+        draw_start_x = data->bezeir_values[stage_frame];
+        if(stage_frame == 0){
             draw_start_x = 0;
         }
-        if(data->curr_frame + 2 < 3 * data->frames_per_stage){
-            draw_end_x = data->bezeir_values[data->curr_frame - 2 * data->frames_per_stage + 2];
+        if(stage_frame + 1 < data->frames_per_stage){
+            draw_end_x = data->bezeir_values[stage_frame + 1];
         }
         else{
             draw_end_x = UI_WIDTH;
@@ -342,9 +327,10 @@ static void swipe_worker(void *userdata,int skipped_frames){
         fbdraw_fill_rect(&fbdst, &dst_rect, 0x00000000);
     }
 
-    drm_warpper_enqueue_display_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
     data->curr_frame ++;
     if(data->curr_frame >= data->total_frames){
+        // 单 buffer：结束后把图层泊回屏外，让后续过渡的直绘阶段不可见
+        drm_warpper_set_layer_coord(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
         if(data->callback->end_cb){
             data->callback->end_cb(data->callback->end_cb_userdata, true);
         }
@@ -362,27 +348,12 @@ static void swipe_timer_cb(void *userdata,bool is_last){
 
 // 类似drm_app的过渡效果，但是使用贝塞尔，需要使用worker。
 void overlay_transition_swipe(overlay_t* overlay,oltr_callback_t* callback,oltr_params_t* params){
-    drm_warpper_queue_item_t* item;
-    uint32_t* vaddr;
 
+    // 先清空 buffer 再上坐标，摆到屏内时内容已是全透明
+    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
 
-    // 清空双缓冲buffer
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    vaddr = (uint32_t*)item->mount.arg0;
-    memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
-
-    // 刚刚挂上去的buffer已经是空buffer了 可以上坐标了
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
-    
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    vaddr = (uint32_t*)item->mount.arg0;
-    memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
-    
-
-
 
     static swipe_worker_data_t swipe_worker_data;
     swipe_worker_data.overlay = overlay;

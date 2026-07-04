@@ -16,20 +16,16 @@
 #include <string.h>
 
 void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params){
-    drm_warpper_queue_item_t* item;
     fbdraw_fb_t fbdst,fbsrc;
     fbdraw_rect_t dst_rect,src_rect;
 
     overlay->request_abort = 0;
 
+    // 先把图层挪到屏外再直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
 
-    // 此处亦有等待vsync的功能。
-    // get a free buffer to draw on
-
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    uint32_t* vaddr = (uint32_t*)item->mount.arg0;
+    uint32_t* vaddr = (uint32_t*)overlay->overlay_buf.vaddr;
 
     memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
 
@@ -54,8 +50,7 @@ void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params){
 
         fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
     }
-    
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
+
     overlay->overlay_used = 1;
 
     layer_animation_ease_in_out_move(
@@ -67,7 +62,7 @@ void overlay_opinfo_show_image(overlay_t* overlay,olopinfo_params_t* params){
     );
 }
 
-// 标记这个buffer里面这个元素有没有更新过
+// 标记这个元素有没有更新过
 typedef struct{
     unsigned int operator_name : 1 ;
     unsigned int operator_code : 1 ;
@@ -127,31 +122,61 @@ typedef struct {
 
     int arrow_y_value;
 
-    // double buffer control.
-    int curr_buffer;
-    arknights_overlay_update_t buf1_update;
-    arknights_overlay_update_t buf2_update;
+    arknights_overlay_update_t update;
 } arknights_overlay_worker_data_t;
 
 
-static void draw_color_fade(uint32_t* vaddr,int radius,uint32_t color){
+// radius 是 360 基准的逻辑单位；物理上每个逻辑像素画成 UI_SCALE×UI_SCALE 的块，
+// 块内共享一个 alpha，保证 720 下渐变的物理尺寸和 360 一致。
+//
+// fade 三角和 logo 在右下角是同一片区域。单 buffer 直绘时如果“先画 fade 再贴 logo”
+// 分两次落盘，扫描线会抓到没有 logo 的中间态闪一下。所以每行先在栈上(cached)把
+// fade + logo 合成出最终像素，再一次 memcpy 进显存：每个像素每帧只写一次最终值。
+// 三角以外的 logo 像素跳过不画（logo 淡入头几帧三角还没长满时不透明度极低，无感）。
+static void draw_color_fade_and_logo(uint32_t* vaddr,int radius,uint32_t color,
+                                     uint32_t* logo_addr,int logo_w,int logo_h,int logo_opacity){
     if(radius < 2){
         return;
     }
 
-    // alpha 只依赖 x+y，先查表算好，省掉每像素一次除法
+    // alpha 只依赖逻辑坐标 x+y，先查表算好，省掉每像素一次除法
     uint8_t alpha_lut[radius];
     for(int s = 0; s <= radius - 2; s++){
         alpha_lut[s] = 255 - (s * 255 / radius);
     }
 
-    // 内层沿 x 递增走，写地址连续，写合并才能生效
-    for(int y = 0; y <= radius - 2; y++){
-        int x_max = radius - 2 - y;
-        uint32_t* row = vaddr + (OVERLAY_HEIGHT - 1 - y) * OVERLAY_WIDTH;
-        for(int x = x_max; x >= 0; x--){
-            row[OVERLAY_WIDTH - 1 - x] = (color & 0x00FFFFFF) | ((uint32_t)alpha_lut[x + y] << 24);
+    const int logo_x0 = OVERLAY_WIDTH - logo_w - S(10);
+    const int logo_y0 = OVERLAY_HEIGHT - logo_h - S(10);
+    const uint32_t rgb = color & 0x00FFFFFF;
+
+    uint32_t row[S(radius - 1)];
+
+    for(int py = 0; py < S(radius - 1); py++){
+        int ly = py / UI_SCALE;
+        int span = S(radius - 1 - ly);   // 本行 fade 覆盖的像素数，靠右边缘对齐
+        int fby = OVERLAY_HEIGHT - 1 - py;
+        int row_x0 = OVERLAY_WIDTH - span;
+
+        for(int i = 0; i < span; i++){
+            int px = span - 1 - i;       // px: 距右边缘的距离
+            row[i] = rgb | ((uint32_t)alpha_lut[px / UI_SCALE + ly] << 24);
         }
+
+        if(logo_addr && logo_opacity > 0){
+            int lrow = fby - logo_y0;
+            if(lrow >= 0 && lrow < logo_h){
+                for(int lcol = 0; lcol < logo_w; lcol++){
+                    int i = logo_x0 + lcol - row_x0;
+                    if(i < 0 || i >= span) continue;
+                    uint32_t px32 = logo_addr[lrow * logo_w + lcol];
+                    uint8_t a = (px32 >> 24) & 0xFF;
+                    if(logo_opacity != 255) a = (uint8_t)(((uint32_t)a * logo_opacity + 127u) / 255u);
+                    fbdraw_blend_over_at(&row[i], (px32 >> 16) & 0xFF, (px32 >> 8) & 0xFF, px32 & 0xFF, a);
+                }
+            }
+        }
+
+        memcpy(vaddr + fby * OVERLAY_WIDTH + row_x0, row, (size_t)span * 4);
     }
 }
 // 绘制arknights overlay的worker.
@@ -174,8 +199,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_NAME_START_FRAME && data->operator_name_cpidx != data->operator_name_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_NAME_FRAME_PER_CODEPOINT == 0){
             data->operator_name_cpidx++;
-            data->buf1_update.operator_name = 1;
-            data->buf2_update.operator_name = 1;
+            data->update.operator_name = 1;
         }
     }
 
@@ -183,8 +207,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_CODE_START_FRAME && data->operator_code_cpidx != data->operator_code_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_CODE_FRAME_PER_CODEPOINT == 0){
             data->operator_code_cpidx++;
-            data->buf1_update.operator_code = 1;
-            data->buf2_update.operator_code = 1;
+            data->update.operator_code = 1;
         }
     }
 
@@ -192,8 +215,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_START_FRAME && data->stuff_text_cpidx != data->stuff_text_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_FRAME_PER_CODEPOINT == 0){
             data->stuff_text_cpidx++;
-            data->buf1_update.staff_text = 1;
-            data->buf2_update.staff_text = 1;
+            data->update.staff_text = 1;
         }
     }
 
@@ -201,8 +223,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_AUX_TEXT_START_FRAME && data->aux_text_cpidx != data->aux_text_cpcnt){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_AUX_TEXT_FRAME_PER_CODEPOINT == 0){
             data->aux_text_cpidx++;
-            data->buf1_update.aux_text = 1;
-            data->buf2_update.aux_text = 1;
+            data->update.aux_text = 1;
         }
     }
 
@@ -212,16 +233,14 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_CLASSICON_START_FRAME && data->class_icon_state != ANIMATION_EINK_CONTENT){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_CLASSICON_FRAME_PER_STATE == 0){
             data->class_icon_state++;
-            data->buf1_update.class_icon = 1;
-            data->buf2_update.class_icon = 1;
+            data->update.class_icon = 1;
         }
     }
 
     if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_BARCODE_START_FRAME && data->barcode_state != ANIMATION_EINK_CONTENT){
         if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_BARCODE_FRAME_PER_STATE == 0){
             data->barcode_state++;
-            data->buf1_update.barcode = 1;
-            data->buf2_update.barcode = 1;
+            data->update.barcode = 1;
         }
     }
     // == BARCODE 和 CLASSICON 的 Eink效果 end ==
@@ -232,8 +251,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         if(data->color_fade_value >= OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE){
             data->color_fade_value = OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE;
         }
-        data->buf1_update.fade_color = 1;
-        data->buf2_update.fade_color = 1;
+        data->update.fade_color = 1;
     }
     // == color fade 和 logo fade end ==
 
@@ -243,12 +261,10 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         if(data->logo_fade_value >= 255){
             data->logo_fade_value = 255;
         }
-        data->buf1_update.logo_fade = 1;
-        data->buf2_update.logo_fade = 1;
+        data->update.logo_fade = 1;
         // logo 和 colorfade是冲突的 
         // colorfade 也需要重画
-        data->buf1_update.fade_color = 1;
-        data->buf2_update.fade_color = 1;
+        data->update.fade_color = 1;
     }
     // == logo swipe end ==
 
@@ -256,22 +272,19 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
 
     int ak_bar_swipe_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_START_FRAME;
     if (ak_bar_swipe_frame >= 0 && ak_bar_swipe_frame < OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_FRAME_COUNT){
-        data->buf1_update.ak_bar_swipe = 1;
-        data->buf2_update.ak_bar_swipe = 1;
+        data->update.ak_bar_swipe = 1;
     }
 
     // division line start
 
     int div_line_upper_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_LINE_UPPER_START_FRAME;
     if (div_line_upper_frame >= 0 && div_line_upper_frame < OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT){
-        data->buf1_update.div_line_upper = 1;
-        data->buf2_update.div_line_upper = 1;
+        data->update.div_line_upper = 1;
     }
 
     int div_line_lower_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_LINE_LOWER_START_FRAME;
     if (div_line_lower_frame >= 0 && div_line_lower_frame < OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT){
-        data->buf1_update.div_line_lower = 1;
-        data->buf2_update.div_line_lower = 1;
+        data->update.div_line_lower = 1;
     }
     // log_trace("arknights_overlay_worker: curr_frame=%d", data->curr_frame);
     // log_trace("operator_name_cpidx=%d,operator_name_cpcnt=%d", data->operator_name_cpidx, data->operator_name_cpcnt);
@@ -301,17 +314,9 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
 
     int asset_w, asset_h;
     uint8_t* asset_addr;
-    arknights_overlay_update_t * update;
-    if(data->curr_buffer == 0){
-        update = &data->buf1_update;
-    }
-    else{
-        update = &data->buf2_update;
-    }
+    arknights_overlay_update_t * update = &data->update;
 
-    drm_warpper_queue_item_t* item;
-    drm_warpper_dequeue_free_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    uint32_t* vaddr = (uint32_t*)item->mount.arg0;
+    uint32_t* vaddr = (uint32_t*)data->overlay->overlay_buf.vaddr;
 
     fbdraw_fb_t fbdst;
     fbdraw_fb_t fbsrc;
@@ -459,26 +464,14 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     }
     // == BARCODE 和 CLASSICON 的 Eink效果 end ==
 
-    // == color fade start
-    if(update->fade_color){
-        draw_color_fade(vaddr, data->color_fade_value, params->color);
+    // == color fade + logo：右下角同一片区域，合成后单次落盘，避免竞争闪烁
+    if(update->fade_color || update->logo_fade){
+        draw_color_fade_and_logo(
+            vaddr, data->color_fade_value, params->color,
+            params->logo_addr, params->logo_w, params->logo_h,
+            data->logo_fade_value
+        );
         update->fade_color = 0;
-    }
-
-    // == logo fade start
-    if(update->logo_fade){
-        fbsrc.vaddr = (uint32_t*)params->logo_addr;
-        fbsrc.width = params->logo_w;
-        fbsrc.height = params->logo_h;
-        src_rect.x = 0;
-        src_rect.y = 0;
-        src_rect.w = params->logo_w;
-        src_rect.h = params->logo_h;
-        dst_rect.x = OVERLAY_WIDTH - data->params->logo_w - S(10);
-        dst_rect.y = OVERLAY_HEIGHT - data->params->logo_h - S(10);
-        dst_rect.w = params->logo_w;
-        dst_rect.h = params->logo_h;
-        fbdraw_alpha_opacity_rect(&fbsrc, &fbdst, &src_rect, &dst_rect, data->logo_fade_value);
         update->logo_fade = 0;
     }
 
@@ -559,8 +552,6 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         data->arrow_y_value = asset_h;
     }
 
-    drm_warpper_enqueue_display_item(data->overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
-    data->curr_buffer = !data->curr_buffer;
     data->curr_frame++;
 }
 
@@ -716,24 +707,13 @@ static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* 
 }
 
 void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params){
-    drm_warpper_queue_item_t* item;
-    uint32_t* vaddr;
-
     log_info("overlay_opinfo_show_arknights");
 
+    // 先把图层挪到屏外再直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
 
-    // 清空双缓冲buffer
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    vaddr = (uint32_t*)item->mount.arg0;
-    init_template_arknights_overlay(vaddr, params);
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
-
-    drm_warpper_dequeue_free_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &item);
-    vaddr = (uint32_t*)item->mount.arg0;
-    init_template_arknights_overlay(vaddr, params);
-    drm_warpper_enqueue_display_item(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, item);
+    init_template_arknights_overlay((uint32_t*)overlay->overlay_buf.vaddr, params);
 
     static arknights_overlay_worker_data_t data;
     memset(&data, 0, sizeof(arknights_overlay_worker_data_t));

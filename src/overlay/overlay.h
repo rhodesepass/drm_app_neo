@@ -29,10 +29,9 @@ typedef struct {
 typedef struct {
     drm_warpper_t* drm_warpper;
     layer_animation_t* layer_animation;
-    buffer_object_t overlay_buf_1;
-    buffer_object_t overlay_buf_2;
-    drm_warpper_queue_item_t overlay_buf_1_item;
-    drm_warpper_queue_item_t overlay_buf_2_item;
+    // 单 buffer 直绘：挂载一次后 worker 直接往里画，不走 flip 队列。
+    // 代价是绘制期间可能和 DEBE 扫描撞上产生轻微撕裂，动画层可接受。
+    buffer_object_t overlay_buf;
 
     overlay_worker_t worker;
 
