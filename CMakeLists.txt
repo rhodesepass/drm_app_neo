@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(epass_drm_app)
+project(epass_drm_app C)
 include(FetchContent)
 
 # ============================================================================
@@ -66,7 +66,28 @@ pkg_check_modules(FREETYPE REQUIRED freetype2)
 set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/src/lv_conf.h CACHE PATH "lv_conf.h path" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "Build LVGL examples" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "Build LVGL demos" FORCE)
+# lv_conf.h 里 LV_USE_THORVG_INTERNAL 已是 0；这里同步关掉 CMake 侧同名开关，
+# 否则 ThorVG 的 67 个 .cpp 会被无条件编译，逼着交叉工具链必须带 C++ 前端。
+set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "Use internal ThorVG (needs CXX)" FORCE)
+# lvgl/CMakeLists.txt 顶层无条件 enable_language(CXX ASM)，但工程里唯一用到
+# C++ 的地方就是上面关掉的 ThorVG。为了不强依赖交叉工具链自带 C++ 前端
+# (cc1plus)，把 CXX“编译器”指向 C 编译器本身，并跳过 CMake 的 try_compile
+# 探测——反正不会有真的 .cpp 落到它头上.....大概吧？！？！
+# 我是说，不会吧不会吧，不会真的有人用CPP吧？！
+set(CMAKE_CXX_COMPILER ${CMAKE_C_COMPILER} CACHE FILEPATH "" FORCE)
+set(CMAKE_CXX_COMPILER_FORCED TRUE)
 add_subdirectory(lvgl)
+
+# 不是哥们，你TM......
+# LVGL 自身的 os_desktop.cmake 把 src/ 下所有 .cpp（glTF viewer、TFT_eSPI、
+# LovyanGFX、vg_lite_tvg 等可选桥接，共二十来个，跟 lv_conf.h 的开关无关）
+# 无条件塞进主 lvgl 库，逼着上面那个假 CXX 编译器去真编译，必炸。
+# add_subdirectory 之后从 target 的 SOURCES 属性里把 .cpp 全部摘掉。
+# （不能用 git apply 打 patch：buildroot 打包源码会剥掉 .git，git 会向上
+# 认领到外层仓库，patch 静默失败。）
+get_target_property(LVGL_SRCS lvgl SOURCES)
+list(FILTER LVGL_SRCS EXCLUDE REGEX "\\.cpp$")
+set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SRCS}")
 # LVGL 开启 LV_USE_FREETYPE 后，其适配源需要 freetype 头
 target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS})
 
