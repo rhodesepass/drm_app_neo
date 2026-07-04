@@ -14,14 +14,12 @@ typedef struct {
 
     lv_display_t * disp;
 
-    int curr_draw_buf_idx;
+    // 单 buffer 直绘：挂载一次后 LVGL partial 渲染，flush 时按脏区拷进这块扫描帧缓冲。
+    // 省掉了第二块整屏 FB(720x1280x2≈1.84M)，代价是绘制期可能和 DEBE 扫描撞上产生轻微撕裂。
+    buffer_object_t ui_buf;
+    // LVGL partial 模式的绘制暂存(堆内存，仅 CPU 用)，约 1/10 屏。
+    uint8_t *partial_buf;
 
-    buffer_object_t ui_buf_1;
-    buffer_object_t ui_buf_2;
-    drm_warpper_queue_item_t ui_buf_1_item;
-    drm_warpper_queue_item_t ui_buf_2_item;
-
-    bool has_vsync_done;
     lv_indev_t *keypad_indev;
     key_enc_evdev_t key_enc_evdev;
 

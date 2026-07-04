@@ -34,31 +34,24 @@ static uint32_t lvgl_drm_warp_tick_get_cb(void)
 
 static void lvgl_drm_warp_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map)
 {
-
-    if(!lv_disp_flush_is_last(disp)){
-        lv_display_flush_ready(disp);
-        return;
-    }
     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)lv_display_get_driver_data(disp);
+    buffer_object_t *fb = &lvgl_drm_warp->ui_buf;
 
+    // partial 模式：area 是脏矩形，px_map 里是紧凑排布(stride = 区域宽)的 RGB565。
+    // 逐行 memcpy 进扫描 FB 对应位置(FB 行跨度用 pitch，可能含对齐 padding)。
+    const int32_t x1 = area->x1;
+    const int32_t y1 = area->y1;
+    const int32_t h  = lv_area_get_height(area);
+    const uint32_t line_bytes = (uint32_t)lv_area_get_width(area) * 2;
 
-    // log_info("enqueue display item");
-
-    if(lvgl_drm_warp->curr_draw_buf_idx == 0){
-        drm_warpper_enqueue_display_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1_item);
-    }else{
-        drm_warpper_enqueue_display_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2_item);
+    uint8_t *dst = fb->vaddr + (uint32_t)y1 * fb->pitch + (uint32_t)x1 * 2;
+    const uint8_t *src = px_map;
+    for (int32_t y = 0; y < h; y++) {
+        memcpy(dst, src, line_bytes);
+        dst += fb->pitch;
+        src += line_bytes;
     }
-    lvgl_drm_warp->curr_draw_buf_idx = !lvgl_drm_warp->curr_draw_buf_idx;
 
-    // lvgl_drm_warp->has_vsync_done = false;
-
-    // wait for vsync done
-    drm_warpper_queue_item_t* item;
-    // log_info("waiting for vsync");
-    drm_warpper_dequeue_free_item(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &item);
-    // log_info("dequeued free item");
-    // log_debug("flush_cb called, has_vsync_done: %d -> false", lvgl_drm_warp->has_vsync_done);
     lv_display_flush_ready(disp);
 }
 
@@ -83,45 +76,27 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
 
     lvgl_drm_warp->drm_warpper = drm_warpper;
     lvgl_drm_warp->layer_animation = layer_animation;
-    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1);
-    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2);
 
-    // modeset
-    drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_UI, 0, SCREEN_HEIGHT, &lvgl_drm_warp->ui_buf_1);
-
-    lvgl_drm_warp->ui_buf_1_item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_NORMAL;
-    lvgl_drm_warp->ui_buf_1_item.mount.arg0 = (uint32_t)lvgl_drm_warp->ui_buf_1.vaddr;
-    lvgl_drm_warp->ui_buf_1_item.mount.arg1 = 0;
-    lvgl_drm_warp->ui_buf_1_item.mount.arg2 = 0;
-    lvgl_drm_warp->ui_buf_1_item.userdata = (void*)&lvgl_drm_warp->ui_buf_1;
-    lvgl_drm_warp->ui_buf_1_item.on_heap = false;
-
-    lvgl_drm_warp->ui_buf_2_item.mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_NORMAL;
-    lvgl_drm_warp->ui_buf_2_item.mount.arg0 = (uint32_t)lvgl_drm_warp->ui_buf_2.vaddr;
-    lvgl_drm_warp->ui_buf_2_item.mount.arg1 = 0;
-    lvgl_drm_warp->ui_buf_2_item.mount.arg2 = 0;
-    lvgl_drm_warp->ui_buf_2_item.userdata = (void*)&lvgl_drm_warp->ui_buf_2;
-    lvgl_drm_warp->ui_buf_2_item.on_heap = false;
-    
-    lvgl_drm_warp->has_vsync_done = true;
-
-    // 先把buffer提交进去，形成队列的初始状态（有一个buffer等待被free回来）
-    // drm_warpper_enqueue_display_item(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1_item);
-    drm_warpper_enqueue_display_item(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2_item);
-    
+    // 单 buffer 直绘(同 overlay)：只分配一块扫描 FB，挂载一次后不走 flip 队列。
+    drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf);
+    memset(lvgl_drm_warp->ui_buf.vaddr, 0, lvgl_drm_warp->ui_buf.size);
+    drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_UI, 0, SCREEN_HEIGHT, &lvgl_drm_warp->ui_buf);
 
     lv_init();
     lv_tick_set_cb(lvgl_drm_warp_tick_get_cb);
-    lvgl_drm_warp->curr_draw_buf_idx = 0;
+
+    // partial 绘制暂存：约 1/10 屏，够容纳单次脏区渲染，超出部分 LVGL 自动分块多次 flush。
+    const size_t partial_sz = (size_t)UI_WIDTH * (UI_HEIGHT / 10) * 2;
+    lvgl_drm_warp->partial_buf = malloc(partial_sz);
 
     lv_display_t * disp;
     disp = lv_display_create(UI_WIDTH, UI_HEIGHT);
-    lv_display_set_buffers(disp, 
-        lvgl_drm_warp->ui_buf_1.vaddr,
-        lvgl_drm_warp->ui_buf_2.vaddr, 
-        UI_WIDTH * UI_HEIGHT * 2,
-        LV_DISPLAY_RENDER_MODE_DIRECT);
-    
+    lv_display_set_buffers(disp,
+        lvgl_drm_warp->partial_buf,
+        NULL,
+        partial_sz,
+        LV_DISPLAY_RENDER_MODE_PARTIAL);
+
     lvgl_drm_warp->disp = disp;
     lv_display_set_driver_data(disp, lvgl_drm_warp);
     lv_display_set_flush_cb(disp, lvgl_drm_warp_flush_cb);
@@ -157,8 +132,8 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
 }
 
 void lvgl_drm_warp_destroy(lvgl_drm_warp_t *lvgl_drm_warp){
-    drm_warpper_free_buffer(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_1);
-    drm_warpper_free_buffer(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf_2);
+    drm_warpper_free_buffer(lvgl_drm_warp->drm_warpper, DRM_WARPPER_LAYER_UI, &lvgl_drm_warp->ui_buf);
+    free(lvgl_drm_warp->partial_buf);
 
     atomic_store(&lvgl_drm_warp->running, 0);
     pthread_join(lvgl_drm_warp->lvgl_thread, NULL);

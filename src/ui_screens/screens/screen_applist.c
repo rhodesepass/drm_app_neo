@@ -189,7 +189,7 @@ static void on_load_start(lv_event_t *e)
     lv_group_remove_all_objs(g);
     lv_group_set_wrap(g, false);
     for (int i = 0; i < UI_APP_VISIBLE_SLOTS; i++)
-        if (self.slots[i].app_index >= 0) lv_group_add_obj(g, self.slots[i].btn);
+        if (self.slots[i].btn && self.slots[i].app_index >= 0) lv_group_add_obj(g, self.slots[i].btn);
     lv_group_add_obj(g, self.back_btn);
     add_style_focus(self.back_btn);
     if (self.total > 0) lv_group_focus_obj(self.slots[0].btn);
