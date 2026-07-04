@@ -340,12 +340,16 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
       return -1;
     }
     /* perform actual memory mapping */
-    bo->vaddr = mmap(0, creq.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mreq.offset);   
+    bo->vaddr = mmap(0, creq.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mreq.offset);
 
     if (bo->vaddr == MAP_FAILED) {
         log_error("2nd cannot mmap dumb buffer (%d): %m\n", errno);
       return -1;
     }
+
+    bo->handle = creq.handle;
+    bo->pitch = creq.pitch;
+    bo->size = creq.size;
 
     return 0;
 }
@@ -388,17 +392,22 @@ int drm_warpper_destroy_layer(drm_warpper_t *drm_warpper,int layer_id){
     return 0;
 }
 
-int drm_warpper_allocate_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf){
+int drm_warpper_allocate_buffer_sized(drm_warpper_t *drm_warpper,int layer_id,int width,int height,buffer_object_t *buf){
     int ret;
     layer_t* layer = &drm_warpper->layer[layer_id];
-    buf->width = layer->width;
-    buf->height = layer->height;
-    ret = drm_warpper_create_buffer_object(drm_warpper->fd, buf, layer->width, layer->height, layer->mode);
+    buf->width = width;
+    buf->height = height;
+    ret = drm_warpper_create_buffer_object(drm_warpper->fd, buf, width, height, layer->mode);
     if(ret < 0){
         log_error("failed to allocate buffer");
         return -1;
     }
     return 0;
+}
+
+int drm_warpper_allocate_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf){
+    layer_t* layer = &drm_warpper->layer[layer_id];
+    return drm_warpper_allocate_buffer_sized(drm_warpper, layer_id, layer->width, layer->height, buf);
 }
 
 int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf){
@@ -417,19 +426,25 @@ int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_objec
 
 
 
-int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf){
+// src(buf 全幅) != dst 时由 DEFE frontend 做硬件缩放,仅 video 层(MB32 NV12)可用;
+// DEBE 无 scaler,UI/overlay 层 src 必须等于 dst
+int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int dst_w,int dst_h){
     int ret;
-    ret = drmModeSetPlane(drm_warpper->fd, 
-        drm_warpper->plane_res->planes[layer_id], 
-        drm_warpper->crtc_id, 
-        buf->fb_id, 
+    ret = drmModeSetPlane(drm_warpper->fd,
+        drm_warpper->plane_res->planes[layer_id],
+        drm_warpper->crtc_id,
+        buf->fb_id,
         0,
-        x, y, 
-        buf->width, buf->height, 
+        x, y,
+        dst_w, dst_h,
         0, 0,
         (buf->width) << 16, (buf->height) << 16
     );
     if (ret < 0)
         log_error("drmModeSetPlane err %d", ret);
-    return 0;
+    return ret;
+}
+
+int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf){
+    return drm_warpper_mount_layer_scaled(drm_warpper, layer_id, x, y, buf, buf->width, buf->height);
 }

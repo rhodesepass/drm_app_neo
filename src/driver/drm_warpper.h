@@ -69,9 +69,12 @@ int drm_warpper_destroy(drm_warpper_t *drm_warpper);
 int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int height,drm_warpper_layer_mode_t mode);
 int drm_warpper_destroy_layer(drm_warpper_t *drm_warpper,int layer_id);
 int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf);
+// dst != buf 尺寸时走 DEFE 硬件缩放,仅 MB32_NV12(video)层支持
+int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int dst_w,int dst_h);
 
 
 int drm_warpper_allocate_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf);
+int drm_warpper_allocate_buffer_sized(drm_warpper_t *drm_warpper,int layer_id,int width,int height,buffer_object_t *buf);
 int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf);
 
 int drm_warpper_enqueue_display_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t* item);
