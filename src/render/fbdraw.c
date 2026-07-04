@@ -7,41 +7,8 @@
 #include <string.h>
 #include "lvgl/src/font/lv_font.h"
 #include "lvgl/src/misc/lv_text_private.h"
+#include "ui_metrics.h"
 
-// dst 可能指向 uncached 显存：读回代价远高于写。
-// 只有半透明像素才回读，opaque 直接写、全透明直接跳过。
-static inline void argb8888_blend_over_at(uint32_t* dst_p, uint8_t src_r, uint8_t src_g, uint8_t src_b, uint8_t src_a)
-{
-    if(src_a == 0) return;
-    if(src_a == 255) {
-        *dst_p = (0xFFu << 24) | ((uint32_t)src_r << 16) | ((uint32_t)src_g << 8) | (uint32_t)src_b;
-        return;
-    }
-
-    const uint32_t dst = *dst_p;
-    const uint8_t dst_a = (dst >> 24) & 0xFF;
-    const uint8_t dst_r = (dst >> 16) & 0xFF;
-    const uint8_t dst_g = (dst >> 8) & 0xFF;
-    const uint8_t dst_b = dst & 0xFF;
-
-    const uint32_t inv_sa = 255u - src_a;
-    const uint32_t out_a = (uint32_t)src_a + ((uint32_t)dst_a * inv_sa + 127u) / 255u;
-    if(out_a == 0) {
-        *dst_p = 0;
-        return;
-    }
-
-    /* 用预乘中间量计算，最终存回“非预乘(straight) ARGB8888” */
-    const uint32_t out_r_premul = (uint32_t)src_r * src_a + (((uint32_t)dst_r * dst_a) * inv_sa + 127u) / 255u;
-    const uint32_t out_g_premul = (uint32_t)src_g * src_a + (((uint32_t)dst_g * dst_a) * inv_sa + 127u) / 255u;
-    const uint32_t out_b_premul = (uint32_t)src_b * src_a + (((uint32_t)dst_b * dst_a) * inv_sa + 127u) / 255u;
-
-    const uint8_t out_r = (uint8_t)((out_r_premul + out_a / 2u) / out_a);
-    const uint8_t out_g = (uint8_t)((out_g_premul + out_a / 2u) / out_a);
-    const uint8_t out_b = (uint8_t)((out_b_premul + out_a / 2u) / out_a);
-
-    *dst_p = ((uint32_t)out_a << 24) | ((uint32_t)out_r << 16) | ((uint32_t)out_g << 8) | (uint32_t)out_b;
-}
 
 void fbdraw_fill_rect(fbdraw_fb_t* fb, fbdraw_rect_t* rect, uint32_t color){
     int x = rect->x;
@@ -192,7 +159,7 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     uint32_t * dst = fb->vaddr + px + py * fb->width;
-                    argb8888_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
+                    fbdraw_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
                 }
             }
         }
@@ -263,7 +230,7 @@ void fbdraw_text_vertical(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     uint32_t * dst = fb->vaddr + px + py * fb->width;
-                    argb8888_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
+                    fbdraw_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
                 }
             }
         }
@@ -298,7 +265,7 @@ void fbdraw_text_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect,
             uint8_t pa = (pixel >> 24) & 0xFF;
             if (pa == 0) continue;
             uint32_t *dst = &fb->vaddr[y * fb->width + x];
-            argb8888_blend_over_at(dst, (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF, pa);
+            fbdraw_blend_over_at(dst, (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF, pa);
         }
     }
 
@@ -386,7 +353,7 @@ void fbdraw_text_range(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, c
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     uint32_t * dst = fb->vaddr + px + py * fb->width;
-                    argb8888_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
+                    fbdraw_blend_over_at(dst, src_r, src_g, src_b, pixel_alpha);
                 }
             }
         }
@@ -484,7 +451,7 @@ void fbdraw_alpha_opacity_rect(fbdraw_fb_t* src_fb, fbdraw_fb_t* dst_fb, fbdraw_
             const uint8_t b = src_px & 0xFF;
 
             uint32_t * dst = dst_fb->vaddr + y * dst_fb->width + x;
-            argb8888_blend_over_at(dst, r, g, b, a);
+            fbdraw_blend_over_at(dst, r, g, b, a);
         }
     }
 }
@@ -500,7 +467,7 @@ void fbdraw_barcode_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* str,
     }
 
     int font_height = lv_font_get_line_height(font);
-    int barcode_height = buf_h - font_height;
+    int barcode_height = buf_h - font_height - S(3);
 
     if(barcode_height<0) return;
 
@@ -535,7 +502,7 @@ void fbdraw_barcode_rot90(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* str,
 
     fbdraw_rect_t dst_rect;
     dst_rect.x = 0;
-    dst_rect.y = barcode_height;
+    dst_rect.y = barcode_height+S(3);
     dst_rect.w = buf_w;
     dst_rect.h = font_height;
 
