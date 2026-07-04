@@ -6,7 +6,6 @@
 #include "overlay/overlay.h"
 #include "config.h"
 #include "driver/drm_warpper.h"
-#include "driver/srgn_drm.h"
 #include "utils/log.h"
 #include "utils/timer.h"
 #include "render/layer_animation.h"

@@ -53,7 +53,7 @@ void signal_handler(int sig)
     g_exitcode = 0;
 }
 
-// video 层按解码尺寸挂载；尺寸未变时跳过(真 modeset 慢，见 srgn_drm.h)
+// video 层按解码尺寸挂载(atomic plane commit)；尺寸未变时跳过
 // 返回 -1 表示不支持的尺寸
 //
 // FB 按 VE 输出尺寸(VIDEO_WIDTH/HEIGHT，32 对齐)分配；VIDEO_WIDTH 通常 > 屏幕真实

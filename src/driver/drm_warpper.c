@@ -13,102 +13,137 @@
 
 #include "driver/drm_warpper.h"
 #include "utils/log.h"
-#include "driver/srgn_drm.h"
 #include "config.h"
 #include "utils/spsc_queue.h"
-
-static inline int DRM_IOCTL(int fd, unsigned long cmd, void *arg) {
-  int ret = drmIoctl(fd, cmd, arg);
-  return ret < 0 ? -errno : ret;
-}
 
 static void drm_warpper_wait_for_vsync(drm_warpper_t *drm_warpper){
     drm_warpper->blank.request.type = DRM_VBLANK_RELATIVE;
     drm_warpper->blank.request.sequence = 1;
-    // log_info("wait for vsync");
     if (drmWaitVBlank(drm_warpper->fd, (drmVBlankPtr) &drm_warpper->blank)) {
       log_error("drmWaitVBlank failed");
     }
-    // log_info("vsync done");
 }
 
-// 内核那边会缓存用户地址到物理地址，以便快速挂。
-// 每次启动前都需要reset cache，避免上次启动的残留。
-void drm_warpper_reset_cache_ioctl(drm_warpper_t *drm_warpper){
-    int ret;
-    ret = drmIoctl(drm_warpper->fd, DRM_IOCTL_SRGN_RESET_FB_CACHE, NULL);
-    if(ret < 0){
-        log_error("drm_warpper_reset_cache_ioctl failed %s(%d)", strerror(errno), errno);
+// alpha 属性 0..0xFFFF；255*0x101 = 0xFFFF 正好回到不透明(像素 alpha)
+static inline uint64_t alpha_to_prop(uint8_t alpha){
+    return (uint64_t)alpha * 0x101;
+}
+
+static int drm_warpper_discover_plane_props(drm_warpper_t *drm_warpper, int layer_id){
+    plane_prop_ids_t *p = &drm_warpper->plane_props[layer_id];
+    drmModeObjectProperties *props;
+    int i;
+
+    memset(p, 0, sizeof(*p));
+
+    props = drmModeObjectGetProperties(drm_warpper->fd,
+                                       drm_warpper->plane_ids[layer_id],
+                                       DRM_MODE_OBJECT_PLANE);
+    if (!props) {
+        log_error("get plane %d properties failed", layer_id);
+        return -1;
     }
+
+    for (i = 0; i < (int)props->count_props; i++) {
+        drmModePropertyRes *prop = drmModeGetProperty(drm_warpper->fd, props->props[i]);
+        if (!prop)
+            continue;
+        if      (!strcmp(prop->name, "FB_ID"))   p->fb_id   = prop->prop_id;
+        else if (!strcmp(prop->name, "CRTC_ID")) p->crtc_id = prop->prop_id;
+        else if (!strcmp(prop->name, "SRC_X"))   p->src_x   = prop->prop_id;
+        else if (!strcmp(prop->name, "SRC_Y"))   p->src_y   = prop->prop_id;
+        else if (!strcmp(prop->name, "SRC_W"))   p->src_w   = prop->prop_id;
+        else if (!strcmp(prop->name, "SRC_H"))   p->src_h   = prop->prop_id;
+        else if (!strcmp(prop->name, "CRTC_X"))  p->crtc_x  = prop->prop_id;
+        else if (!strcmp(prop->name, "CRTC_Y"))  p->crtc_y  = prop->prop_id;
+        else if (!strcmp(prop->name, "CRTC_W"))  p->crtc_w  = prop->prop_id;
+        else if (!strcmp(prop->name, "CRTC_H"))  p->crtc_h  = prop->prop_id;
+        else if (!strcmp(prop->name, "alpha"))   p->alpha   = prop->prop_id;
+        drmModeFreeProperty(prop);
+    }
+    drmModeFreeObjectProperties(props);
+
+    if (!p->fb_id || !p->crtc_id || !p->crtc_x || !p->crtc_y) {
+        log_error("plane %d missing required properties", layer_id);
+        return -1;
+    }
+    return 0;
 }
-
-// static void drm_warpper_switch_buffer_ioctl(drm_warpper_t *drm_warpper,int layer_id,int type,uint8_t *ch0_addr,uint8_t *ch1_addr,uint8_t *ch2_addr){
-//     int ret;
-//     struct drm_srgn_mount_fb srgn_mount_fb;
-
-//     srgn_mount_fb.layer_id = layer_id;
-//     srgn_mount_fb.type = type;
-//     srgn_mount_fb.ch0_addr = (uint32_t)ch0_addr;
-//     srgn_mount_fb.ch1_addr = (uint32_t)ch1_addr;
-//     srgn_mount_fb.ch2_addr = (uint32_t)ch2_addr;
-    
-//     ret = drmIoctl(drm_warpper->fd, DRM_IOCTL_SRGN_MOUNT_FB, &srgn_mount_fb);
-//     if(ret < 0){
-//         log_error("drm_warpper_switch_buffer_ioctl failed %s(%d)", strerror(errno), errno);
-//     }
-// }
 
 static void* drm_warpper_display_thread(void *arg){
     drm_warpper_t *drm_warpper = (drm_warpper_t *)arg;
-    struct drm_srgn_atomic_commit_data commits[12] = {0};
-    struct drm_srgn_atomic_commit commit_req = {
-        .size = 0,
-        .data = (uint32_t)(uintptr_t)commits,
-    };
     int ret;
 
     log_info("==> DRM_Warpper Display Thread Started!");
 
+    // 节奏：有活时直接阻塞 commit（commit 本身按 vblank 节拍返回，
+    // 背靠背即每 vblank 一次）；空转时用 drmWaitVBlank 兜底等待。
     while(atomic_load(&drm_warpper->thread_running)){
-        drm_warpper_wait_for_vsync(drm_warpper);
-        // log_info("vsync");
-        commit_req.size = 0;
+        drmModeAtomicReq *req = NULL;
+
         for(int i = 0; i < 4; i++){
             layer_t* layer = &drm_warpper->layer[i];
-            if(layer->used){
-                drm_warpper_queue_item_t* item;
-                while(spsc_bq_try_pop(&layer->display_queue, (void**)&item) == 0){
-                    // somthing is wait to be displayed.
-                    // so, switch buffer using ioctl,and put current item to free queue.
-                    // log_info("switch buffer on layer %d type %d", i, item->mount.type);
-                    commits[commit_req.size].layer_id = i;
-                    commits[commit_req.size].type = item->mount.type;
-                    commits[commit_req.size].arg0 = item->mount.arg0;
-                    commits[commit_req.size].arg1 = item->mount.arg1;
-                    commits[commit_req.size].arg2 = item->mount.arg2;
-                    commit_req.size++;
-                    if(item->mount.type == DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_NORMAL 
-                        || item->mount.type == DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_YUV){
-                        if(layer->curr_item){
-                            // 如果程序终止 对端consumer可能已经退出 导致这里卡死。
-                            spsc_bq_push(&layer->free_queue, layer->curr_item);
-                        }
-                        layer->curr_item = item;
+            plane_prop_ids_t *p = &drm_warpper->plane_props[i];
+            if(!layer->used)
+                continue;
+            drm_warpper_queue_item_t* item;
+            while(spsc_bq_try_pop(&layer->display_queue, (void**)&item) == 0){
+                bool is_frame = false;
+
+                switch(item->type){
+                case DRM_WARPPER_ITEM_FLIP_FB:
+                    if(!req) req = drmModeAtomicAlloc();
+                    drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
+                                             p->fb_id, item->fb_id);
+                    is_frame = true;
+                    break;
+                case DRM_WARPPER_ITEM_SET_COORD:
+                    if(!req) req = drmModeAtomicAlloc();
+                    drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
+                                             p->crtc_x, (uint64_t)(int64_t)item->x);
+                    drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
+                                             p->crtc_y, (uint64_t)(int64_t)item->y);
+                    break;
+                case DRM_WARPPER_ITEM_SET_ALPHA:
+                    if(!p->alpha){
+                        log_error("layer %d has no alpha property", i);
+                        break;
                     }
-                    else{
-                        if(item->on_heap){
-                            free(item);
-                        }
-                    }
+                    if(!req) req = drmModeAtomicAlloc();
+                    drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
+                                             p->alpha, alpha_to_prop(item->alpha));
+                    break;
                 }
 
+                if(is_frame){
+                    // 帧类 item 常驻(非堆)：换下的旧帧回 free_queue 供解码侧回收
+                    if(layer->curr_item){
+                        // 如果程序终止 对端consumer可能已经退出 导致这里卡死。
+                        spsc_bq_push(&layer->free_queue, layer->curr_item);
+                    }
+                    layer->curr_item = item;
+                }
+                else{
+                    if(item->on_heap){
+                        free(item);
+                    }
+                }
             }
         }
-        if(commit_req.size > 0){
-            ret = drmIoctl(drm_warpper->fd, DRM_IOCTL_SRGN_ATOMIC_COMMIT, &commit_req);
+
+        if(req){
+            // 阻塞式：返回即 flip 完成（下一个 vblank），被换下的 FB 已
+            // 离屏——此后旧帧 item 才会从 free_queue 被解码侧回收复用。
+            pthread_mutex_lock(&drm_warpper->commit_mutex);
+            ret = drmModeAtomicCommit(drm_warpper->fd, req, 0, NULL);
+            pthread_mutex_unlock(&drm_warpper->commit_mutex);
             if(ret < 0){
-                log_error("DRM_IOCTL_SRGN_ATOMIC_COMMIT failed %s(%d)", strerror(errno), errno);
+                log_error("drmModeAtomicCommit failed %s(%d)", strerror(errno), errno);
             }
+            drmModeAtomicFree(req);
+        }
+        else{
+            drm_warpper_wait_for_vsync(drm_warpper);
         }
     }
 
@@ -137,31 +172,35 @@ int drm_warpper_set_layer_coord(drm_warpper_t *drm_warpper,int layer_id,int x,in
         log_error("failed to allocate memory");
         return -1;
     }
-    item->mount.layer_id = layer_id;
-    item->mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_SET_COORD;
-    item->mount.arg0 = (int16_t)y << 16 | (int16_t)x;
-    item->mount.arg1 = 0;
-    item->mount.arg2 = 0;
-    item->userdata = NULL;
+    memset(item, 0, sizeof(*item));
+    item->type = DRM_WARPPER_ITEM_SET_COORD;
+    item->x = (int16_t)x;
+    item->y = (int16_t)y;
     item->on_heap = true;
 #ifndef APP_RELEASE
-    log_trace("drm coord y:%d,x:%d,reg:%x",y,x,item->mount.arg0);
+    log_trace("drm coord y:%d,x:%d",y,x);
 #endif // APP_RELEASE
     return drm_warpper_enqueue_display_item(drm_warpper, layer_id, item);
 }
 
 int drm_warpper_set_layer_alpha(drm_warpper_t *drm_warpper,int layer_id,int alpha){
-    drm_warpper_queue_item_t *item = malloc(sizeof(drm_warpper_queue_item_t));
+    drm_warpper_queue_item_t *item;
+
+    // sun4i atomic_check：最底已启用 plane 的属性 alpha 必须 opaque，且全局
+    // 只允许 1 个 alpha 平面(含 ARGB 像素 alpha 的 overlay)。只有 overlay 能动。
+    if(layer_id != DRM_WARPPER_LAYER_OVERLAY && alpha != 255){
+        log_warn("alpha on layer %d rejected (only overlay may fade)", layer_id);
+        return -1;
+    }
+
+    item = malloc(sizeof(drm_warpper_queue_item_t));
     if(item == NULL){
         log_error("failed to allocate memory");
         return -1;
     }
-    item->mount.layer_id = layer_id;
-    item->mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_SET_ALPHA;
-    item->mount.arg0 = alpha;
-    item->mount.arg1 = 0;
-    item->mount.arg2 = 0;
-    item->userdata = NULL;
+    memset(item, 0, sizeof(*item));
+    item->type = DRM_WARPPER_ITEM_SET_ALPHA;
+    item->alpha = (uint8_t)alpha;
     item->on_heap = true;
     return drm_warpper_enqueue_display_item(drm_warpper, layer_id, item);
 }
@@ -209,6 +248,16 @@ int drm_warpper_init(drm_warpper_t *drm_warpper){
     }
     log_info("Available Plane Count: %d", drm_warpper->plane_res->count_planes);
 
+    for(uint32_t i = 0; i < 4 && i < drm_warpper->plane_res->count_planes; i++){
+        drm_warpper->plane_ids[i] = drm_warpper->plane_res->planes[i];
+        if(drm_warpper_discover_plane_props(drm_warpper, i) < 0){
+            drmModeFreePlaneResources(drm_warpper->plane_res);
+            drmModeFreeResources(drm_warpper->res);
+            close(drm_warpper->fd);
+            return -1;
+        }
+    }
+
     drm_warpper->conn = drmModeGetConnector(drm_warpper->fd, drm_warpper->conn_id);
     if (!drm_warpper->conn) {
         log_error("drmModeGetConnector failed");
@@ -225,7 +274,7 @@ int drm_warpper_init(drm_warpper_t *drm_warpper){
     drm_warpper->blank.request.type = DRM_VBLANK_RELATIVE;
     drm_warpper->blank.request.sequence = 1;
 
-    drm_warpper_reset_cache_ioctl(drm_warpper);
+    pthread_mutex_init(&drm_warpper->commit_mutex, NULL);
 
     atomic_store(&drm_warpper->thread_running, 1);
     if (pthread_create(&drm_warpper->display_thread, NULL, drm_warpper_display_thread, drm_warpper) != 0) {
@@ -240,18 +289,21 @@ int drm_warpper_init(drm_warpper_t *drm_warpper){
 }
 
 int drm_warpper_destroy(drm_warpper_t *drm_warpper){
-    drmModeFreeConnector(drm_warpper->conn);
-    drmModeFreePlaneResources(drm_warpper->plane_res);
-    drmModeFreeResources(drm_warpper->res);
-    close(drm_warpper->fd);
+    // 先停线程再释放资源（原实现先 close fd，线程还在用）
     atomic_store(&drm_warpper->thread_running, 0);
-    for(int i = 0; i < 4; i++){
-        drm_warpper_destroy_layer(drm_warpper, i);
-    }
     log_info("wait for display thread to finish");
     pthread_join(drm_warpper->display_thread, NULL);
     log_info("display thread finished");
 
+    for(int i = 0; i < 4; i++){
+        drm_warpper_destroy_layer(drm_warpper, i);
+    }
+
+    drmModeFreeConnector(drm_warpper->conn);
+    drmModeFreePlaneResources(drm_warpper->plane_res);
+    drmModeFreeResources(drm_warpper->res);
+    pthread_mutex_destroy(&drm_warpper->commit_mutex);
+    close(drm_warpper->fd);
 
     return 0;
 }
@@ -262,7 +314,7 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
     uint32_t handles[4], pitches[4], offsets[4];
     uint64_t modifiers[4];
     int ret;
- 
+
     memset(&creq, 0, sizeof(struct drm_mode_create_dumb));
     if(mode == DRM_WARPPER_LAYER_MODE_MB32_NV12){
         creq.width = width;
@@ -290,7 +342,7 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
       log_error("cannot create dumb buffer (%d): %m", errno);
       return -errno;
     }
-  
+
     memset(&offsets, 0, sizeof(offsets));
     memset(&handles, 0, sizeof(handles));
     memset(&pitches, 0, sizeof(pitches));
@@ -301,7 +353,7 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
         handles[0] = creq.handle;
         pitches[0] = creq.pitch;
         modifiers[0] = DRM_FORMAT_MOD_ALLWINNER_TILED;
-      
+
         offsets[1] = creq.pitch * height;
         handles[1] = creq.handle;
         pitches[1] = creq.pitch;
@@ -325,12 +377,12 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
     else if(mode == DRM_WARPPER_LAYER_MODE_ARGB8888){
         ret = drmModeAddFB2(fd, width, height, DRM_FORMAT_ARGB8888, handles, pitches, offsets,&bo->fb_id, 0);
     }
-  
+
     if (ret) {
       log_error("drmModeAddFB2 return err %d", ret);
       return -1;
     }
-    
+
     /* prepare buffer for memory mapping */
     memset(&mreq, 0, sizeof(mreq));
     mreq.handle = creq.handle;
@@ -424,6 +476,38 @@ int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_objec
     return 0;
 }
 
+int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int width,int height,int pitch,int uv_offset,uint32_t *fb_id){
+    uint32_t handle = 0;
+    uint32_t handles[4] = {0}, pitches[4] = {0}, offsets[4] = {0};
+    uint64_t modifiers[4] = {0};
+    int ret;
+
+    ret = drmPrimeFDToHandle(drm_warpper->fd, dmabuf_fd, &handle);
+    if(ret < 0){
+        log_error("drmPrimeFDToHandle failed %s(%d)", strerror(errno), errno);
+        return -1;
+    }
+
+    handles[0] = handles[1] = handle;
+    pitches[0] = pitches[1] = pitch;
+    offsets[0] = 0;
+    offsets[1] = uv_offset;
+    modifiers[0] = modifiers[1] = DRM_FORMAT_MOD_ALLWINNER_TILED;
+
+    ret = drmModeAddFB2WithModifiers(drm_warpper->fd, width, height,
+                                     DRM_FORMAT_NV12, handles, pitches,
+                                     offsets, modifiers, fb_id,
+                                     DRM_MODE_FB_MODIFIERS);
+    if(ret < 0){
+        log_error("import dmabuf AddFB2 failed %s(%d)", strerror(errno), errno);
+        return -1;
+    }
+    return 0;
+}
+
+int drm_warpper_rm_fb(drm_warpper_t *drm_warpper,uint32_t fb_id){
+    return drmModeRmFB(drm_warpper->fd, fb_id);
+}
 
 
 // 通用挂载:src 矩形(0,0,src_w,src_h)从 buf 左上角裁,dst 矩形(x,y,dst_w,dst_h)是屏幕显示区。
@@ -431,21 +515,38 @@ int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_objec
 //   src<dst / src>dst -> DEFE frontend 硬件缩放(仅 MB32 NV12 video 层;DEBE 无 scaler)
 //   src_w<buf->width -> 裁掉右侧对齐 padding
 // 三者可组合:如 src=(360,720) dst=(720,H) 即"先裁左 360 再放大到 720"。
+// 同步 atomic commit(首挂即启用 plane;CRTC 开机已 active,无需 ALLOW_MODESET)
 int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,
                                  int src_w,int src_h,int dst_w,int dst_h){
+    plane_prop_ids_t *p = &drm_warpper->plane_props[layer_id];
+    uint32_t plane_id = drm_warpper->plane_ids[layer_id];
+    drmModeAtomicReq *req;
     int ret;
-    ret = drmModeSetPlane(drm_warpper->fd,
-        drm_warpper->plane_res->planes[layer_id],
-        drm_warpper->crtc_id,
-        buf->fb_id,
-        0,
-        x, y,
-        dst_w, dst_h,
-        0, 0,
-        src_w << 16, src_h << 16
-    );
+
+    req = drmModeAtomicAlloc();
+    if(!req){
+        log_error("drmModeAtomicAlloc failed");
+        return -1;
+    }
+
+    drmModeAtomicAddProperty(req, plane_id, p->crtc_id, drm_warpper->crtc_id);
+    drmModeAtomicAddProperty(req, plane_id, p->fb_id, buf->fb_id);
+    drmModeAtomicAddProperty(req, plane_id, p->src_x, 0);
+    drmModeAtomicAddProperty(req, plane_id, p->src_y, 0);
+    drmModeAtomicAddProperty(req, plane_id, p->src_w, (uint64_t)src_w << 16);
+    drmModeAtomicAddProperty(req, plane_id, p->src_h, (uint64_t)src_h << 16);
+    drmModeAtomicAddProperty(req, plane_id, p->crtc_x, (uint64_t)(int64_t)x);
+    drmModeAtomicAddProperty(req, plane_id, p->crtc_y, (uint64_t)(int64_t)y);
+    drmModeAtomicAddProperty(req, plane_id, p->crtc_w, dst_w);
+    drmModeAtomicAddProperty(req, plane_id, p->crtc_h, dst_h);
+
+    pthread_mutex_lock(&drm_warpper->commit_mutex);
+    ret = drmModeAtomicCommit(drm_warpper->fd, req, 0, NULL);
+    pthread_mutex_unlock(&drm_warpper->commit_mutex);
+    drmModeAtomicFree(req);
+
     if (ret < 0)
-        log_error("drmModeSetPlane err %d", ret);
+        log_error("mount atomic commit err %s(%d)", strerror(errno), errno);
     return ret;
 }
 

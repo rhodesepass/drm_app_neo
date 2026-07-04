@@ -1,332 +1,281 @@
+/*
+ * Mediaplayer：src/vdec 自制解码栈（MP4 demux + H264 parser/DPB + cedrus
+ * V4L2 request API）→ dmabuf FB → drm_warpper atomic 翻页。
+ *
+ * 单解码线程：demux 是内存 sample 表、request 是同步等待，无重叠收益。
+ * capture slot == DPB slot；帧经 FLIP_FB item 上屏，显示线程换帧后旧 item
+ * 从 free_queue 回流，此时才解除该 slot 的 on_screen 占用。
+ */
+
 #include "mediaplayer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#include <sys/time.h>
 #include <unistd.h>
-#include <CdxParser.h>
-#include <vdecoder.h>
-#include <memoryAdapter.h>
-
 
 #include "driver/drm_warpper.h"
 #include "utils/log.h"
-#include "cdx_config.h"
 #include "config.h"
-#include "driver/srgn_drm.h"
 #include "utils/misc.h"
 
-/* external cedarx plugin entry */
-extern void AddVDPlugin(void);
+#include "vdec/nalu.h"
 
 #define mp_get_now_us get_now_us
 
-/* parser thread: read bitstream and feed decoder */
-static void *mp_parser_thread(void *param)
+// main.c 提供，按解码尺寸选 modeset buffer(720 档旧素材走 DEFE 放大)
+extern int video_layer_ensure_mount(int src_w, int src_h);
+extern buffer_object_t g_video_buf;
+#ifdef VIDEO_LEGACY_WIDTH
+extern buffer_object_t g_video_buf_legacy;
+#endif
+
+static bool mp_size_supported(int w, int h)
 {
-    mediaplayer_t *mp = (mediaplayer_t *)param;
-    CdxParserT *parser = mp->parser;
-    VideoDecoder *decoder = mp->decoder;
-    CdxPacketT packet;
-    VideoStreamDataInfo dataInfo;
-    int ret;
-    int validSize;
-    int requestSize;
-    int streamNum;
-    int trytime = 0;
-    unsigned char *buf = NULL;
-
-    buf = malloc(1024 * 1024);
-    if (buf == NULL) {
-        log_error("parser thread malloc err");
-        goto parser_exit;
-    }
-
-    memset(&packet, 0, sizeof(packet));
-    memset(&dataInfo, 0, sizeof(dataInfo));
-
-    log_info("==> mp_parser Thread Started!");
-
-    startagain:
-    while (0 == CdxParserPrefetch(parser, &packet)) {
-        usleep(50);
-
-        pthread_rwlock_rdlock(&mp->thread.rwlock);
-        int state = mp->thread.state;
-        int requested_stop = mp->thread.requested_stop;
-        pthread_rwlock_unlock(&mp->thread.rwlock);
-
-        if (requested_stop || (state & (MEDIAPLAYER_PARSER_ERROR |
-                                        MEDIAPLAYER_DECODER_ERROR |
-                                        MEDIAPLAYER_DECODE_FINISH))) {
-            // log_info("parser:get exit flag");
-            break;
-        }
-
-        validSize = VideoStreamBufferSize(decoder, 0) - VideoStreamDataSize(decoder, 0);
-        requestSize = packet.length;
-
-        if (trytime >= 2000) {
-            log_error("try time too much");
-            pthread_rwlock_wrlock(&mp->thread.rwlock);
-            mp->thread.state |= MEDIAPLAYER_PARSER_ERROR;
-            pthread_rwlock_unlock(&mp->thread.rwlock);
-            break;
-        }
-
-        if (packet.type == CDX_MEDIA_VIDEO && ((packet.flags & MINOR_STREAM) == 0)) {
-            if (requestSize > validSize) {
-                usleep(50 * 1000);
-                trytime++;
-                continue;
-            }
-
-            ret = RequestVideoStreamBuffer(decoder, requestSize,
-                                           (char **)&packet.buf, &packet.buflen,
-                                           (char **)&packet.ringBuf, &packet.ringBufLen, 0);
-            if (ret != 0) {
-                log_debug("RequestVideoStreamBuffer err, request=%d, valid=%d",
-                          requestSize, validSize);
-                usleep(50 * 1000);
-                continue;
-            }
-
-            if (packet.buflen + packet.ringBufLen < requestSize) {
-                log_error("RequestVideoStreamBuffer err, not enough space");
-                pthread_rwlock_wrlock(&mp->thread.rwlock);
-                mp->thread.state |= MEDIAPLAYER_PARSER_ERROR;
-                pthread_rwlock_unlock(&mp->thread.rwlock);
-                break;
-            }
-        } else {
-            packet.buf = buf;
-            packet.buflen = packet.length;
-            CdxParserRead(parser, &packet);
-            continue;
-        }
-
-        trytime = 0;
-        streamNum = VideoStreamFrameNum(decoder, 0);
-        if (streamNum > 1024) {
-            usleep(50 * 1000);
-        }
-
-        ret = CdxParserRead(parser, &packet);
-        if (ret != 0) {
-            log_error("cdxparser read err");
-            pthread_rwlock_wrlock(&mp->thread.rwlock);
-            mp->thread.state |= MEDIAPLAYER_PARSER_ERROR;
-            pthread_rwlock_unlock(&mp->thread.rwlock);
-            break;
-        }
-
-        memset(&dataInfo, 0, sizeof(dataInfo));
-        dataInfo.pData        = packet.buf;
-        dataInfo.nLength      = packet.length;
-        dataInfo.nPts         = packet.pts;
-        dataInfo.nPcr         = packet.pcr;
-        dataInfo.bIsFirstPart = !!(packet.flags & FIRST_PART);
-        dataInfo.bIsLastPart  = !!(packet.flags & LAST_PART);
-
-        ret = SubmitVideoStreamData(decoder, &dataInfo, 0);
-        if (ret != 0) {
-            log_error("SubmitVideoStreamData err");
-            pthread_rwlock_wrlock(&mp->thread.rwlock);
-            mp->thread.state |= MEDIAPLAYER_PARSER_ERROR;
-            pthread_rwlock_unlock(&mp->thread.rwlock);
-            break;
-        }
-    }
-    
-    if(CdxParserGetStatus(parser) == PSR_EOS){
-        log_debug("eos, start again!");
-        CdxParserSeekTo(parser, 0, AW_SEEK_CLOSEST);  
-        goto startagain;
-    }
-
-    pthread_rwlock_wrlock(&mp->thread.rwlock);
-    mp->thread.end_of_stream = 1;
-    mp->thread.state |= MEDIAPLAYER_PARSER_EXIT;
-    pthread_rwlock_unlock(&mp->thread.rwlock);
-
-parser_exit:
-    if (buf) {
-        free(buf);
-    }
-    log_info("==> mp_parser Thread Ended!");
-    pthread_exit(NULL);
-    return NULL;
+    if (w == VIDEO_WIDTH && h == VIDEO_HEIGHT)
+        return true;
+#ifdef VIDEO_LEGACY_WIDTH
+    if (w == VIDEO_LEGACY_WIDTH && h == VIDEO_LEGACY_HEIGHT)
+        return true;
+#endif
+    return false;
 }
 
-/* decoder thread: decode and copy one frame to output buffer */
-static void *mp_decoder_thread(void *param)
+/* userdata 编码：NULL = 黑帧/无槽位，否则 slot+1 */
+static inline void *slot_to_userdata(int slot) { return (void *)(intptr_t)(slot + 1); }
+static inline int userdata_to_slot(void *ud) { return (int)(intptr_t)ud - 1; }
+
+/* 收 free_queue：解除离屏槽位的 on_screen 占用并释放 item */
+static void mp_reclaim_free_items(mediaplayer_t *mp)
+{
+    drm_warpper_queue_item_t *item;
+
+    while (drm_warpper_try_dequeue_free_item(mp->drm_warpper,
+                                             DRM_WARPPER_LAYER_VIDEO,
+                                             &item) == 0) {
+        int slot = userdata_to_slot(item->userdata);
+        if (slot >= 0)
+            h264_dpb_set_on_screen(&mp->dpb, slot, false);
+        mp->items_in_flight--;
+        free(item);
+    }
+}
+
+/* 把 slot 的帧入队显示。slot<0 表示黑帧。返回 0 成功。 */
+static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
+{
+    drm_warpper_queue_item_t *item = malloc(sizeof(*item));
+
+    if (!item) {
+        log_error("malloc err");
+        return -1;
+    }
+    memset(item, 0, sizeof(*item));
+    item->type = DRM_WARPPER_ITEM_FLIP_FB;
+    item->fb_id = fb_id;
+    item->userdata = slot_to_userdata(slot);
+    item->on_heap = false; /* 帧类 item 由本模块经 free_queue 回收 */
+
+    if (slot >= 0) {
+        h264_dpb_set_on_screen(&mp->dpb, slot, true);
+        h264_dpb_mark_displayed(&mp->dpb, slot);
+    }
+    mp->items_in_flight++;
+    return drm_warpper_enqueue_display_item(mp->drm_warpper,
+                                            DRM_WARPPER_LAYER_VIDEO, item);
+}
+
+/*
+ * 解码一个 AU（单 slice）。返回:
+ *  0 解码成功  1 非视频帧(跳过)  -1 错误(停播)
+ */
+static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
+                        struct h264_slice_hdr *hdr_out)
+{
+    const struct mp4_sample *sample = &mp->demux.samples[sample_idx];
+    const uint8_t *au = mp4_sample_data(&mp->demux, sample_idx);
+    unsigned int cursor = 0, vcl_count = 0;
+    struct nalu n, vcl = { 0 };
+    struct h264_poc poc;
+    struct vdec_h264_ctrls ctrl;
+    bool have_hdr = false;
+    uint64_t ts;
+    int slot, retry;
+
+    if (!au) {
+        log_error("sample %u out of range", sample_idx);
+        return -1;
+    }
+
+    while (nalu_next_length_prefixed(au, sample->size,
+                                     mp->demux.nal_length_size, &cursor, &n)) {
+        unsigned int t = nalu_h264_type(&n);
+
+        if (t == H264_NAL_SPS || t == H264_NAL_PPS) {
+            h264_parser_parse_param_nal(&mp->parser, &n);
+        } else if (t == H264_NAL_SLICE || t == H264_NAL_IDR) {
+            vcl_count++;
+            if (have_hdr)
+                continue;
+            if (h264_parser_parse_slice(&mp->parser, &n, hdr_out) < 0) {
+                log_error("slice parse failed @%u", sample_idx);
+                return -1;
+            }
+            h264_parser_compute_poc(&mp->parser, hdr_out, &poc);
+            vcl = n;
+            have_hdr = true;
+        }
+    }
+
+    if (!have_hdr)
+        return 1;
+
+    /* 素材管线保证单 slice/帧；多 slice 明确报错，不静默花屏 */
+    if (vcl_count > 1) {
+        log_error("frame %u has %u slices, unsupported", sample_idx, vcl_count);
+        return -1;
+    }
+
+    if (h264_parser_fill_controls(&mp->parser, hdr_out, &poc, &ctrl) < 0) {
+        log_error("fill_controls failed @%u", sample_idx);
+        return -1;
+    }
+
+    /* 无空槽 = 在飞帧太多，等显示线程回流(每 vblank 一次) */
+    for (retry = 0; retry < 100; retry++) {
+        slot = h264_dpb_begin_frame(&mp->dpb, hdr_out, &poc, &ts, &ctrl);
+        if (slot >= 0)
+            break;
+        usleep(5 * 1000);
+        mp_reclaim_free_items(mp);
+    }
+    if (slot < 0) {
+        log_error("no free capture slot @%u", sample_idx);
+        return -1;
+    }
+
+    if (vdec_decode(&mp->vdec, slot, ts, vcl.data, vcl.size, &ctrl) < 0) {
+        log_error("decode failed @%u", sample_idx);
+        h264_dpb_abort_frame(&mp->dpb);
+        return -1;
+    }
+
+    h264_dpb_end_frame(&mp->dpb, hdr_out);
+    return 0;
+}
+
+/* 解码线程：每 tick 出一帧（POC 序），按 frame_duration_us 定速 */
+static void *mp_decode_thread(void *param)
 {
     mediaplayer_t *mp = (mediaplayer_t *)param;
-    VideoDecoder *decoder = mp->decoder;
-    int ret;
-    int end_of_stream = 0;
-    long long next_frame_time = 0;
+    unsigned int sample_idx = 0;
+    bool pending_flush = false;
+    long long next_frame_time;
+    int out;
 
+    log_info("==> mp_decode Thread Started! dur=%uus samples=%u",
+             mp->frame_duration_us, mp->demux.samples_count);
 
-    next_frame_time = mp_get_now_us() + 1000000 * 1000 / mp->framerate;
-
-    log_info("==> mp_decoder Thread Started!");
-    log_info("==> target fps: %d", mp->framerate);
+    next_frame_time = mp_get_now_us() + mp->frame_duration_us;
 
     while (1) {
-        long long current_time = mp_get_now_us();
-        if (current_time < next_frame_time) {
-            usleep(next_frame_time - current_time);
-        }
-        usleep(50);
-
-        if (current_time > next_frame_time + 2 * 1000 * 1000) {
-            log_warn("can't keep up, delay: %lld us", current_time - next_frame_time);
-            next_frame_time = current_time + 1000000 * 1000 / mp->framerate;
-        }
+        long long now = mp_get_now_us();
 
         pthread_rwlock_rdlock(&mp->thread.rwlock);
-        end_of_stream = mp->thread.end_of_stream;
-        int state = mp->thread.state;
         int requested_stop = mp->thread.requested_stop;
         pthread_rwlock_unlock(&mp->thread.rwlock);
-
-        if (requested_stop) {
-            // log_info("req stop,exiting");
+        if (requested_stop)
             break;
+
+        if (now < next_frame_time)
+            usleep(next_frame_time - now);
+        else if (now > next_frame_time + 2 * 1000 * 1000) {
+            log_warn("can't keep up, delay: %lld us", now - next_frame_time);
+            next_frame_time = now;
         }
 
-        if (state & (MEDIAPLAYER_PARSER_ERROR | MEDIAPLAYER_DECODER_ERROR)) {
-            log_error("err state,exiting");
-            break;
+        mp_reclaim_free_items(mp);
+
+        /* GOP 边界(素材回绕)先按 flush 逐帧排空 DPB */
+        if (pending_flush) {
+            out = h264_dpb_next_output(&mp->dpb, true);
+            if (out < 0)
+                pending_flush = false;
+        } else {
+            out = h264_dpb_next_output(&mp->dpb, false);
         }
 
-        // first try to dequeue free buffer from drm_warpper
-        drm_warpper_queue_item_t* item;
-        while(drm_warpper_try_dequeue_free_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, &item) == 0){
-            VideoPicture* pic = (VideoPicture*)item->userdata;
-            // log_debug("dequeue");
-            if(pic){
-                ReturnPicture(decoder, pic);
+        /* 没有可显示帧就继续喂 AU，直到重排队列吐出一帧 */
+        while (out < 0 && !pending_flush) {
+            struct h264_slice_hdr hdr;
+            int rc;
+
+            if (sample_idx >= mp->demux.samples_count) {
+                /* EOS：排空后回 sample 0 循环（素材以 IDR 开头） */
+                sample_idx = 0;
+                pending_flush = true;
+                out = h264_dpb_next_output(&mp->dpb, true);
+                break;
             }
-            free(item);
+
+            rc = mp_decode_au(mp, sample_idx, &hdr);
+            if (rc < 0)
+                goto decode_error;
+            sample_idx++;
+            if (rc > 0)
+                continue;
+
+            out = h264_dpb_next_output(&mp->dpb, false);
         }
 
-        // long long start = mp_get_now_us();
-        ret = DecodeVideoStream(decoder, end_of_stream, 0, 0, 0);
-        // long long finish = mp_get_now_us();
-        // log_debug("frame time: %lld us", finish - start);
-
-        if (end_of_stream == 1 && ret == VDECODE_RESULT_NO_BITSTREAM) {
-            log_info("data end!!!");
-            break;
-        }
-
-        if (ret == VDECODE_RESULT_KEYFRAME_DECODED ||
-            ret == VDECODE_RESULT_FRAME_DECODED) {
-            int validNum = ValidPictureNum(decoder, 0);
-            if (validNum > 0) {
-                VideoPicture *picture = RequestPicture(decoder, 0);
-                if (!picture) {
-                    log_error("RequestPicture err");
-                    continue;
-                }
-
-                if (picture->nWidth != mp->frame_width ||
-                    picture->nHeight != mp->frame_height) {
-                    log_error("err size, expect %dx%d, actual %dx%d",
-                              mp->frame_width, mp->frame_height,
-                              picture->nWidth, picture->nHeight);
-                    ReturnPicture(decoder, picture);
-                    pthread_rwlock_wrlock(&mp->thread.rwlock);
-                    mp->thread.state |= MEDIAPLAYER_DECODER_ERROR;
-                    pthread_rwlock_unlock(&mp->thread.rwlock);
-                    break;
-                }
-
-                // int dataLen = picture->nWidth * picture->nHeight * 3 / 2;
-                // memcpy(mp->output_buf, picture->pData0,
-                //        picture->nWidth * picture->nHeight);
-                // memcpy(mp->output_buf + picture->nWidth * picture->nHeight,
-                //        picture->pData1,
-                //        picture->nWidth * picture->nHeight / 2);
-
-                // ReturnPicture(decoder, picture);
-
-                // 把拿到的picture直接交给drm ioctl挂上去(Zero Copy!)
-                drm_warpper_queue_item_t* item_to_display = malloc(sizeof(drm_warpper_queue_item_t));
-                if(item_to_display == NULL){
-                    log_error("malloc err");
-                    ReturnPicture(decoder, picture);
-                    continue;
-                }
-
-                item_to_display->mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_YUV;
-                item_to_display->mount.arg0 = (uint32_t)picture->pData0;
-                item_to_display->mount.arg1 = (uint32_t)picture->pData1;
-                item_to_display->mount.arg2 = 0;
-                item_to_display->userdata = (void*)picture;
-                // this "on_heap" means that the item_to_display 
-                // will be free by the drm_warpper, not by the mediaplayer.
-                item_to_display->on_heap = false;
-                drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, item_to_display);
-                next_frame_time = next_frame_time + 1000000 * 1000 / mp->framerate;
-            }
-        }
-
-        if (ret < 0) {
-            log_error("DecodeVideoStream err: %d", ret);
-            pthread_rwlock_wrlock(&mp->thread.rwlock);
-            mp->thread.state |= MEDIAPLAYER_DECODER_ERROR;
-            pthread_rwlock_unlock(&mp->thread.rwlock);
-            break;
+        if (out >= 0) {
+            mp_enqueue_frame(mp, mp->fb_ids[out], out);
+            next_frame_time += mp->frame_duration_us;
         }
     }
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);
     mp->thread.state |= MEDIAPLAYER_DECODER_EXIT;
     pthread_rwlock_unlock(&mp->thread.rwlock);
+    log_info("==> mp_decode Thread Ended!");
+    pthread_exit(NULL);
+    return NULL;
 
-    log_info("==> mp_decoder Thread Ended!");
+decode_error:
+    pthread_rwlock_wrlock(&mp->thread.rwlock);
+    mp->thread.state |= MEDIAPLAYER_DECODER_ERROR | MEDIAPLAYER_DECODER_EXIT;
+    pthread_rwlock_unlock(&mp->thread.rwlock);
+    log_error("==> mp_decode Thread Ended (error)!");
     pthread_exit(NULL);
     return NULL;
 }
 
-/* internal helper: release parser/decoder/memops */
-static void mp_cleanup_internal(mediaplayer_t *mp)
+static void mp_close_session(mediaplayer_t *mp)
 {
-    if (mp->parser) {
-        CdxParserClose(mp->parser);
-        mp->parser = NULL;
+    unsigned int i;
+
+    if (!mp->session_open)
+        return;
+
+    for (i = 0; i < mp->vdec.cap_count; i++) {
+        if (mp->fb_ids[i]) {
+            drm_warpper_rm_fb(mp->drm_warpper, mp->fb_ids[i]);
+            mp->fb_ids[i] = 0;
+        }
     }
-    if (mp->decoder) {
-        DestroyVideoDecoder(mp->decoder);
-        mp->decoder = NULL;
-    }
-    if (mp->memops) {
-        CdcMemClose(mp->memops);
-        mp->memops = NULL;
-    }
+    vdec_close(&mp->vdec);
+    mp4_close(&mp->demux);
+    mp->session_open = false;
 }
 
-int mediaplayer_init(mediaplayer_t *mp,drm_warpper_t *drm_warpper)
+int mediaplayer_init(mediaplayer_t *mp, drm_warpper_t *drm_warpper)
 {
-
     memset(mp, 0, sizeof(*mp));
 
-    pthread_mutex_init(&mp->parser_mutex, NULL);
     pthread_rwlock_init(&mp->thread.rwlock, NULL);
-    mp->thread.end_of_stream = 0;
-    mp->thread.state = 0;
-    mp->thread.requested_stop = 0;
     atomic_store(&mp->running, 0);
-    memset(mp->video_path, 0, sizeof(mp->video_path));
-
     mp->drm_warpper = drm_warpper;
-
-    AddVDPlugin();
 
     log_info("==> mp Initalized!");
     return 0;
@@ -338,29 +287,10 @@ int mediaplayer_destroy(mediaplayer_t *mp)
         return -1;
     }
 
-    /* ensure stopped */
     mediaplayer_stop(mp);
-
-    mp_cleanup_internal(mp);
-
     pthread_rwlock_destroy(&mp->thread.rwlock);
-    pthread_mutex_destroy(&mp->parser_mutex);
 
     return 0;
-}
-
-// main.c 提供，按解码尺寸选 modeset buffer(720 档旧素材走 DEFE 放大)
-extern int video_layer_ensure_mount(int src_w, int src_h);
-
-static bool mp_size_supported(int w, int h)
-{
-    if (w == VIDEO_WIDTH && h == VIDEO_HEIGHT)
-        return true;
-#ifdef VIDEO_LEGACY_WIDTH
-    if (w == VIDEO_LEGACY_WIDTH && h == VIDEO_LEGACY_HEIGHT)
-        return true;
-#endif
-    return false;
 }
 
 int mediaplayer_remount_video_layer(mediaplayer_t *mp)
@@ -374,121 +304,114 @@ int mediaplayer_remount_video_layer(mediaplayer_t *mp)
     return video_layer_ensure_mount(w, h);
 }
 
-/* play_video/start 的公共段：input_uri 已就绪，走 parser→decoder→双线程 */
+/* play_video/start 的公共段：input_path 已就绪 */
 static int mp_prepare_and_spawn(mediaplayer_t *mp)
 {
-    mp->memops = MemAdapterGetOpsS();
-    if (!mp->memops) {
-        log_error("MemAdapterGetOpsS err");
+    char video_path[32], media_path[32];
+    const struct h264_sps *sps = NULL;
+    unsigned int cap_count, max_ref, reorder, max_frame_num;
+    unsigned int i;
+
+    if (mp4_open(&mp->demux, mp->input_path) < 0) {
+        log_error("mp4_open err: %s", mp->input_path);
         return -1;
     }
-    CdcMemOpen(mp->memops);
+    mp->session_open = true; /* demux 已开，之后统一走 close_session */
 
-    memset(&mp->source, 0, sizeof(CdxDataSourceT));
-    memset(&mp->media_info, 0, sizeof(CdxMediaInfoT));
-
-    mp->source.uri = mp->input_uri;
-
-    int force_exit = 0;
-    CdxStreamT *stream = NULL;
-    int ret = CdxParserPrepare(&mp->source, 0, &mp->parser_mutex,
-                               &force_exit, &mp->parser, &stream, NULL, NULL);
-    if (ret < 0 || !mp->parser) {
-        log_error("CdxParserPrepare err");
-        mp_cleanup_internal(mp);
-        return -1;
+    if (mp->demux.codec != MP4_CODEC_H264) {
+        log_error("not an H264 mp4");
+        goto error;
+    }
+    if (mp->demux.max_sample_size > VDEC_OUTPUT_BUF_SIZE) {
+        log_error("max sample %u exceeds output buffer", mp->demux.max_sample_size);
+        goto error;
     }
 
-    ret = CdxParserGetMediaInfo(mp->parser, &mp->media_info);
-    if (ret != 0) {
-        log_error("CdxParserGetMediaInfo err");
-        mp_cleanup_internal(mp);
-        return -1;
+    h264_parser_init(&mp->parser);
+    if (h264_parser_parse_avcc(&mp->parser, mp->demux.extradata,
+                               mp->demux.extradata_size) < 0) {
+        log_error("avcC parse err");
+        goto error;
+    }
+    for (i = 0; i < 32 && !sps; i++)
+        sps = h264_parser_get_sps(&mp->parser, i);
+    if (!sps) {
+        log_error("no SPS in avcC");
+        goto error;
+    }
+    if (!sps->frame_mbs_only_flag) {
+        log_error("interlaced stream unsupported");
+        goto error;
     }
 
-    struct CdxProgramS *program =
-        &mp->media_info.program[mp->media_info.programIndex];
+    /* 编码尺寸(MB 对齐)与 CedarX 时代 parser 报告值一致(384x640/736x1280) */
+    mp->frame_width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
+    mp->frame_height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
 
-    // 解码前先按 parser 尺寸把关并挂载：此时旧线程已 join、屏上是黑帧，
-    // modeset 无并发帧提交；同尺寸时 ensure_mount 为 no-op
-    if (!mp_size_supported(program->video[0].nWidth, program->video[0].nHeight)) {
-        log_error("unsupported video size %dx%d",
-                  program->video[0].nWidth, program->video[0].nHeight);
-        mp_cleanup_internal(mp);
-        return -1;
+    // 解码前先按尺寸把关并挂载：此时旧线程已 join、屏上是黑帧，
+    // 挂载无并发帧提交；同尺寸时 ensure_mount 为 no-op
+    if (!mp_size_supported(mp->frame_width, mp->frame_height)) {
+        log_error("unsupported video size %dx%d", mp->frame_width, mp->frame_height);
+        goto error;
     }
-    mp->frame_width  = program->video[0].nWidth;
-    mp->frame_height = program->video[0].nHeight;
     video_layer_ensure_mount(mp->frame_width, mp->frame_height);
 
-    mp->decoder = CreateVideoDecoder();
-    if (!mp->decoder) {
-        log_error("CreateVideoDecoder err");
-        mp_cleanup_internal(mp);
-        return -1;
+    mp->frame_duration_us = mp->demux.frame_duration_us ?
+                            mp->demux.frame_duration_us : 33333;
+
+    max_ref = sps->max_num_ref_frames ? sps->max_num_ref_frames : 1;
+    max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
+    reorder = max_ref < VDEC_REORDER_DEPTH ? VDEC_REORDER_DEPTH : max_ref;
+    cap_count = max_ref + reorder + 3;
+    if (cap_count < VDEC_CAPTURE_BUF_MIN)
+        cap_count = VDEC_CAPTURE_BUF_MIN;
+    if (cap_count > VDEC_CAPTURE_BUF_MAX)
+        cap_count = VDEC_CAPTURE_BUF_MAX;
+
+    if (vdec_find_device(video_path, sizeof(video_path),
+                         media_path, sizeof(media_path)) < 0)
+        goto error;
+
+    if (vdec_open(&mp->vdec, video_path, media_path,
+                  mp->frame_width, mp->frame_height,
+                  cap_count, VDEC_OUTPUT_BUF_COUNT, VDEC_OUTPUT_BUF_SIZE) < 0)
+        goto error;
+
+    for (i = 0; i < mp->vdec.cap_count; i++) {
+        if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
+                                         mp->vdec.cap[i].dmabuf_fd,
+                                         mp->vdec.cap_width,
+                                         mp->vdec.cap_height,
+                                         mp->vdec.cap_bytesperline,
+                                         mp->vdec.cap_uv_offset,
+                                         &mp->fb_ids[i]) < 0)
+            goto error;
     }
 
-    VConfig vConfig;
-    VideoStreamInfo vInfo;
-    memset(&vConfig, 0, sizeof(VConfig));
-    memset(&vInfo, 0, sizeof(VideoStreamInfo));
+    h264_dpb_init(&mp->dpb, cap_count, max_ref, max_frame_num, reorder);
 
-    /* only use first video stream */
-    vInfo.eCodecFormat          = program->video[0].eCodecFormat;
-    vInfo.nWidth                = program->video[0].nWidth;
-    vInfo.nHeight               = program->video[0].nHeight;
-    vInfo.nFrameRate            = program->video[0].nFrameRate;
-    vInfo.nFrameDuration        = program->video[0].nFrameDuration;
-    vInfo.nAspectRatio          = program->video[0].nAspectRatio;
-    vInfo.bIs3DStream           = program->video[0].bIs3DStream;
-    vInfo.nCodecSpecificDataLen = program->video[0].nCodecSpecificDataLen;
-    vInfo.pCodecSpecificData    = program->video[0].pCodecSpecificData;
+    log_info("vdec: %ux%u max_ref=%u cap_bufs=%u dur=%uus",
+             mp->frame_width, mp->frame_height, max_ref, cap_count,
+             mp->frame_duration_us);
 
-    mp->framerate = vInfo.nFrameRate;
-
-    vConfig.eOutputPixelFormat  = PIXEL_FORMAT_YUV_MB32_420;
-    vConfig.nDeInterlaceHoldingFrameBufferNum = BUF_CNT_4_DI;
-    vConfig.nDisplayHoldingFrameBufferNum = BUF_CNT_4_LIST;
-    vConfig.nRotateHoldingFrameBufferNum = BUF_CNT_4_ROTATE;
-    vConfig.nDecodeSmoothFrameBufferNum = BUF_CNT_4_SMOOTH;
-    vConfig.memops = mp->memops;
-    vConfig.nVbvBufferSize = VBVBUFFERSIZE;
-
-    ret = InitializeVideoDecoder(mp->decoder, &vInfo, &vConfig);
-    if (ret != 0) {
-        log_error("InitializeVideoDecoder err");
-        mp_cleanup_internal(mp);
-        return -1;
-    }
-
-    /* reset thread flags */
     pthread_rwlock_wrlock(&mp->thread.rwlock);
-    mp->thread.end_of_stream = 0;
     mp->thread.state = 0;
     mp->thread.requested_stop = 0;
     pthread_rwlock_unlock(&mp->thread.rwlock);
 
     atomic_store(&mp->running, 1);
 
-    if (pthread_create(&mp->parser_thread, NULL, mp_parser_thread, mp) != 0) {
-        log_error("parser create err");
+    if (pthread_create(&mp->decode_thread, NULL, mp_decode_thread, mp) != 0) {
+        log_error("decode thread create err");
         atomic_store(&mp->running, 0);
-        mp_cleanup_internal(mp);
-        return -1;
-    }
-
-    if (pthread_create(&mp->decoder_thread, NULL, mp_decoder_thread, mp) != 0) {
-        log_error("decoder create err");
-        pthread_rwlock_wrlock(&mp->thread.rwlock);
-        mp->thread.requested_stop = 1;
-        pthread_rwlock_unlock(&mp->thread.rwlock);
-        pthread_join(mp->parser_thread, NULL);
-        atomic_store(&mp->running, 0);
-        mp_cleanup_internal(mp);
-        return -1;
+        goto error;
     }
 
     return 0;
+
+error:
+    mp_close_session(mp);
+    return -1;
 }
 
 int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
@@ -503,19 +426,16 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
         return -1;
     }
 
-    // 每次开始之前都需要reset cache
-    drm_warpper_reset_cache_ioctl(mp->drm_warpper);
-
-    memset(mp->input_uri, 0, sizeof(mp->input_uri));
-    snprintf(mp->input_uri, sizeof(mp->input_uri), "file://%s", file);
+    snprintf(mp->input_path, sizeof(mp->input_path), "%s", file);
 
     return mp_prepare_and_spawn(mp);
 }
 
-extern buffer_object_t g_video_buf;
-
 int mediaplayer_stop(mediaplayer_t *mp)
 {
+    uint32_t black_fb;
+    int wait;
+
     if (!mp) {
         return -1;
     }
@@ -528,27 +448,30 @@ int mediaplayer_stop(mediaplayer_t *mp)
     mp->thread.requested_stop = 1;
     pthread_rwlock_unlock(&mp->thread.rwlock);
 
-    pthread_join(mp->parser_thread, NULL);
-    pthread_join(mp->decoder_thread, NULL);
+    pthread_join(mp->decode_thread, NULL);
     atomic_store(&mp->running, 0);
 
-    mp_cleanup_internal(mp);
-    
-    // 挂载到黑屏buffer。
-    drm_warpper_queue_item_t* item;
-    item = malloc(sizeof(drm_warpper_queue_item_t));
-    if(item == NULL){
-        log_error("malloc err");
-        return -1;
-    }
+    // 挂黑帧。720 档 legacy 素材要用同宽的 legacy 黑帧 buffer：
+    // atomic 有 SRC 边界校验，384 宽 fb 配 736 宽 SRC 会被拒(VA hack 时代没有的坑)
+    black_fb = g_video_buf.fb_id;
+#ifdef VIDEO_LEGACY_WIDTH
+    if (mp->frame_width == VIDEO_LEGACY_WIDTH &&
+        mp->frame_height == VIDEO_LEGACY_HEIGHT)
+        black_fb = g_video_buf_legacy.fb_id;
+#endif
+    mp_enqueue_frame(mp, black_fb, -1);
 
-    item->mount.type = DRM_SRGN_ATOMIC_COMMIT_MOUNT_FB_YUV;
-    item->mount.arg0 = (uint32_t)g_video_buf.vaddr;
-    item->mount.arg1 = (uint32_t)g_video_buf.vaddr + g_video_buf.width * g_video_buf.height;
-    item->mount.arg2 = 0;
-    item->userdata = NULL;
-    item->on_heap = false;
-    drm_warpper_enqueue_display_item(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO, item);
+    // 等所有 capture 帧离屏回流(黑帧上屏后旧帧必然换下)再拆 FB/队列。
+    // 黑帧 item 本身留在显示线程 curr_item 上,只等其余的。
+    // 即使超时，dmabuf 引用计数也保证内存在 RmFB 前有效，只是可能闪一下。
+    for (wait = 0; wait < 40 && mp->items_in_flight > 1; wait++) {
+        usleep(10 * 1000);
+        mp_reclaim_free_items(mp);
+    }
+    if (mp->items_in_flight > 1)
+        log_warn("stop: %d frame items still in flight", mp->items_in_flight);
+
+    mp_close_session(mp);
 
     return 0;
 }
@@ -565,7 +488,6 @@ int mediaplayer_set_video(mediaplayer_t *mp, const char *path)
         return -1;
     }
 
-    memset(mp->video_path, 0, sizeof(mp->video_path));
     snprintf(mp->video_path, sizeof(mp->video_path), "%s", path);
     log_info("video path set to: %s", mp->video_path);
 
@@ -575,7 +497,7 @@ int mediaplayer_set_video(mediaplayer_t *mp, const char *path)
 int mediaplayer_start(mediaplayer_t *mp)
 {
     if (!mp) {
-        log_error("invalid paramst");
+        log_error("invalid params");
         return -1;
     }
 
@@ -589,12 +511,7 @@ int mediaplayer_start(mediaplayer_t *mp)
         return -1;
     }
 
-    memset(mp->input_uri, 0, sizeof(mp->input_uri));
-    int written = snprintf(mp->input_uri, sizeof(mp->input_uri), "file://%s", mp->video_path);
-    if ((size_t)written >= sizeof(mp->input_uri)) {
-        log_error("snprintf err");
-        return -1;
-    }
+    snprintf(mp->input_path, sizeof(mp->input_path), "%s", mp->video_path);
 
     int ret = mp_prepare_and_spawn(mp);
     if (ret != 0) {

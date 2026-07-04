@@ -186,12 +186,16 @@
 #define DRM_WARPPER_LAYER_OVERLAY 1
 #define DRM_WARPPER_LAYER_VIDEO 0
 
-// ========== Media Player Configuration ==========
-#define VBVBUFFERSIZE 2 * 1024 * 1024
-#define BUF_CNT_4_DI 1
-#define BUF_CNT_4_LIST 1
-#define BUF_CNT_4_ROTATE 0
-#define BUF_CNT_4_SMOOTH 1
+// ========== Media Player (V4L2 stateless / cedrus) ==========
+// OUTPUT(码流)buffer 大小：一帧一个 NAL，打开时按 mp4 最大 sample 校验
+#define VDEC_OUTPUT_BUF_SIZE (512 * 1024)
+#define VDEC_OUTPUT_BUF_COUNT 2
+// B 帧重排深度下限（素材 has_b_frames=2）
+#define VDEC_REORDER_DEPTH 2
+// capture(解码帧) 数 = max_ref + reorder + 3，夹在下面区间内
+// 720 档 tiled NV12 每帧 1.35MB，10 帧 13.5MB（CMA 32MB）
+#define VDEC_CAPTURE_BUF_MIN 6
+#define VDEC_CAPTURE_BUF_MAX 10
 
 
 // ========== Animation Configuration ==========

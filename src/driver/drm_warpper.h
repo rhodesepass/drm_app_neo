@@ -7,7 +7,6 @@
 #include <stdatomic.h>
 
 #include "utils/spsc_queue.h"
-#include "driver/srgn_drm.h"
 
 #pragma once
 
@@ -21,6 +20,15 @@ typedef enum {
     DRM_WARPPER_LAYER_MODE_MB32_NV12, //allwinner specific format
 } drm_warpper_layer_mode_t;
 
+typedef enum {
+    // atomic：整帧翻页，fb_id 换到该层 plane 的 FB_ID 属性
+    DRM_WARPPER_ITEM_FLIP_FB,
+    // atomic：CRTC_X/CRTC_Y（有符号，可为负/离屏，过渡动画依赖）
+    DRM_WARPPER_ITEM_SET_COORD,
+    // atomic：plane alpha。255 = 不透明(ARGB 层回到像素 alpha)
+    DRM_WARPPER_ITEM_SET_ALPHA,
+} drm_warpper_item_type_t;
+
 typedef struct {
     uint32_t width;
     uint32_t height;
@@ -32,7 +40,10 @@ typedef struct {
 } buffer_object_t;
 
 typedef struct {
-    struct drm_srgn_atomic_commit_data mount;
+    drm_warpper_item_type_t type;
+    uint32_t fb_id;         // FLIP_FB
+    int16_t x, y;           // SET_COORD
+    uint8_t alpha;          // SET_ALPHA
     void* userdata;
     bool on_heap;
 } drm_warpper_queue_item_t;
@@ -47,6 +58,13 @@ typedef struct{
     drm_warpper_queue_item_t* curr_item;
 } layer_t;
 
+// 按名字发现的 plane 属性 id（atomic commit 用）；0 = 无此属性
+typedef struct {
+    uint32_t fb_id, crtc_id;
+    uint32_t src_x, src_y, src_w, src_h;
+    uint32_t crtc_x, crtc_y, crtc_w, crtc_h;
+    uint32_t alpha;
+} plane_prop_ids_t;
 
 typedef struct {
   int fd;
@@ -56,6 +74,10 @@ typedef struct {
   uint32_t crtc_id;
   uint32_t conn_id;
   layer_t layer[4]; // 4 layers
+  uint32_t plane_ids[4];
+  plane_prop_ids_t plane_props[4];
+  // 序列化 mount(同步 commit) 与显示线程的每 vsync commit
+  pthread_mutex_t commit_mutex;
   drmVBlank blank;
   pthread_t display_thread;
   atomic_int thread_running;
@@ -82,11 +104,14 @@ int drm_warpper_allocate_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_o
 int drm_warpper_allocate_buffer_sized(drm_warpper_t *drm_warpper,int layer_id,int width,int height,buffer_object_t *buf);
 int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf);
 
+// dmabuf(如 cedrus capture buffer) 导入为 NV12 + ALLWINNER_TILED 的 DRM FB。
+// pitch/uv_offset 按 V4L2 G_FMT 回读值传入。
+int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int width,int height,int pitch,int uv_offset,uint32_t *fb_id);
+int drm_warpper_rm_fb(drm_warpper_t *drm_warpper,uint32_t fb_id);
+
 int drm_warpper_enqueue_display_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t* item);
 int drm_warpper_dequeue_free_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t** out_item);
 int drm_warpper_try_dequeue_free_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t** out_item);
 
 int drm_warpper_set_layer_coord(drm_warpper_t *drm_warpper,int layer_id,int x,int y);
 int drm_warpper_set_layer_alpha(drm_warpper_t *drm_warpper,int layer_id,int alpha);
-
-void drm_warpper_reset_cache_ioctl(drm_warpper_t *drm_warpper);

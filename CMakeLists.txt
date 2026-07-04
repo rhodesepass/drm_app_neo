@@ -51,15 +51,6 @@ else()
 endif()
 
 # ============================================================================
-# Cedarx 多媒体库配置 (Allwinner 专用, 可选)
-# ============================================================================
-# 可通过以下方式配置:
-# -DENABLE_CEDARX=OFF 禁用 Cedarx 支持
-
-option(ENABLE_CEDARX "Enable Cedarx video decoding support" ON)
-
-
-# ============================================================================
 # 依赖库查找
 # ============================================================================
 find_package(PNG REQUIRED)
@@ -97,6 +88,14 @@ set(EPASS_SOURCES
 
   src/driver/drm_warpper.c
   src/driver/key_enc_evdev.c
+
+  src/render/mediaplayer.c
+  src/vdec/mp4_demux.c
+  src/vdec/bitreader.c
+  src/vdec/nalu.c
+  src/vdec/h264_parser.c
+  src/vdec/h264_dpb.c
+  src/vdec/vdec_v4l2.c
 
   src/render/layer_animation.c
   src/render/lvgl_drm_warp.c
@@ -143,11 +142,6 @@ set(EPASS_SOURCES
   src/utils/imgscale.c
 )
 
-# 如果 Cedarx 可用，添加 mediaplayer
-if(ENABLE_CEDARX)
-  list(APPEND EPASS_SOURCES src/render/mediaplayer.c)
-endif()
-
 string(TIMESTAMP COMPILE_TIME "%Y-%m-%d %H:%M:%S")
 
 set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
@@ -178,11 +172,6 @@ function(add_epass_target name screen_define)
     EPASS_GIT_TAG="${GIT_TAG}"
     COMPILE_TIME="${COMPILE_TIME}"
   )
-  if(ENABLE_CEDARX)
-    target_compile_definitions(${name} PRIVATE HAVE_CEDARX=1)
-  else()
-    target_compile_definitions(${name} PRIVATE HAVE_CEDARX=0)
-  endif()
   target_compile_options(${name} PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -Wno-format-truncation
@@ -201,22 +190,6 @@ function(add_epass_target name screen_define)
     ${FREETYPE_LIBRARIES}
     lvgl
   )
-  if(ENABLE_CEDARX)
-    target_link_libraries(${name}
-      MemAdapter
-      vdecoder
-      VE
-      videoengine
-      cdc_base
-      cdx_parser
-      cdx_stream
-      cdx_base
-      cdx_common
-      ssl
-      crypto
-    )
-  endif()
-
   # 资源拷贝：按 config.h 的 res/ 结构落到可执行文件同级
   set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
   add_custom_command(TARGET ${name} POST_BUILD
@@ -232,6 +205,19 @@ endfunction()
 target_compile_options(lvgl PRIVATE
   $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
 )
+
+# vdec 解码栈独立验证工具（真机 bring-up 用，make vdec_selftest 手动构建）
+add_executable(vdec_selftest EXCLUDE_FROM_ALL
+  tools/vdec_selftest.c
+  src/vdec/mp4_demux.c
+  src/vdec/bitreader.c
+  src/vdec/nalu.c
+  src/vdec/h264_parser.c
+  src/vdec/h264_dpb.c
+  src/vdec/vdec_v4l2.c
+)
+target_include_directories(vdec_selftest PRIVATE src/vdec ${LIBDRM_INCLUDE_DIRS})
+target_link_libraries(vdec_selftest ${LIBDRM_LIBRARIES})
 
 add_epass_target(app_360 USE_360_640_SCREEN)
 add_epass_target(app_720 USE_720_1280_SCREEN)
