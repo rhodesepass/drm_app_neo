@@ -65,7 +65,6 @@ static void lvgl_drm_warp_flush_cb(lv_display_t * disp, const lv_area_t * area, 
 static void* lvgl_drm_warp_thread_entry(void *arg){
     lvgl_drm_warp_t *lvgl_drm_warp = (lvgl_drm_warp_t *)arg;
     log_info("==> LVGL Thread Started!");
-    screen_show(SCREEN_SPINNER);
     while(atomic_load(&lvgl_drm_warp->running)){
         uint32_t idle_time = lv_timer_handler();
         screens_tick();

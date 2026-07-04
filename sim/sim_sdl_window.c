@@ -130,9 +130,7 @@ lv_display_t *sim_window_create(int32_t hor_res, int32_t ver_res)
 
     s_win.w       = hor_res;
     s_win.h       = ver_res;
-    // 首屏 mainmenu 直接 load(不走过渡)，初始停靠 Y 须与 screen_manager 的
-    // SCREEN_MAINMENU panel_y 一致，否则首帧几何偏差。
-    s_win.plane_y = UI_MAINMENU_Y;
+    s_win.plane_y = SCREEN_HEIGHT;
 
     // 窗口位置可由 SIM_WIN_X/SIM_WIN_Y 指定 (便于脚本把两档并排摆放)，否则交给 WM。
     const char *wx = getenv("SIM_WIN_X");

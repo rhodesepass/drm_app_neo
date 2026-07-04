@@ -27,7 +27,7 @@ typedef struct {
 } screen_entry_t;
 
 static screen_entry_t s_screens[SCREEN_COUNT];
-static screen_id_t    s_current = SCREEN_MAINMENU;
+static screen_id_t    s_current = SCREEN_SPINNER;
 static lv_group_t    *s_group;
 
 // ---- 平台服务钩子：弱符号默认空实现，设备侧覆盖 ----
@@ -86,6 +86,13 @@ static void load_now(screen_id_t id)
     }
 }
 
+static void load_instant(screen_id_t id)
+{
+    if (s_screens[id].obj) {
+        lv_screen_load(s_screens[id].obj);
+    }
+}
+
 static void delayed_load_cb(lv_timer_t *t)
 {
     screen_id_t id = (screen_id_t)(intptr_t)lv_timer_get_user_data(t);
@@ -103,18 +110,21 @@ void screens_init(void)
     s_group = lv_group_create();
     register_screens();
 
-    // 首屏直接显示，不放过渡 (设备侧若从 spinner 起步可改为 screen_show)
-    s_current = SCREEN_MAINMENU;
-    if (!s_screens[SCREEN_MAINMENU].obj && s_screens[SCREEN_MAINMENU].create) {
-        s_screens[SCREEN_MAINMENU].obj = s_screens[SCREEN_MAINMENU].create();
+    // 首屏 spinner：UI 平面停在 SCREEN_HEIGHT (隐藏)，与 drm_warpper mount 一致。
+    s_current = SCREEN_SPINNER;
+    if (!s_screens[SCREEN_SPINNER].obj && s_screens[SCREEN_SPINNER].create) {
+        s_screens[SCREEN_SPINNER].obj = s_screens[SCREEN_SPINNER].create();
     }
-    load_now(SCREEN_MAINMENU);
+    load_instant(SCREEN_SPINNER);
 }
 
 void screen_show(screen_id_t id)
 {
     if (id < 0 || id >= SCREEN_COUNT || !s_screens[id].create) {
         log_warn("screen_show: screen %d not registered (skeleton)", (int)id);
+        return;
+    }
+    if (id == s_current) {
         return;
     }
     if (!s_screens[id].obj) {
