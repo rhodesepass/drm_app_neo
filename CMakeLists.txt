@@ -148,135 +148,98 @@ if(ENABLE_CEDARX)
   list(APPEND EPASS_SOURCES src/render/mediaplayer.c)
 endif()
 
-add_executable(epass_drm_app ${EPASS_SOURCES})
-
-# ============================================================================
-# 包含目录
-# ============================================================================
-target_include_directories(epass_drm_app PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens/screens
-  ${LIBDRM_INCLUDE_DIRS}
-  ${PNG_INCLUDE_DIR}
-  ${FREETYPE_INCLUDE_DIRS}
-)
-
-
-# ============================================================================
-# 编译定义
-# ============================================================================
 string(TIMESTAMP COMPILE_TIME "%Y-%m-%d %H:%M:%S")
 
-# 屏目标由构建注入 (覆盖 config.h 的兜底默认)
-set(EPASS_SCREEN "360x640" CACHE STRING "Target screen: 360x640 | 480x854 | 720x1280")
-if(EPASS_SCREEN STREQUAL "360x640")
-  set(EPASS_SCREEN_DEFINE USE_360_640_SCREEN)
-elseif(EPASS_SCREEN STREQUAL "480x854")
-  set(EPASS_SCREEN_DEFINE USE_480_854_SCREEN)
-elseif(EPASS_SCREEN STREQUAL "720x1280")
-  set(EPASS_SCREEN_DEFINE USE_720_1280_SCREEN)
-else()
-  message(FATAL_ERROR "Invalid EPASS_SCREEN: ${EPASS_SCREEN} (use 360x640 | 480x854 | 720x1280)")
-endif()
-message(STATUS "Screen target: ${EPASS_SCREEN} -> ${EPASS_SCREEN_DEFINE}")
-
-target_compile_definitions(epass_drm_app PRIVATE
-  _DEFAULT_SOURCE
-  ${EPASS_SCREEN_DEFINE}
-  EPASS_GIT_VERSION="${GIT_COMMIT}"
-  EPASS_GIT_TAG="${GIT_TAG}"
-  COMPILE_TIME="${COMPILE_TIME}"
-)
-
-# 如果 Cedarx 可用，定义宏
-if(ENABLE_CEDARX)
-  target_compile_definitions(epass_drm_app PRIVATE HAVE_CEDARX=1)
-else()
-  target_compile_definitions(epass_drm_app PRIVATE HAVE_CEDARX=0)
-endif()
+set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
+set(FONT_DIR   ${CMAKE_SOURCE_DIR}/font)
+file(GLOB RES_PNG  CONFIGURE_DEPENDS ${ASSETS_DIR}/*.png)
+file(GLOB RES_FONT CONFIGURE_DEPENDS ${FONT_DIR}/*.otf)
 
 # ============================================================================
-# 编译选项
+# 可执行 —— 一次产出两档分辨率 (360x640 / 720x1280)，源码共用，仅屏宏不同。
+# name: 可执行名; screen_define: 屏宏 (覆盖 config.h 的兜底默认)
 # ============================================================================
-target_compile_options(epass_drm_app PRIVATE
-  -Wall -Wextra -Wno-unused-parameter
-  -Wno-format-truncation
-  -ffile-prefix-map=${CMAKE_SOURCE_DIR}/src/=/
-  ${LIBEVDEV_CFLAGS_OTHER}
-  $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
-)
+function(add_epass_target name screen_define)
+  add_executable(${name} ${EPASS_SOURCES})
+  target_include_directories(${name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens/screens
+    ${LIBDRM_INCLUDE_DIRS}
+    ${PNG_INCLUDE_DIR}
+    ${FREETYPE_INCLUDE_DIRS}
+  )
+  target_compile_definitions(${name} PRIVATE
+    _DEFAULT_SOURCE
+    ${screen_define}
+    EPASS_GIT_VERSION="${GIT_COMMIT}"
+    EPASS_GIT_TAG="${GIT_TAG}"
+    COMPILE_TIME="${COMPILE_TIME}"
+  )
+  if(ENABLE_CEDARX)
+    target_compile_definitions(${name} PRIVATE HAVE_CEDARX=1)
+  else()
+    target_compile_definitions(${name} PRIVATE HAVE_CEDARX=0)
+  endif()
+  target_compile_options(${name} PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -Wno-format-truncation
+    -ffile-prefix-map=${CMAKE_SOURCE_DIR}/src/=/
+    ${LIBEVDEV_CFLAGS_OTHER}
+    $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
+  )
+  target_link_libraries(${name}
+    m
+    dl
+    pthread
+    rt
+    ${LIBEVDEV_LIBRARIES}
+    ${LIBDRM_LIBRARIES}
+    ${PNG_LIBRARIES}
+    ${FREETYPE_LIBRARIES}
+    lvgl
+  )
+  if(ENABLE_CEDARX)
+    target_link_libraries(${name}
+      MemAdapter
+      vdecoder
+      VE
+      videoengine
+      cdc_base
+      cdx_parser
+      cdx_stream
+      cdx_base
+      cdx_common
+      ssl
+      crypto
+    )
+  endif()
+
+  # 资源拷贝：按 config.h 的 res/ 结构落到可执行文件同级
+  set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
+  add_custom_command(TARGET ${name} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_PNG}  ${RES_OUT_DIR}/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR}/fallback ${RES_OUT_DIR}/fallback
+    COMMENT "Copying assets -> res/ next to ${name}"
+    VERBATIM
+  )
+endfunction()
 
 target_compile_options(lvgl PRIVATE
   $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
 )
 
+add_epass_target(app_360 USE_360_640_SCREEN)
+add_epass_target(app_720 USE_720_1280_SCREEN)
 
 # ============================================================================
-# 链接库
+# 安装规则 (可选)：bin/app_* 与 bin/res/ 同级，保持运行时相对结构
 # ============================================================================
-target_link_libraries(epass_drm_app
-  # 数学库和系统库
-  m
-  dl
-  pthread
-  rt
-
-  # 外部依赖
-  ${LIBEVDEV_LIBRARIES}
-  ${LIBDRM_LIBRARIES}
-  ${PNG_LIBRARIES}
-  ${FREETYPE_LIBRARIES}
-  lvgl
-)
-
-# 如果 Cedarx 可用，链接 Cedarx 库
-if(ENABLE_CEDARX)
-  target_link_libraries(epass_drm_app
-    MemAdapter
-    vdecoder
-    VE
-    videoengine
-    cdc_base
-    cdx_parser
-    cdx_stream
-    cdx_base
-    cdx_common
-    # libcdx_stream 和 libcdx_parser 依赖 OpenSSL
-    ssl
-    crypto
-  )
-endif()
-
-# ============================================================================
-# 资源拷贝：按 config.h 的 res/ 结构落到可执行文件同级
-#   assets/*.png   -> <exe>/res/
-#   font/*.otf     -> <exe>/res/fonts/      (子集化产物，见 tools/font_generate)
-#   assets/fallback/ -> <exe>/res/fallback/
-# 运行时由 respath 模块按 /proc/self/exe 解析这个目录。
-# 字体取 font/ 根下的裁剪版 (原件在 font/original/ 本地，不参与构建)。
-# ============================================================================
-set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
-set(FONT_DIR   ${CMAKE_SOURCE_DIR}/font)
-set(RES_OUT_DIR $<TARGET_FILE_DIR:epass_drm_app>/res)
-file(GLOB RES_PNG  CONFIGURE_DEPENDS ${ASSETS_DIR}/*.png)
-file(GLOB RES_FONT CONFIGURE_DEPENDS ${FONT_DIR}/*.otf)
-
-add_custom_command(TARGET epass_drm_app POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_PNG}  ${RES_OUT_DIR}/
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR}/fallback ${RES_OUT_DIR}/fallback
-  COMMENT "Copying assets -> res/ next to executable"
-  VERBATIM
-)
-
-# ============================================================================
-# 安装规则 (可选)：bin/epass_drm_app 与 bin/res/ 同级，保持运行时相对结构
-# ============================================================================
-install(TARGETS epass_drm_app DESTINATION bin)
+install(TARGETS app_360 app_720 DESTINATION bin)
 install(DIRECTORY ${ASSETS_DIR}/ DESTINATION bin/res
         FILES_MATCHING PATTERN "*.png")
 install(FILES ${RES_FONT} DESTINATION bin/res/fonts)
