@@ -13,7 +13,7 @@
 #include <stdatomic.h>
 #include "driver/drm_warpper.h"
 
-/* fixed output frame size */
+/* native output frame size; 720 档另接受 VIDEO_LEGACY_* 旧素材(DEFE 放大) */
 #define MEDIAPLAYER_FRAME_WIDTH   VIDEO_WIDTH
 #define MEDIAPLAYER_FRAME_HEIGHT  VIDEO_HEIGHT
 
@@ -48,6 +48,10 @@ typedef struct {
     atomic_int           running;
     int                  framerate;
 
+    /* 当前视频的解码帧尺寸(parser 报告)，决定 video 层挂载方式 */
+    int                  frame_width;
+    int                  frame_height;
+
     drm_warpper_t       *drm_warpper;
 } mediaplayer_t;
 
@@ -78,6 +82,10 @@ int mediaplayer_start(mediaplayer_t *mediaplayer);
 /* get current status: "stopped", "playing", */
 mp_status_t mediaplayer_get_status(mediaplayer_t *mediaplayer);
 
+/* 按当前视频尺寸强制重挂 video 层(未播放过则挂 native 黑帧 buffer)。
+   供过渡 middle_cb 在画面被遮盖的时机调用 */
+int mediaplayer_remount_video_layer(mediaplayer_t *mediaplayer);
+
 #else /* !HAVE_CEDARX */
 
 /* Cedarx not available - provide stub definitions */
@@ -105,5 +113,6 @@ static inline int mediaplayer_set_video(mediaplayer_t *mp, const char *p) { (voi
 static inline int mediaplayer_start(mediaplayer_t *mp) { (void)mp; return -1; }
 static inline int mediaplayer_play_video(mediaplayer_t *mp, const char *f) { (void)mp; (void)f; return -1; }
 static inline mp_status_t mediaplayer_get_status(mediaplayer_t *mp) { (void)mp; return MP_STATUS_STOPPED; }
+static inline int mediaplayer_remount_video_layer(mediaplayer_t *mp) { (void)mp; return 0; }
 
 #endif /* HAVE_CEDARX */

@@ -36,6 +36,11 @@ prts_t g_prts;
 apps_t g_apps;
 
 buffer_object_t g_video_buf;
+#ifdef VIDEO_LEGACY_WIDTH
+// 旧素材(384x640)modeset 专用：frontend 的读取 stride 取自所挂 fb 的 pitch，
+// 必须用与解码帧同宽的 fb 才能让 DEFE 正确读取再放大
+buffer_object_t g_video_buf_legacy;
+#endif
 
 int g_running = 1;
 int g_exitcode = 0;
@@ -48,8 +53,34 @@ void signal_handler(int sig)
     g_exitcode = 0;
 }
 
+// video 层按解码尺寸挂载；尺寸未变时跳过(真 modeset 慢，见 srgn_drm.h)
+// 返回 -1 表示不支持的尺寸
+int video_layer_ensure_mount(int src_w, int src_h){
+    static int s_mounted_w = 0;
+    static int s_mounted_h = 0;
+
+    if (src_w == s_mounted_w && src_h == s_mounted_h)
+        return 0;
+
+    if (src_w == VIDEO_WIDTH && src_h == VIDEO_HEIGHT) {
+        drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &g_video_buf);
+#ifdef VIDEO_LEGACY_WIDTH
+    } else if (src_w == VIDEO_LEGACY_WIDTH && src_h == VIDEO_LEGACY_HEIGHT) {
+        drm_warpper_mount_layer_scaled(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                       &g_video_buf_legacy, VIDEO_WIDTH, VIDEO_HEIGHT);
+#endif
+    } else {
+        log_error("unsupported video size %dx%d", src_w, src_h);
+        return -1;
+    }
+
+    s_mounted_w = src_w;
+    s_mounted_h = src_h;
+    return 0;
+}
+
 void mount_video_layer_callback(void *userdata,bool is_last){
-    drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &g_video_buf);
+    mediaplayer_remount_video_layer(&g_mediaplayer);
     drm_warpper_set_layer_coord(&g_drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0,0);
 }
 
@@ -140,11 +171,28 @@ int main(int argc, char *argv[]){
 
     // 填充video buffer，防止闪烁。
     fill_nv12_buffer_with_color(
-        g_video_buf.vaddr, 
-        VIDEO_WIDTH, 
-        VIDEO_HEIGHT, 
+        g_video_buf.vaddr,
+        VIDEO_WIDTH,
+        VIDEO_HEIGHT,
         0xff000000
     );
+
+#ifdef VIDEO_LEGACY_WIDTH
+    drm_warpper_allocate_buffer_sized(
+        &g_drm_warpper,
+        DRM_WARPPER_LAYER_VIDEO,
+        VIDEO_LEGACY_WIDTH,
+        VIDEO_LEGACY_HEIGHT,
+        &g_video_buf_legacy
+    );
+    // 同样填黑：脏 buffer 参与 modeset 会闪绿(见上方 FIXME)
+    fill_nv12_buffer_with_color(
+        g_video_buf_legacy.vaddr,
+        VIDEO_LEGACY_WIDTH,
+        VIDEO_LEGACY_HEIGHT,
+        0xff000000
+    );
+#endif
 
     // mediaplayer_set_video(&g_mediaplayer, "/assets/MS/loop.mp4");
     // mediaplayer_start(&g_mediaplayer);

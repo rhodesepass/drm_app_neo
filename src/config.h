@@ -120,6 +120,13 @@
 
     #define VIDEO_WIDTH 768
     #define VIDEO_HEIGHT 1280
+
+    // 兼容 360x640 时代旧素材：视频编码为 384x640(32 对齐)，
+    // 由 DEFE frontend 在扫描输出时硬件放大 2x 到 768x1280。
+    // 仅 720 档定义；未定义时 legacy 路径整体不编译。
+    #define VIDEO_LEGACY_WIDTH 384
+    #define VIDEO_LEGACY_HEIGHT 640
+
     #define UI_WIDTH 720
     #define UI_HEIGHT 1280
     #define OVERLAY_WIDTH 720
