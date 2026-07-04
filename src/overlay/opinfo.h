@@ -13,6 +13,8 @@ typedef struct {
 
     // 通用参数
     int appear_time;
+    // 用户图片加载后的最近邻放大倍数(720p 档显示 360 基准旧素材时为 UI_SCALE，否则 1)
+    int src_upscale;
 
     // image 图像类型
     int duration; // 图像进入时的动画时长

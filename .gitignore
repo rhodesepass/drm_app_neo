@@ -1,5 +1,6 @@
 backup/
 build/
+build_dev*/
 
 .cache
 epconfig.json

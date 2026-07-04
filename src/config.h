@@ -196,7 +196,7 @@
 
 // ========== Animation Configuration ==========
 #define LAYER_ANIMATION_STEP_TIME 20000 // 20ms, 1000ms / 50fps
-#define OVERLAY_ANIMATION_STEP_TIME 20000 // 33ms, 1000ms / 30fps
+#define OVERLAY_ANIMATION_STEP_TIME 33000 // 33ms, 1000ms / 30fps
 
 #define OVERLAY_ANIMATION_OPINFO_ARKNIGHTS_DURATION (2000 * 1000) // 2s
 

@@ -8,6 +8,7 @@
 #include "ui_metrics.h"
 #include "render/fbdraw.h"
 #include "utils/cacheassets.h"
+#include "utils/imgscale.h"
 #include "ui/font_registry.h"
 #include <src/misc/lv_text_private.h>
 #include <stdint.h>
@@ -793,11 +794,21 @@ void overlay_opinfo_load_image(olopinfo_params_t* params){
     }
     if(params->type == OPINFO_TYPE_IMAGE){
         load_img_assets(params->image_path, &params->image_addr, &params->image_w, &params->image_h);
+        if(params->image_addr){
+            imgscale_upscale_nn_rgba(&params->image_addr, &params->image_w, &params->image_h, params->src_upscale);
+        }
         log_debug("loaded image: %s, w: %d, h: %d", params->image_path, params->image_w, params->image_h);
     }
     else if(params->type == OPINFO_TYPE_ARKNIGHTS){
         load_img_assets(params->class_path, &params->class_addr, &params->class_w, &params->class_h);
         load_img_assets(params->logo_path, &params->logo_addr, &params->logo_w, &params->logo_h);
+        // class/logo 也是用户图，旧素材同样按基准放大
+        if(params->class_addr){
+            imgscale_upscale_nn_rgba(&params->class_addr, &params->class_w, &params->class_h, params->src_upscale);
+        }
+        if(params->logo_addr){
+            imgscale_upscale_nn_rgba(&params->logo_addr, &params->logo_w, &params->logo_h, params->src_upscale);
+        }
         log_debug("loaded class: %s, w: %d, h: %d", params->class_path, params->class_w, params->class_h);
         log_debug("loaded logo: %s, w: %d, h: %d", params->logo_path, params->logo_w, params->logo_h);
     }

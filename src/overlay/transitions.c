@@ -8,6 +8,7 @@
 #include "driver/drm_warpper.h"
 #include "utils/timer.h"
 #include "render/layer_animation.h"
+#include "utils/imgscale.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "utils/stb_image.h"
@@ -439,6 +440,9 @@ void overlay_transition_load_image(oltr_params_t* params){
         return;
     }
     load_img_assets(params->image_path, &params->image_addr, &params->image_w, &params->image_h);
+    if(params->image_addr){
+        imgscale_upscale_nn_rgba(&params->image_addr, &params->image_w, &params->image_h, params->src_upscale);
+    }
     log_debug("(transition) loaded image: %s, w: %d, h: %d", params->image_path, params->image_w, params->image_h);
 }
 

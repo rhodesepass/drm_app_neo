@@ -24,7 +24,7 @@
 //   常带较大 line gap, 单行文字上下留白多)。0 = 保持字体默认 (多行正文要靠它撑行距)。
 typedef struct {
     const char *filename;
-    lv_freetype_font_style_t style;
+    lv_freetype_font_style_t style; 
     int lh_pct;
 } font_face_desc_t;
 

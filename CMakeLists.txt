@@ -139,6 +139,7 @@ set(EPASS_SOURCES
   src/utils/cJSON.c
   src/utils/uuid.c
   src/utils/misc.c
+  src/utils/imgscale.c
 )
 
 # 如果 Cedarx 可用，添加 mediaplayer

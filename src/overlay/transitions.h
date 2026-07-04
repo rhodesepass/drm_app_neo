@@ -19,6 +19,8 @@ typedef struct {
     int image_w;
     int image_h;
     uint32_t* image_addr;
+    // 图片加载后的最近邻放大倍数(720p 档显示 360 基准旧素材时为 UI_SCALE，否则 1)
+    int src_upscale;
 
     uint32_t background_color;
 } oltr_params_t;
