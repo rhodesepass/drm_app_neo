@@ -175,6 +175,77 @@ static void parse_scaling_lists(struct bitreader *br, bool transform_8x8,
 	}
 }
 
+static void skip_hrd_parameters(struct bitreader *br)
+{
+	uint32_t cpb_cnt_minus1 = br_ue_v(br);
+	unsigned int i;
+
+	br_u(br, 8);			/* bit_rate_scale + cpb_size_scale */
+	for (i = 0; i <= cpb_cnt_minus1 && i < 32; i++) {
+		br_ue_v(br);		/* bit_rate_value_minus1 */
+		br_ue_v(br);		/* cpb_size_value_minus1 */
+		br_u1(br);		/* cbr_flag */
+	}
+	br_u(br, 20);			/* 4 个 5bit 长度字段 */
+}
+
+/*
+ * VUI 只取 bitstream_restriction 的 DPB 上限(决定 capture buffer 数)，
+ * 其余全部跳读。bitreader 越界读返回 0，最后做合理性校验兜底。
+ */
+static void parse_vui(struct bitreader *br, struct h264_sps *s)
+{
+	bool nal_hrd, vcl_hrd;
+	uint32_t reorder, dec_buf;
+
+	if (br_u1(br)) {		/* aspect_ratio_info_present */
+		if (br_u(br, 8) == 255)	/* Extended_SAR */
+			br_u(br, 32);
+	}
+	if (br_u1(br))			/* overscan_info_present */
+		br_u1(br);
+	if (br_u1(br)) {		/* video_signal_type_present */
+		br_u(br, 4);		/* video_format + full_range */
+		if (br_u1(br))		/* colour_description_present */
+			br_u(br, 24);
+	}
+	if (br_u1(br)) {		/* chroma_loc_info_present */
+		br_ue_v(br);
+		br_ue_v(br);
+	}
+	if (br_u1(br)) {		/* timing_info_present */
+		br_u(br, 32);		/* num_units_in_tick */
+		br_u(br, 32);		/* time_scale */
+		br_u1(br);		/* fixed_frame_rate */
+	}
+	nal_hrd = br_u1(br);
+	if (nal_hrd)
+		skip_hrd_parameters(br);
+	vcl_hrd = br_u1(br);
+	if (vcl_hrd)
+		skip_hrd_parameters(br);
+	if (nal_hrd || vcl_hrd)
+		br_u1(br);		/* low_delay_hrd */
+	br_u1(br);			/* pic_struct_present */
+	if (!br_u1(br))			/* bitstream_restriction */
+		return;
+
+	br_u1(br);			/* mv_over_pic_boundaries */
+	br_ue_v(br);			/* max_bytes_per_pic_denom */
+	br_ue_v(br);			/* max_bits_per_mb_denom */
+	br_ue_v(br);			/* log2_max_mv_length_horizontal */
+	br_ue_v(br);			/* log2_max_mv_length_vertical */
+	reorder = br_ue_v(br);
+	dec_buf = br_ue_v(br);
+
+	if (dec_buf >= 1 && dec_buf <= 16 && reorder <= dec_buf &&
+	    dec_buf >= s->max_num_ref_frames) {
+		s->vui_max_num_reorder_frames = reorder;
+		s->vui_max_dec_frame_buffering = dec_buf;
+		s->vui_reorder_valid = true;
+	}
+}
+
 int h264_parser_parse_param_nal(struct h264_parser *p, const struct nalu *n)
 {
 	unsigned int type = nalu_h264_type(n);
@@ -250,7 +321,8 @@ int h264_parser_parse_param_nal(struct h264_parser *p, const struct nalu *n)
 			s.frame_crop_top_offset = br_ue_v(&br);
 			s.frame_crop_bottom_offset = br_ue_v(&br);
 		}
-		/* VUI ignored */
+		if (br_u1(&br))		/* vui_parameters_present */
+			parse_vui(&br, &s);
 
 		s.valid = true;
 		p->sps[s.seq_parameter_set_id] = s;

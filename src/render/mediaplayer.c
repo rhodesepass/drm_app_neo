@@ -24,12 +24,8 @@
 
 #define mp_get_now_us get_now_us
 
-// main.c 提供，按解码尺寸选 modeset buffer(720 档旧素材走 DEFE 放大)
+// main.c 提供，按解码尺寸记录 video 层挂载几何(720 档旧素材走 DEFE 放大)
 extern int video_layer_ensure_mount(int src_w, int src_h);
-extern buffer_object_t g_video_buf;
-#ifdef VIDEO_LEGACY_WIDTH
-extern buffer_object_t g_video_buf_legacy;
-#endif
 
 static bool mp_size_supported(int w, int h)
 {
@@ -42,9 +38,25 @@ static bool mp_size_supported(int w, int h)
     return false;
 }
 
-/* userdata 编码：NULL = 黑帧/无槽位，否则 slot+1 */
-static inline void *slot_to_userdata(int slot) { return (void *)(intptr_t)(slot + 1); }
-static inline int userdata_to_slot(void *ud) { return (int)(intptr_t)ud - 1; }
+/*
+ * userdata 编码：低 8 位 = slot+1(0 表示无槽位)，高位 = 会话代号。
+ * stop 超时后旧会话 item 可能在下一会话才回流，代号不符时只回收
+ * 计数，不能去碰新 DPB 的 on_screen(槽位号已是别人的了)。
+ */
+static inline void *slot_to_userdata(mediaplayer_t *mp, int slot)
+{
+    return (void *)(uintptr_t)(((uintptr_t)mp->session_gen << 8) |
+                               (uint32_t)(slot + 1));
+}
+
+/* MP_TRACE=1 时打印槽位生命周期(D解码进槽/E入队/R回收，drm_warpper 侧 C上屏) */
+static int mp_trace = -1;
+static inline int mp_trace_on(void)
+{
+    if (mp_trace < 0)
+        mp_trace = getenv("MP_TRACE") != NULL;
+    return mp_trace;
+}
 
 /* 收 free_queue：解除离屏槽位的 on_screen 占用并释放 item */
 static void mp_reclaim_free_items(mediaplayer_t *mp)
@@ -54,15 +66,19 @@ static void mp_reclaim_free_items(mediaplayer_t *mp)
     while (drm_warpper_try_dequeue_free_item(mp->drm_warpper,
                                              DRM_WARPPER_LAYER_VIDEO,
                                              &item) == 0) {
-        int slot = userdata_to_slot(item->userdata);
-        if (slot >= 0)
+        uintptr_t ud = (uintptr_t)item->userdata;
+        int slot = (int)(ud & 0xff) - 1;
+
+        if (mp_trace_on())
+            log_info("T R%d g%d", slot, (int)((ud >> 8) == mp->session_gen));
+        if (slot >= 0 && (ud >> 8) == mp->session_gen)
             h264_dpb_set_on_screen(&mp->dpb, slot, false);
         mp->items_in_flight--;
         free(item);
     }
 }
 
-/* 把 slot 的帧入队显示。slot<0 表示黑帧。返回 0 成功。 */
+/* 把 slot 的帧入队显示。返回 0 成功。 */
 static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
 {
     drm_warpper_queue_item_t *item = malloc(sizeof(*item));
@@ -74,13 +90,15 @@ static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
     memset(item, 0, sizeof(*item));
     item->type = DRM_WARPPER_ITEM_FLIP_FB;
     item->fb_id = fb_id;
-    item->userdata = slot_to_userdata(slot);
+    item->userdata = slot_to_userdata(mp, slot);
     item->on_heap = false; /* 帧类 item 由本模块经 free_queue 回收 */
 
     if (slot >= 0) {
         h264_dpb_set_on_screen(&mp->dpb, slot, true);
         h264_dpb_mark_displayed(&mp->dpb, slot);
     }
+    if (mp_trace_on())
+        log_info("T E%d", slot);
     mp->items_in_flight++;
     return drm_warpper_enqueue_display_item(mp->drm_warpper,
                                             DRM_WARPPER_LAYER_VIDEO, item);
@@ -142,6 +160,8 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
         return -1;
     }
 
+    long long t0 = mp_get_now_us(), t1, t2;
+
     /* 无空槽 = 在飞帧太多，等显示线程回流(每 vblank 一次) */
     for (retry = 0; retry < 100; retry++) {
         slot = h264_dpb_begin_frame(&mp->dpb, hdr_out, &poc, &ts, &ctrl);
@@ -154,6 +174,9 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
         log_error("no free capture slot @%u", sample_idx);
         return -1;
     }
+    if (mp_trace_on())
+        log_info("T D%d @%u", slot, sample_idx);
+    t1 = mp_get_now_us();
 
     if (vdec_decode(&mp->vdec, slot, ts, vcl.data, vcl.size, &ctrl) < 0) {
         log_error("decode failed @%u", sample_idx);
@@ -162,6 +185,10 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
     }
 
     h264_dpb_end_frame(&mp->dpb, hdr_out);
+    t2 = mp_get_now_us();
+    if (t2 - t0 > 50000)
+        log_warn("slow @%u: slot_wait=%lldus ve=%lldus size=%u",
+                 sample_idx, t1 - t0, t2 - t1, vcl.size);
     return 0;
 }
 
@@ -169,7 +196,7 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
 static void *mp_decode_thread(void *param)
 {
     mediaplayer_t *mp = (mediaplayer_t *)param;
-    unsigned int sample_idx = 0;
+    unsigned int sample_idx = 0, outputs = 0;
     bool pending_flush = false;
     long long next_frame_time;
     int out;
@@ -180,7 +207,7 @@ static void *mp_decode_thread(void *param)
     next_frame_time = mp_get_now_us() + mp->frame_duration_us;
 
     while (1) {
-        long long now = mp_get_now_us();
+        long long now;
 
         pthread_rwlock_rdlock(&mp->thread.rwlock);
         int requested_stop = mp->thread.requested_stop;
@@ -188,14 +215,14 @@ static void *mp_decode_thread(void *param)
         if (requested_stop)
             break;
 
-        if (now < next_frame_time)
-            usleep(next_frame_time - now);
-        else if (now > next_frame_time + 2 * 1000 * 1000) {
-            log_warn("can't keep up, delay: %lld us", now - next_frame_time);
-            next_frame_time = now;
-        }
-
         mp_reclaim_free_items(mp);
+
+        /*
+         * 先备货再睡档期：把"喂 AU 直到吐出一帧"放在睡眠窗口之前，
+         * GOP 边界的重排回填(IDR 后要连喂 reorder 个 AU 才有输出)就
+         * 消化在本来空转的等待里，不再把 IDR 帧拖过档期 ~2 个 VE 周期
+         * (曾表现为每 GOP 一次 ~100ms 定格)。
+         */
 
         /* GOP 边界(素材回绕)先按 flush 逐帧排空 DPB */
         if (pending_flush) {
@@ -219,7 +246,23 @@ static void *mp_decode_thread(void *param)
                 break;
             }
 
+            /*
+             * mid-stream IDR 前先按档期排空上一 GOP 押着的帧：IDR 的
+             * POC 复位为 0，一旦喂进去，min-POC bump 会先吐 IDR、旧帧
+             * (POC 最大)反排其后 —— 屏上表现为每 GOP 边界一次帧序回跳
+             * (slider 靶子第 7 趟必现，keyint=250)。sync 采样 = IDR。
+             */
+            if (sample_idx > 0 && mp->demux.samples[sample_idx].sync) {
+                out = h264_dpb_next_output(&mp->dpb, true);
+                if (out >= 0)
+                    break; /* 本档期先出旧帧，sample 不前进 */
+            }
+
+            long long d0 = mp_get_now_us();
             rc = mp_decode_au(mp, sample_idx, &hdr);
+            if (mp_get_now_us() - d0 > 50000)
+                log_warn("slow decode_au %lldus @%u",
+                         mp_get_now_us() - d0, sample_idx);
             if (rc < 0)
                 goto decode_error;
             sample_idx++;
@@ -229,10 +272,25 @@ static void *mp_decode_thread(void *param)
             out = h264_dpb_next_output(&mp->dpb, false);
         }
 
-        if (out >= 0) {
-            mp_enqueue_frame(mp, mp->fb_ids[out], out);
-            next_frame_time += mp->frame_duration_us;
+        /* flush 刚排空：立即回到顶部从 sample 0 续喂，不空烧一个档期 */
+        if (out < 0)
+            continue;
+
+        now = mp_get_now_us();
+        if (now < next_frame_time)
+            usleep(next_frame_time - now);
+        else if (now > next_frame_time + 2 * 1000 * 1000) {
+            log_warn("can't keep up, delay: %lld us", now - next_frame_time);
+            next_frame_time = now;
         }
+
+        mp_reclaim_free_items(mp);
+        mp_enqueue_frame(mp, mp->fb_ids[out], out);
+        next_frame_time += mp->frame_duration_us;
+        // 节拍诊断：定速落后量(正=落后)。落后持续增长 = 吞吐不足
+        if (++outputs % 300 == 0)
+            log_info("mp pace: out=%u lag=%lldms", outputs,
+                     (long long)(int64_t)(mp_get_now_us() - next_frame_time) / 1000);
     }
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);
@@ -260,8 +318,9 @@ static void mp_close_session(mediaplayer_t *mp)
 
     for (i = 0; i < mp->vdec.cap_count; i++) {
         if (mp->fb_ids[i]) {
-            drm_warpper_rm_fb(mp->drm_warpper, mp->fb_ids[i]);
+            drm_warpper_rm_fb(mp->drm_warpper, mp->fb_ids[i], mp->gem_handles[i]);
             mp->fb_ids[i] = 0;
+            mp->gem_handles[i] = 0;
         }
     }
     vdec_close(&mp->vdec);
@@ -300,7 +359,7 @@ int mediaplayer_remount_video_layer(mediaplayer_t *mp)
     }
     int w = mp->frame_width  ? mp->frame_width  : VIDEO_WIDTH;
     int h = mp->frame_height ? mp->frame_height : VIDEO_HEIGHT;
-    // play_video 已在同一 middle_cb 里挂载过，尺寸未变时这里自动跳过
+    // 只是刷新几何记录，幂等；plane 实际状态由下一个 FLIP 决定
     return video_layer_ensure_mount(w, h);
 }
 
@@ -316,6 +375,7 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
         log_error("mp4_open err: %s", mp->input_path);
         return -1;
     }
+    mp->session_gen++;
     mp->session_open = true; /* demux 已开，之后统一走 close_session */
 
     if (mp->demux.codec != MP4_CODEC_H264) {
@@ -348,8 +408,8 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     mp->frame_width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
     mp->frame_height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
 
-    // 解码前先按尺寸把关并挂载：此时旧线程已 join、屏上是黑帧，
-    // 挂载无并发帧提交；同尺寸时 ensure_mount 为 no-op
+    // 解码前先按尺寸把关并记录挂载几何(惰性：plane 由显示线程随首帧启用)。
+    // 此时旧线程已 join、plane 已 disable，几何更新无并发帧提交
     if (!mp_size_supported(mp->frame_width, mp->frame_height)) {
         log_error("unsupported video size %dx%d", mp->frame_width, mp->frame_height);
         goto error;
@@ -361,12 +421,29 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
 
     max_ref = sps->max_num_ref_frames ? sps->max_num_ref_frames : 1;
     max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
-    reorder = max_ref < VDEC_REORDER_DEPTH ? VDEC_REORDER_DEPTH : max_ref;
-    cap_count = max_ref + reorder + 3;
-    if (cap_count < VDEC_CAPTURE_BUF_MIN)
-        cap_count = VDEC_CAPTURE_BUF_MIN;
-    if (cap_count > VDEC_CAPTURE_BUF_MAX)
-        cap_count = VDEC_CAPTURE_BUF_MAX;
+    if (sps->vui_reorder_valid) {
+        /* refs 与重排共享 DPB。+5 = bump滞后1 + 入队未上屏1 + 在屏curr/prev 2
+         * + 解码中1；+4 时真机实测 begin_frame 周期性等 25-50ms(播放抖动) */
+        reorder = sps->vui_max_num_reorder_frames;
+        cap_count = sps->vui_max_dec_frame_buffering + 5;
+    } else {
+        reorder = max_ref < VDEC_REORDER_DEPTH ? VDEC_REORDER_DEPTH : max_ref;
+        cap_count = max_ref + reorder + 3;
+    }
+    {
+        unsigned int cap_max =
+            (unsigned int)mp->frame_width * mp->frame_height >=
+                    VDEC_CAPTURE_LARGE_AREA ?
+                VDEC_CAPTURE_BUF_MAX_LARGE : VDEC_CAPTURE_BUF_MAX_SMALL;
+        if (cap_count < VDEC_CAPTURE_BUF_MIN)
+            cap_count = VDEC_CAPTURE_BUF_MIN;
+        if (cap_count > cap_max) {
+            log_warn("capture need %u > budget %u (%dx%d), clamped;"
+                     " 素材 ref/reorder 超预算可能饿槽",
+                     cap_count, cap_max, mp->frame_width, mp->frame_height);
+            cap_count = cap_max;
+        }
+    }
 
     if (vdec_find_device(video_path, sizeof(video_path),
                          media_path, sizeof(media_path)) < 0)
@@ -384,7 +461,8 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
                                          mp->vdec.cap_height,
                                          mp->vdec.cap_bytesperline,
                                          mp->vdec.cap_uv_offset,
-                                         &mp->fb_ids[i]) < 0)
+                                         &mp->fb_ids[i],
+                                         &mp->gem_handles[i]) < 0)
             goto error;
     }
 
@@ -433,7 +511,6 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
 
 int mediaplayer_stop(mediaplayer_t *mp)
 {
-    uint32_t black_fb;
     int wait;
 
     if (!mp) {
@@ -451,25 +528,17 @@ int mediaplayer_stop(mediaplayer_t *mp)
     pthread_join(mp->decode_thread, NULL);
     atomic_store(&mp->running, 0);
 
-    // 挂黑帧。720 档 legacy 素材要用同宽的 legacy 黑帧 buffer：
-    // atomic 有 SRC 边界校验，384 宽 fb 配 736 宽 SRC 会被拒(VA hack 时代没有的坑)
-    black_fb = g_video_buf.fb_id;
-#ifdef VIDEO_LEGACY_WIDTH
-    if (mp->frame_width == VIDEO_LEGACY_WIDTH &&
-        mp->frame_height == VIDEO_LEGACY_HEIGHT)
-        black_fb = g_video_buf_legacy.fb_id;
-#endif
-    mp_enqueue_frame(mp, black_fb, -1);
-
-    // 等所有 capture 帧离屏回流(黑帧上屏后旧帧必然换下)再拆 FB/队列。
-    // 黑帧 item 本身留在显示线程 curr_item 上,只等其余的。
-    // 即使超时，dmabuf 引用计数也保证内存在 RmFB 前有效，只是可能闪一下。
-    for (wait = 0; wait < 40 && mp->items_in_flight > 1; wait++) {
+    // 等积压的 FLIP 回流，只剩屏上帧(curr)+可能未收事件的 pending
+    for (wait = 0; wait < 40 && mp->items_in_flight > 2; wait++) {
         usleep(10 * 1000);
         mp_reclaim_free_items(mp);
     }
-    if (mp->items_in_flight > 1)
+    if (mp->items_in_flight > 2)
         log_warn("stop: %d frame items still in flight", mp->items_in_flight);
+
+    // 关掉 video plane(最底层，露出 DEBE 黑背景 = 原黑帧效果)，
+    // 此后 RmFB 碰不到在屏 fb，不会触发内核 atomic_remove_fb
+    drm_warpper_disable_layer_sync(mp->drm_warpper, DRM_WARPPER_LAYER_VIDEO);
 
     mp_close_session(mp);
 

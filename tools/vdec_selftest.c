@@ -6,7 +6,8 @@
  *   vdec_selftest file.mp4             真机: 解码并经 DRM plane 上屏
  *     -f fps     覆盖 MP4 内的帧率定速
  *     -p idx     指定 plane 序号 (默认 0 = video 层)
- *     -w n       前 n 帧原始 tiled NV12 写到 /tmp/vdec_frame_%u.raw
+ *     -w n       n 帧原始 tiled NV12 写到 /tmp/vdec_frame_%u.raw
+ *     -s n       dump 从解码序第 n 帧开始 (配合 -w 取后段窗口)
  *     -n n       只解前 n 帧
  *
  * 解码路径同 mediaplayer 的契约: 单 slice/帧、START_CODE_NONE 裸 NAL、
@@ -69,6 +70,12 @@ static int host_check(struct mp4_demux *m)
 	const struct h264_sps *sps0;
 	unsigned int max_ref = 4, max_frame_num = 16, i;
 	int out, prev_poc = -1000000, gop_ok = 1, count = 0;
+	/* 输出序地面真值：slot -> 喂入时的解码序号，OUT 行给外部脚本
+	 * 对照 ffprobe 的 pts 表验证显示序(POC 自检是自我指涉，抓不到
+	 * POC 本身算错) */
+	int slot2idx[64];
+
+	memset(slot2idx, -1, sizeof(slot2idx));
 
 	h264_parser_init(&parser);
 	if (h264_parser_parse_avcc(&parser, m->extradata, m->extradata_size) < 0)
@@ -79,9 +86,17 @@ static int host_check(struct mp4_demux *m)
 		max_ref = sps0->max_num_ref_frames ? sps0->max_num_ref_frames : 1;
 		max_frame_num = 1 << (sps0->log2_max_frame_num_minus4 + 4);
 	}
-	/* B 帧流 max_ref 可为 1，重排深度按 2 兜底 */
-	h264_dpb_init(&dpb, max_ref * 2 + 5, max_ref, max_frame_num,
-		      max_ref < 2 ? 2 : max_ref);
+	/* 重排深度与 mediaplayer 完全一致(VUI 优先)，否则仿真结果对不上真机 */
+	{
+		unsigned int reorder = max_ref < 2 ? 2 : max_ref;
+
+		if (sps0 && sps0->vui_reorder_valid)
+			reorder = sps0->vui_max_num_reorder_frames;
+		printf("sim reorder_depth=%u (vui_valid=%d)\n", reorder,
+		       sps0 ? sps0->vui_reorder_valid : -1);
+		h264_dpb_init(&dpb, max_ref * 2 + 5, max_ref, max_frame_num,
+			      reorder);
+	}
 
 	printf("codec=H264 length_size=%u samples=%u %ux%u dur=%uus max_sample=%u\n",
 	       m->nal_length_size, m->samples_count, m->width, m->height,
@@ -140,6 +155,7 @@ static int host_check(struct mp4_demux *m)
 					gop_ok = 0;
 				prev_poc = dpb.pics[out].poc;
 				count++;
+				printf("OUT %d\n", slot2idx[out]);
 				h264_dpb_mark_displayed(&dpb, out);
 			}
 			prev_poc = -1000000; /* POC 每 IDR GOP 复位 */
@@ -151,12 +167,14 @@ static int host_check(struct mp4_demux *m)
 			printf("  SIM: slot exhausted @%u\n", i);
 			break;
 		}
+		slot2idx[slot] = (int)i;
 		h264_dpb_end_frame(&dpb, &hdr);
 		while ((out = h264_dpb_next_output(&dpb, false)) >= 0) {
 			if (dpb.pics[out].poc < prev_poc)
 				gop_ok = 0;
 			prev_poc = dpb.pics[out].poc;
 			count++;
+			printf("OUT %d\n", slot2idx[out]);
 			h264_dpb_mark_displayed(&dpb, out);
 		}
 	}
@@ -165,6 +183,7 @@ static int host_check(struct mp4_demux *m)
 			gop_ok = 0;
 		prev_poc = dpb.pics[out].poc;
 		count++;
+		printf("OUT %d\n", slot2idx[out]);
 		h264_dpb_mark_displayed(&dpb, out);
 	}
 	printf("--- simulation: %d frames output, per-GOP POC monotonic: %s ---\n",
@@ -311,7 +330,8 @@ static void dump_frame(struct vdec_ctx *v, int slot, unsigned int seq)
 }
 
 static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
-			 unsigned int dump_n, unsigned int limit)
+			 unsigned int dump_n, unsigned int dump_start,
+			 unsigned int limit)
 {
 	struct h264_parser parser;
 	struct h264_dpb dpb;
@@ -320,10 +340,12 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 	const struct h264_sps *sps0;
 	char video_path[32], media_path[32];
 	unsigned int width, height, cap_count, max_ref, max_frame_num = 16;
+	unsigned int reorder_depth = 2;
 	unsigned int i, decode_count = 0, display_count = 0;
 	unsigned int frame_dur;
 	long long decode_us_total = 0, next_frame = 0;
 	int rc = -1, out;
+	int held[2] = { -1, -1 };	/* 在屏帧 + 押一拍的上一帧 */
 
 	h264_parser_init(&parser);
 	h264_parser_parse_avcc(&parser, m->extradata, m->extradata_size);
@@ -340,14 +362,21 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 	max_ref = sps0->max_num_ref_frames ? sps0->max_num_ref_frames : 1;
 
 	{
-		unsigned int reorder = max_ref < 2 ? 2 : max_ref;
+		/* 与 mediaplayer 同账：VUI 有 DPB 联合上限就用精确账 */
+		unsigned int reorder = sps0->vui_reorder_valid ?
+			sps0->vui_max_num_reorder_frames :
+			(max_ref < 2 ? 2 : max_ref);
+		unsigned int cap_max = width * height >= 600 * 1000 ? 9 : 16;
 
-		cap_count = max_ref + reorder + 3;
+		cap_count = sps0->vui_reorder_valid ?
+			(unsigned int)sps0->vui_max_dec_frame_buffering + 5 :
+			max_ref + reorder + 3;
+		if (cap_count < 6)
+			cap_count = 6;
+		if (cap_count > cap_max)
+			cap_count = cap_max;
+		reorder_depth = reorder;
 	}
-	if (cap_count < 6)
-		cap_count = 6;
-	if (cap_count > 10)
-		cap_count = 10;
 
 	frame_dur = fps_override > 0 ? 1000000u / fps_override :
 		    (m->frame_duration_us ? m->frame_duration_us : 33333);
@@ -377,8 +406,7 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 	if (display_open(&disp, &vdec, plane_index) < 0)
 		goto out_vdec;
 
-	h264_dpb_init(&dpb, cap_count, max_ref, max_frame_num,
-		      max_ref < 2 ? 2 : max_ref);
+	h264_dpb_init(&dpb, cap_count, max_ref, max_frame_num, reorder_depth);
 	next_frame = now_us();
 
 	for (i = 0; i < m->samples_count && (!limit || decode_count < limit);
@@ -453,7 +481,8 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 		decode_us_total += now_us() - t0;
 		decode_count++;
 
-		if (dump_n && decode_count <= dump_n)
+		if (dump_n && decode_count > dump_start &&
+		    decode_count <= dump_start + dump_n)
 			dump_frame(&vdec, slot, decode_count - 1);
 
 		h264_dpb_end_frame(&dpb, &hdr);
@@ -466,6 +495,16 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 			next_frame += frame_dur;
 			if (display_show(&disp, &vdec, out) < 0)
 				fprintf(stderr, "display failed\n");
+			/*
+			 * 在屏帧 + 上一帧都押住不许复用：SetPlane 返回不代表
+			 * 离屏，DEFE 对旧 buffer 的引用还会撑一拍，立即复用
+			 * 会被 VE 覆写出黑闪/前后跳(和 app 的 prev_item 同理)
+			 */
+			h264_dpb_set_on_screen(&dpb, out, true);
+			if (held[1] >= 0)
+				h264_dpb_set_on_screen(&dpb, held[1], false);
+			held[1] = held[0];
+			held[0] = out;
 			h264_dpb_mark_displayed(&dpb, out);
 			display_count++;
 		}
@@ -474,6 +513,11 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 	while ((out = h264_dpb_next_output(&dpb, true)) >= 0) {
 		usleep(frame_dur);
 		display_show(&disp, &vdec, out);
+		h264_dpb_set_on_screen(&dpb, out, true);
+		if (held[1] >= 0)
+			h264_dpb_set_on_screen(&dpb, held[1], false);
+		held[1] = held[0];
+		held[0] = out;
 		h264_dpb_mark_displayed(&dpb, out);
 		display_count++;
 	}
@@ -498,19 +542,20 @@ int main(int argc, char *argv[])
 	const char *input = NULL;
 	bool host_only = false;
 	int fps = 0, plane_index = 0;
-	unsigned int dump_n = 0, limit = 0;
+	unsigned int dump_n = 0, dump_start = 0, limit = 0;
 	int opt, rc;
 
-	while ((opt = getopt(argc, argv, "Hf:p:w:n:")) != -1) {
+	while ((opt = getopt(argc, argv, "Hf:p:w:s:n:")) != -1) {
 		switch (opt) {
 		case 'H': host_only = true; break;
 		case 'f': fps = atoi(optarg); break;
 		case 'p': plane_index = atoi(optarg); break;
 		case 'w': dump_n = (unsigned int)atoi(optarg); break;
+		case 's': dump_start = (unsigned int)atoi(optarg); break;
 		case 'n': limit = (unsigned int)atoi(optarg); break;
 		default:
 			fprintf(stderr,
-				"usage: %s [-H] [-f fps] [-p plane] [-w n] [-n n] file.mp4\n",
+				"usage: %s [-H] [-f fps] [-p plane] [-w n] [-s n] [-n n] file.mp4\n",
 				argv[0]);
 			return 1;
 		}
@@ -533,9 +578,10 @@ int main(int argc, char *argv[])
 
 #ifndef VDEC_SELFTEST_HOST_ONLY
 	if (!host_only && rc == 0)
-		rc = device_decode(&m, fps, plane_index, dump_n, limit);
+		rc = device_decode(&m, fps, plane_index, dump_n, dump_start, limit);
 #else
-	(void)host_only; (void)fps; (void)plane_index; (void)dump_n; (void)limit;
+	(void)host_only; (void)fps; (void)plane_index; (void)dump_n;
+	(void)dump_start; (void)limit;
 #endif
 
 	mp4_close(&m);

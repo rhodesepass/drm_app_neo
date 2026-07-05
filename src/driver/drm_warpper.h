@@ -56,6 +56,14 @@ typedef struct{
     int width;
     int height;
     drm_warpper_queue_item_t* curr_item;
+    // NONBLOCK+PAGE_FLIP_EVENT 在飞的翻页：flip event 到达 = 新帧已被
+    // 硬件 latch，被换下的 curr 才真正离屏、可回收(事件定回收点，不猜)
+    drm_warpper_queue_item_t* pending_item;
+    // 惰性挂载(video 层专用)：几何先存这，显示线程翻第一帧时连同
+    // CRTC_ID/SRC_*/CRTC_* 一起 commit——plane 用真实帧启用，无需黑 buffer
+    bool needs_full_mount;
+    int16_t geo_x, geo_y;
+    int geo_src_w, geo_src_h, geo_dst_w, geo_dst_h;
 } layer_t;
 
 // 按名字发现的 plane 属性 id（atomic commit 用）；0 = 无此属性
@@ -94,10 +102,6 @@ int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,
 // 通用:src=(0,0,src_w,src_h) 从 buf 左上角裁,dst=(x,y,dst_w,dst_h) 屏幕显示区。
 // src != dst 走 DEFE 硬件缩放;src_w<buf->width 裁掉对齐 padding。裁切与缩放可组合。仅 MB32_NV12(video)层支持缩放。
 int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int src_w,int src_h,int dst_w,int dst_h);
-// dst != buf 尺寸时走 DEFE 硬件缩放(src 恒为整幅 buf)
-int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int dst_w,int dst_h);
-// 源裁切:src 只取 buf 左上角 crop_w×crop_h,1:1 贴屏(dst 同尺寸,无缩放),裁掉对齐 padding。
-int drm_warpper_mount_layer_cropped(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int crop_w,int crop_h);
 
 
 int drm_warpper_allocate_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf);
@@ -105,9 +109,16 @@ int drm_warpper_allocate_buffer_sized(drm_warpper_t *drm_warpper,int layer_id,in
 int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf);
 
 // dmabuf(如 cedrus capture buffer) 导入为 NV12 + ALLWINNER_TILED 的 DRM FB。
-// pitch/uv_offset 按 V4L2 G_FMT 回读值传入。
-int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int width,int height,int pitch,int uv_offset,uint32_t *fb_id);
-int drm_warpper_rm_fb(drm_warpper_t *drm_warpper,uint32_t fb_id);
+// pitch/uv_offset 按 V4L2 G_FMT 回读值传入。gem_handle 回传 prime 句柄，
+// rm_fb 时必须一并传回 close，否则 CMA 被 pin 住不归还。
+int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int width,int height,int pitch,int uv_offset,uint32_t *fb_id,uint32_t *gem_handle);
+int drm_warpper_rm_fb(drm_warpper_t *drm_warpper,uint32_t fb_id,uint32_t gem_handle);
+// 惰性挂载：只记录几何，plane 由显示线程在下一个 FLIP_FB 时携带真实帧启用。
+// 调用时机须保证该层没有在飞的 FLIP(解码线程未跑)
+int drm_warpper_set_layer_geometry(drm_warpper_t *drm_warpper,int layer_id,int x,int y,int src_w,int src_h,int dst_w,int dst_h);
+// 同步 disable plane(CRTC_ID/FB_ID=0)。最底层关掉后露出 DEBE 背景色(黑)；
+// 之后的 RmFB 不会碰到在屏 fb。需要 suniv quirks 内核(0014)否则可能被 atomic_check 拒
+int drm_warpper_disable_layer_sync(drm_warpper_t *drm_warpper,int layer_id);
 
 int drm_warpper_enqueue_display_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t* item);
 int drm_warpper_dequeue_free_item(drm_warpper_t *drm_warpper,int layer_id,drm_warpper_queue_item_t** out_item);

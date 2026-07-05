@@ -18,7 +18,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -538,6 +540,14 @@ void vdec_close(struct vdec_ctx *v)
 	v->media_fd = -1;
 }
 
+static int64_t vdec_now_us(void)
+{
+	struct timespec tsp;
+
+	clock_gettime(CLOCK_MONOTONIC, &tsp);
+	return (int64_t)tsp.tv_sec * 1000000 + tsp.tv_nsec / 1000;
+}
+
 int vdec_decode(struct vdec_ctx *v, int cap_slot, uint64_t ts,
 		const uint8_t *nal, unsigned int nal_size,
 		struct vdec_h264_ctrls *ctrls)
@@ -563,9 +573,13 @@ int vdec_decode(struct vdec_ctx *v, int cap_slot, uint64_t ts,
 	ctrls->slice_params.size = nal_size;
 	ctrls->slice_params.start_byte_offset = 0;
 
+	int64_t t0 = vdec_now_us(), t1, t2, t3, t4;
+
 	rc = set_frame_controls(v->video_fd, request_fd, ctrls);
 	if (rc < 0)
 		return -1;
+
+	t1 = vdec_now_us();
 
 	rc = queue_buffer(v->video_fd, request_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
 			  ts, out_index, nal_size);
@@ -577,12 +591,16 @@ int vdec_decode(struct vdec_ctx *v, int cap_slot, uint64_t ts,
 	if (rc < 0)
 		goto error_reinit;
 
+	t2 = vdec_now_us();
+
 	rc = ioctl(request_fd, MEDIA_REQUEST_IOC_QUEUE, NULL);
 	if (rc < 0) {
 		fprintf(stderr, "vdec: unable to queue media request: %s\n",
 			strerror(errno));
 		goto error_reinit;
 	}
+
+	t3 = vdec_now_us();
 
 	FD_ZERO(&except_fds);
 	FD_SET(request_fd, &except_fds);
@@ -593,6 +611,12 @@ int vdec_decode(struct vdec_ctx *v, int cap_slot, uint64_t ts,
 			rc == 0 ? "timeout" : "error");
 		return -1;
 	}
+
+	t4 = vdec_now_us();
+	if (t4 - t0 > 50000)
+		fprintf(stderr, "vdec: slow breakdown ctrl=%lld qbuf=%lld reqq=%lld wait=%lld us\n",
+			(long long)(t1 - t0), (long long)(t2 - t1),
+			(long long)(t3 - t2), (long long)(t4 - t3));
 
 	rc = dequeue_buffer(v->video_fd, V4L2_BUF_TYPE_VIDEO_OUTPUT,
 			    &src_error);

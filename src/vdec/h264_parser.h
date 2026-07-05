@@ -59,6 +59,12 @@ struct h264_sps {
 	uint8_t num_ref_frames_in_pic_order_cnt_cycle;
 	int32_t offset_for_ref_frame[255];
 
+	/* VUI bitstream_restriction：编码器承诺的 DPB 联合上限(refs 与重排
+	 * 共享)。有它就不必按 max_ref+reorder 的不相交最差账开 capture */
+	bool vui_reorder_valid;
+	uint8_t vui_max_num_reorder_frames;
+	uint8_t vui_max_dec_frame_buffering;
+
 	uint8_t max_num_ref_frames;
 	bool gaps_in_frame_num_value_allowed_flag;
 	uint16_t pic_width_in_mbs_minus1;

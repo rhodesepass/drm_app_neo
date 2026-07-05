@@ -32,6 +32,7 @@ typedef struct {
     struct h264_dpb      dpb;
     struct vdec_ctx      vdec;
     uint32_t             fb_ids[VDEC_MAX_CAP_BUFS];
+    uint32_t             gem_handles[VDEC_MAX_CAP_BUFS];
     bool                 session_open;
 
     pthread_t            decode_thread;
@@ -42,8 +43,10 @@ typedef struct {
     atomic_int           running;
     uint32_t             frame_duration_us;
 
-    /* 未从 free_queue 回流的帧 item 数（含黑帧）；stop 时据此等待离屏 */
+    /* 未从 free_queue 回流的帧 item 数；stop 时据此等待离屏 */
     int                  items_in_flight;
+    /* 会话代号，进 item userdata 高位；跨会话回流的 item 不碰新 DPB */
+    uint32_t             session_gen;
 
     /* 当前视频的编码帧尺寸(SPS 报告，MB 对齐)，决定 video 层挂载方式 */
     int                  frame_width;

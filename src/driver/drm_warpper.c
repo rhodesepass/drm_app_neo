@@ -9,6 +9,8 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <sys/mman.h>
+#include <poll.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "driver/drm_warpper.h"
@@ -20,13 +22,84 @@ static void drm_warpper_wait_for_vsync(drm_warpper_t *drm_warpper){
     drm_warpper->blank.request.type = DRM_VBLANK_RELATIVE;
     drm_warpper->blank.request.sequence = 1;
     if (drmWaitVBlank(drm_warpper->fd, (drmVBlankPtr) &drm_warpper->blank)) {
-      log_error("drmWaitVBlank failed");
+      log_error("drmWaitVBlank failed %s(%d)", strerror(errno), errno);
+      usleep(20 * 1000); // 失败也维持节奏，防止立即返回时空转烧 CPU
     }
 }
 
 // alpha 属性 0..0xFFFF；255*0x101 = 0xFFFF 正好回到不透明(像素 alpha)
 static inline uint64_t alpha_to_prop(uint8_t alpha){
     return (uint64_t)alpha * 0x101;
+}
+
+static uint32_t drm_warpper_find_prop(int fd, uint32_t obj_id, uint32_t obj_type, const char *name){
+    drmModeObjectProperties *props;
+    uint32_t id = 0;
+    int i;
+
+    props = drmModeObjectGetProperties(fd, obj_id, obj_type);
+    if (!props)
+        return 0;
+    for (i = 0; i < (int)props->count_props && !id; i++) {
+        drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[i]);
+        if (!prop)
+            continue;
+        if (!strcmp(prop->name, name))
+            id = prop->prop_id;
+        drmModeFreeProperty(prop);
+    }
+    drmModeFreeObjectProperties(props);
+    return id;
+}
+
+// 内核关掉 DRM_FBDEV_EMULATION 后没有 fbcon 替我们做开机 modeset，
+// CRTC 是灭的：plane commit 全被拒、drmWaitVBlank 每次卡 3s 超时。
+// 检测到 CRTC 未点亮就自己做一次(mode 取 connector 首选模式)。
+static int drm_warpper_ensure_crtc_active(drm_warpper_t *drm_warpper){
+    drmModeCrtc *crtc;
+    drmModeAtomicReq *req;
+    uint32_t conn_crtc_prop, crtc_mode_prop, crtc_active_prop, blob_id;
+    bool active;
+    int ret;
+
+    crtc = drmModeGetCrtc(drm_warpper->fd, drm_warpper->crtc_id);
+    active = crtc && crtc->mode_valid;
+    drmModeFreeCrtc(crtc);
+    if (active)
+        return 0;
+
+    log_info("CRTC is off (no fbcon modeset), performing initial modeset");
+
+    conn_crtc_prop = drm_warpper_find_prop(drm_warpper->fd, drm_warpper->conn_id,
+                                           DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID");
+    crtc_mode_prop = drm_warpper_find_prop(drm_warpper->fd, drm_warpper->crtc_id,
+                                           DRM_MODE_OBJECT_CRTC, "MODE_ID");
+    crtc_active_prop = drm_warpper_find_prop(drm_warpper->fd, drm_warpper->crtc_id,
+                                             DRM_MODE_OBJECT_CRTC, "ACTIVE");
+    if (!conn_crtc_prop || !crtc_mode_prop || !crtc_active_prop) {
+        log_error("modeset properties missing");
+        return -1;
+    }
+
+    ret = drmModeCreatePropertyBlob(drm_warpper->fd, &drm_warpper->conn->modes[0],
+                                    sizeof(drm_warpper->conn->modes[0]), &blob_id);
+    if (ret < 0) {
+        log_error("create mode blob failed %s(%d)", strerror(errno), errno);
+        return -1;
+    }
+
+    req = drmModeAtomicAlloc();
+    if (!req)
+        return -1;
+    drmModeAtomicAddProperty(req, drm_warpper->conn_id, conn_crtc_prop, drm_warpper->crtc_id);
+    drmModeAtomicAddProperty(req, drm_warpper->crtc_id, crtc_mode_prop, blob_id);
+    drmModeAtomicAddProperty(req, drm_warpper->crtc_id, crtc_active_prop, 1);
+
+    ret = drmModeAtomicCommit(drm_warpper->fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+    drmModeAtomicFree(req);
+    if (ret < 0)
+        log_error("initial modeset commit err %s(%d)", strerror(errno), errno);
+    return ret;
 }
 
 static int drm_warpper_discover_plane_props(drm_warpper_t *drm_warpper, int layer_id){
@@ -70,9 +143,67 @@ static int drm_warpper_discover_plane_props(drm_warpper_t *drm_warpper, int laye
     return 0;
 }
 
+// 每层每轮 drain 到的帧类 item。free_queue 回收必须推迟到 commit 返回之后：
+// 提前回收的话，解码侧会在旧帧还在扫描时就把该 capture buffer 重新 QBUF
+// 给 cedrus 覆写——屏上直接花。
+#define DRM_WARPPER_DRAIN_MAX 16
+typedef struct {
+    drm_warpper_queue_item_t *items[DRM_WARPPER_DRAIN_MAX];
+    int n;
+} drained_frames_t;
+
+static inline int64_t dw_now_us(void){
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
+// flip event = pending 帧已被硬件 latch(正在扫描)，被换下的 curr 离屏，
+// 此刻回收才安全。事件只由显示线程消费(其他线程不 read drm fd)。
+static void dw_flip_handler(int fd, unsigned int sequence,
+                            unsigned int tv_sec, unsigned int tv_usec,
+                            unsigned int crtc_id, void *user_data){
+    layer_t *layer = (layer_t *)user_data;
+    (void)fd; (void)sequence; (void)tv_sec; (void)tv_usec; (void)crtc_id;
+    if(!layer || !layer->pending_item)
+        return;
+    if(layer->curr_item)
+        spsc_bq_push(&layer->free_queue, layer->curr_item);
+    layer->curr_item = layer->pending_item;
+    layer->pending_item = NULL;
+}
+
+// 等 pending 翻页完成。timeout_ms=0 即"有事件就收，没有不等"。
+// 超时(事件丢失，不应发生)按已 latch 强制推进，避免卡死或漏回收。
+static void dw_reap_flip(drm_warpper_t *drm_warpper, layer_t *layer, int timeout_ms){
+    drmEventContext ev = {
+        .version = DRM_EVENT_CONTEXT_VERSION,
+        .page_flip_handler2 = dw_flip_handler,
+    };
+    struct pollfd pfd = { .fd = drm_warpper->fd, .events = POLLIN };
+
+    while(layer->pending_item){
+        int pr = poll(&pfd, 1, timeout_ms);
+        if(pr > 0){
+            drmHandleEvent(drm_warpper->fd, &ev);
+            continue;
+        }
+        if(pr == 0 && timeout_ms > 0)
+            log_error("flip event lost, force-completing");
+        if(timeout_ms > 0)
+            dw_flip_handler(drm_warpper->fd, 0, 0, 0, 0, layer);
+        break;
+    }
+}
+
 static void* drm_warpper_display_thread(void *arg){
     drm_warpper_t *drm_warpper = (drm_warpper_t *)arg;
     int ret;
+    // video 层节拍诊断：commit 间隔与跳帧/空转分布，量化"抖动"
+    struct {
+        uint32_t commits, frames, empties;
+        int64_t last_us, sum_us, max_us;
+    } vstat = { 0 };
 
     log_info("==> DRM_Warpper Display Thread Started!");
 
@@ -80,6 +211,10 @@ static void* drm_warpper_display_thread(void *arg){
     // 背靠背即每 vblank 一次）；空转时用 drmWaitVBlank 兜底等待。
     while(atomic_load(&drm_warpper->thread_running)){
         drmModeAtomicReq *req = NULL;
+        drained_frames_t drained[4] = { 0 };
+
+        // 顺手收上一次翻页的完成事件(不等待)，让离屏帧尽快回流
+        dw_reap_flip(drm_warpper, &drm_warpper->layer[DRM_WARPPER_LAYER_VIDEO], 0);
 
         for(int i = 0; i < 4; i++){
             layer_t* layer = &drm_warpper->layer[i];
@@ -88,14 +223,15 @@ static void* drm_warpper_display_thread(void *arg){
                 continue;
             drm_warpper_queue_item_t* item;
             while(spsc_bq_try_pop(&layer->display_queue, (void**)&item) == 0){
-                bool is_frame = false;
-
                 switch(item->type){
                 case DRM_WARPPER_ITEM_FLIP_FB:
-                    if(!req) req = drmModeAtomicAlloc();
-                    drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
-                                             p->fb_id, item->fb_id);
-                    is_frame = true;
+                    if(drained[i].n < DRM_WARPPER_DRAIN_MAX){
+                        drained[i].items[drained[i].n++] = item;
+                    }
+                    else{
+                        // 不可能路径(display_queue 容量即 16)，直接判为已跳过
+                        spsc_bq_push(&layer->free_queue, item);
+                    }
                     break;
                 case DRM_WARPPER_ITEM_SET_COORD:
                     if(!req) req = drmModeAtomicAlloc();
@@ -103,46 +239,138 @@ static void* drm_warpper_display_thread(void *arg){
                                              p->crtc_x, (uint64_t)(int64_t)item->x);
                     drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
                                              p->crtc_y, (uint64_t)(int64_t)item->y);
+                    if(item->on_heap) free(item);
                     break;
                 case DRM_WARPPER_ITEM_SET_ALPHA:
-                    if(!p->alpha){
-                        log_error("layer %d has no alpha property", i);
-                        break;
+                    if(p->alpha){
+                        if(!req) req = drmModeAtomicAlloc();
+                        drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
+                                                 p->alpha, alpha_to_prop(item->alpha));
                     }
-                    if(!req) req = drmModeAtomicAlloc();
-                    drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i],
-                                             p->alpha, alpha_to_prop(item->alpha));
+                    else{
+                        log_error("layer %d has no alpha property", i);
+                    }
+                    if(item->on_heap) free(item);
                     break;
                 }
+            }
 
-                if(is_frame){
-                    // 帧类 item 常驻(非堆)：换下的旧帧回 free_queue 供解码侧回收
-                    if(layer->curr_item){
-                        // 如果程序终止 对端consumer可能已经退出 导致这里卡死。
-                        spsc_bq_push(&layer->free_queue, layer->curr_item);
-                    }
-                    layer->curr_item = item;
-                }
-                else{
-                    if(item->on_heap){
-                        free(item);
-                    }
+            // 多个待翻帧只上最后一帧(60fps 素材 vs 40Hz 屏，跳帧在此发生)
+            if(drained[i].n > 0){
+                if(!req) req = drmModeAtomicAlloc();
+                drmModeAtomicAddProperty(req, drm_warpper->plane_ids[i], p->fb_id,
+                                         drained[i].items[drained[i].n - 1]->fb_id);
+                // 惰性挂载：plane 处于 disabled 时随首帧一并启用
+                if(layer->needs_full_mount){
+                    uint32_t pl = drm_warpper->plane_ids[i];
+                    drmModeAtomicAddProperty(req, pl, p->crtc_id, drm_warpper->crtc_id);
+                    drmModeAtomicAddProperty(req, pl, p->src_x, 0);
+                    drmModeAtomicAddProperty(req, pl, p->src_y, 0);
+                    drmModeAtomicAddProperty(req, pl, p->src_w, (uint64_t)layer->geo_src_w << 16);
+                    drmModeAtomicAddProperty(req, pl, p->src_h, (uint64_t)layer->geo_src_h << 16);
+                    drmModeAtomicAddProperty(req, pl, p->crtc_x, (uint64_t)(int64_t)layer->geo_x);
+                    drmModeAtomicAddProperty(req, pl, p->crtc_y, (uint64_t)(int64_t)layer->geo_y);
+                    drmModeAtomicAddProperty(req, pl, p->crtc_w, layer->geo_dst_w);
+                    drmModeAtomicAddProperty(req, pl, p->crtc_h, layer->geo_dst_h);
                 }
             }
         }
 
         if(req){
-            // 阻塞式：返回即 flip 完成（下一个 vblank），被换下的 FB 已
-            // 离屏——此后旧帧 item 才会从 free_queue 被解码侧回收复用。
+            layer_t *vlayer = &drm_warpper->layer[DRM_WARPPER_LAYER_VIDEO];
+            bool has_video = drained[DRM_WARPPER_LAYER_VIDEO].n > 0;
+            int64_t c0, cdt;
+            uint32_t flags = 0;
+            void *udata = NULL;
+
+            // BSP 式非阻塞翻页：commit 只递交，硬件在下一个 vblank 用
+            // shadow-load latch，节拍不再被"等 vblank"的墙钟卡住。
+            // 单发在飞：上一发未完成先收其事件(避免 -EBUSY)
+            if(has_video){
+                dw_reap_flip(drm_warpper, vlayer, 200);
+                // CRTC_ID 每发都带：把 crtc state 拉进 commit，
+                // PAGE_FLIP_EVENT 才会挂到该 CRTC 上产生完成事件
+                drmModeAtomicAddProperty(req,
+                                         drm_warpper->plane_ids[DRM_WARPPER_LAYER_VIDEO],
+                                         drm_warpper->plane_props[DRM_WARPPER_LAYER_VIDEO].crtc_id,
+                                         drm_warpper->crtc_id);
+                flags = DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT;
+                udata = vlayer;
+            }
+
+            c0 = dw_now_us();
             pthread_mutex_lock(&drm_warpper->commit_mutex);
-            ret = drmModeAtomicCommit(drm_warpper->fd, req, 0, NULL);
+            ret = drmModeAtomicCommit(drm_warpper->fd, req, flags, udata);
             pthread_mutex_unlock(&drm_warpper->commit_mutex);
+            cdt = dw_now_us() - c0;
+            if(cdt > 60000)
+                log_warn("slow commit %lldus (video frames=%d)",
+                         (long long)cdt, drained[DRM_WARPPER_LAYER_VIDEO].n);
             if(ret < 0){
                 log_error("drmModeAtomicCommit failed %s(%d)", strerror(errno), errno);
             }
             drmModeAtomicFree(req);
+
+            if(ret == 0 && has_video){
+                static int dw_trace = -1;
+                if(dw_trace < 0)
+                    dw_trace = getenv("MP_TRACE") != NULL;
+                if(dw_trace){
+                    drained_frames_t *dv = &drained[DRM_WARPPER_LAYER_VIDEO];
+                    log_info("T C%d skip%d",
+                             (int)(((uintptr_t)dv->items[dv->n - 1]->userdata) & 0xff) - 1,
+                             dv->n - 1);
+                }
+                int64_t now = dw_now_us();
+                if(vstat.last_us){
+                    int64_t dt = now - vstat.last_us;
+                    vstat.sum_us += dt;
+                    if(dt > vstat.max_us) vstat.max_us = dt;
+                }
+                vstat.last_us = now;
+                vstat.commits++;
+                vstat.frames += drained[DRM_WARPPER_LAYER_VIDEO].n;
+                if(vstat.commits == 400){
+                    log_info("vstat: 400 commits %u frames(skip %u) empty=%u avg=%lldus max=%lldus",
+                             vstat.frames, vstat.frames - vstat.commits,
+                             vstat.empties, (long long)vstat.sum_us / 399,
+                             (long long)vstat.max_us);
+                    memset(&vstat, 0, sizeof(vstat));
+                    vstat.last_us = now;
+                }
+            }
+
+            for(int i = 0; i < 4; i++){
+                layer_t* layer = &drm_warpper->layer[i];
+                int n = drained[i].n;
+                if(n == 0)
+                    continue;
+                if(ret == 0){
+                    layer->needs_full_mount = false;
+                    // 被跳过的 n-1 帧从未递交给硬件，立即回收
+                    for(int k = 0; k < n - 1; k++)
+                        spsc_bq_push(&layer->free_queue, drained[i].items[k]);
+                    if(i == DRM_WARPPER_LAYER_VIDEO && has_video){
+                        // 最后一帧在飞(pending)，flip event 到达才顶替 curr
+                        layer->pending_item = drained[i].items[n - 1];
+                    }
+                    else{
+                        // 非 video 层不带事件(实践中也不走帧翻页)：沿用
+                        // curr 直换，旧 curr 立即回收
+                        if(layer->curr_item)
+                            spsc_bq_push(&layer->free_queue, layer->curr_item);
+                        layer->curr_item = drained[i].items[n - 1];
+                    }
+                }
+                else{
+                    // commit 被拒：屏上还是旧 curr，本轮所有帧原样回收
+                    for(int k = 0; k < n; k++)
+                        spsc_bq_push(&layer->free_queue, drained[i].items[k]);
+                }
+            }
         }
         else{
+            if(vstat.last_us) vstat.empties++;
             drm_warpper_wait_for_vsync(drm_warpper);
         }
     }
@@ -216,6 +444,17 @@ int drm_warpper_init(drm_warpper_t *drm_warpper){
         return -1;
     }
 
+    // 上一实例还没死透时 open 拿不到 master，之后所有 atomic 全 EACCES。
+    // 短暂重试等旧实例放手；拿不到也继续跑(仅报警)，别整只 app 起不来
+    for (int tries = 0; drmSetMaster(drm_warpper->fd) != 0; tries++) {
+        if (tries >= 20) {
+            log_error("cannot become DRM master: %s (stale instance alive?)",
+                      strerror(errno));
+            break;
+        }
+        usleep(100 * 1000);
+    }
+
     ret = drmSetClientCap(drm_warpper->fd, DRM_CLIENT_CAP_ATOMIC, 1);
     if(ret) {
         log_error("No atomic modesetting support: %s", strerror(errno));
@@ -270,6 +509,15 @@ int drm_warpper_init(drm_warpper_t *drm_warpper){
     log_info("Connector Name: %s, %dx%d, Refresh Rate: %d",
         drm_warpper->conn->modes[0].name, drm_warpper->conn->modes[0].vdisplay, drm_warpper->conn->modes[0].hdisplay,
         drm_warpper->conn->modes[0].vrefresh);
+
+    if (drm_warpper_ensure_crtc_active(drm_warpper) < 0) {
+        log_error("CRTC bring-up failed, display will not work");
+        drmModeFreeConnector(drm_warpper->conn);
+        drmModeFreePlaneResources(drm_warpper->plane_res);
+        drmModeFreeResources(drm_warpper->res);
+        close(drm_warpper->fd);
+        return -1;
+    }
 
     drm_warpper->blank.request.type = DRM_VBLANK_RELATIVE;
     drm_warpper->blank.request.sequence = 1;
@@ -417,7 +665,10 @@ int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int
         log_error("failed to initialize display queue");
         return -1;
     }
-    ret = spsc_bq_init(&layer->free_queue, 2);
+    // 必须 ≥ 全部在飞帧 item 数(video 层 VDEC_CAPTURE_BUF_MAX_SMALL=16
+    // 加跨会话残留的 curr/pending)：push 是阻塞语义，容量不足会让显示线程
+    // 卡在 drain 中途
+    ret = spsc_bq_init(&layer->free_queue, 20);
     if(ret < 0){
         log_error("failed to initialize free queue");
         return -1;
@@ -429,6 +680,8 @@ int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int
     layer->height = height;
 
     layer->curr_item = NULL;
+    layer->pending_item = NULL;
+    layer->needs_full_mount = false;
 
     return 0;
 }
@@ -476,7 +729,7 @@ int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_objec
     return 0;
 }
 
-int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int width,int height,int pitch,int uv_offset,uint32_t *fb_id){
+int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int width,int height,int pitch,int uv_offset,uint32_t *fb_id,uint32_t *gem_handle){
     uint32_t handle = 0;
     uint32_t handles[4] = {0}, pitches[4] = {0}, offsets[4] = {0};
     uint64_t modifiers[4] = {0};
@@ -500,13 +753,61 @@ int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int wi
                                      DRM_MODE_FB_MODIFIERS);
     if(ret < 0){
         log_error("import dmabuf AddFB2 failed %s(%d)", strerror(errno), errno);
+        struct drm_gem_close gc = { .handle = handle };
+        drmIoctl(drm_warpper->fd, DRM_IOCTL_GEM_CLOSE, &gc);
         return -1;
     }
+    if(gem_handle)
+        *gem_handle = handle;
     return 0;
 }
 
-int drm_warpper_rm_fb(drm_warpper_t *drm_warpper,uint32_t fb_id){
-    return drmModeRmFB(drm_warpper->fd, fb_id);
+int drm_warpper_rm_fb(drm_warpper_t *drm_warpper,uint32_t fb_id,uint32_t gem_handle){
+    int ret = drmModeRmFB(drm_warpper->fd, fb_id);
+    // prime 导入的 GEM handle 是独立引用，不 close 会一直 pin 住 dmabuf
+    // 背后的 CMA——REQBUFS(0) 也还不回去，反复 play/stop 几次就把 CMA 吃光
+    if(gem_handle){
+        struct drm_gem_close gc = { .handle = gem_handle };
+        drmIoctl(drm_warpper->fd, DRM_IOCTL_GEM_CLOSE, &gc);
+    }
+    return ret;
+}
+
+int drm_warpper_set_layer_geometry(drm_warpper_t *drm_warpper,int layer_id,int x,int y,int src_w,int src_h,int dst_w,int dst_h){
+    layer_t* layer = &drm_warpper->layer[layer_id];
+
+    layer->geo_x = (int16_t)x;
+    layer->geo_y = (int16_t)y;
+    layer->geo_src_w = src_w;
+    layer->geo_src_h = src_h;
+    layer->geo_dst_w = dst_w;
+    layer->geo_dst_h = dst_h;
+    layer->needs_full_mount = true;
+    return 0;
+}
+
+int drm_warpper_disable_layer_sync(drm_warpper_t *drm_warpper,int layer_id){
+    plane_prop_ids_t *p = &drm_warpper->plane_props[layer_id];
+    uint32_t plane_id = drm_warpper->plane_ids[layer_id];
+    drmModeAtomicReq *req;
+    int ret;
+
+    req = drmModeAtomicAlloc();
+    if(!req)
+        return -1;
+    drmModeAtomicAddProperty(req, plane_id, p->crtc_id, 0);
+    drmModeAtomicAddProperty(req, plane_id, p->fb_id, 0);
+
+    pthread_mutex_lock(&drm_warpper->commit_mutex);
+    ret = drmModeAtomicCommit(drm_warpper->fd, req, 0, NULL);
+    pthread_mutex_unlock(&drm_warpper->commit_mutex);
+    drmModeAtomicFree(req);
+
+    if(ret < 0)
+        log_error("disable plane commit err %s(%d)", strerror(errno), errno);
+    else
+        drm_warpper->layer[layer_id].needs_full_mount = true;
+    return ret;
 }
 
 
@@ -550,16 +851,6 @@ int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,i
     return ret;
 }
 
-// src 恒为整幅 buf,dst != buf 时走 DEFE 缩放
-int drm_warpper_mount_layer_scaled(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int dst_w,int dst_h){
-    return drm_warpper_mount_layer_rect(drm_warpper, layer_id, x, y, buf, buf->width, buf->height, dst_w, dst_h);
-}
-
 int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf){
     return drm_warpper_mount_layer_rect(drm_warpper, layer_id, x, y, buf, buf->width, buf->height, buf->width, buf->height);
-}
-
-// src=dst=crop:只取 buf 左上角 crop_w×crop_h,1:1 贴屏,裁掉右侧/下方对齐 padding,不缩放
-int drm_warpper_mount_layer_cropped(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int crop_w,int crop_h){
-    return drm_warpper_mount_layer_rect(drm_warpper, layer_id, x, y, buf, crop_w, crop_h, crop_w, crop_h);
 }

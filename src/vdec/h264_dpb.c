@@ -245,6 +245,27 @@ static void modify_list(struct h264_dpb *dpb, int *list, int num_active,
 	}
 }
 
+/*
+ * 重排后的列表长度恒为 num_active(8.2.4.3)：x264 weightp 常用
+ * "同一参考列两次配不同权重"，初始列表(物理参考数)比 active 短，
+ * 重排负责填满——之前把重排前的长度传给 fill_ref_list，尾项被
+ * 悄悄丢成 dpb[0]，P 帧 ref_idx 末位全指错帧(拖尾根因)。
+ * 初始列表之外的位置先置 -1，防 modify_list 的移位搬进未初始化值。
+ */
+static int modified_len(struct h264_dpb *dpb, int *list, int n_init,
+			int num_active, const struct h264_rplm *rplm,
+			int n_rplm, int cur_pic_num)
+{
+	int i;
+
+	if (num_active > H264_DPB_MAX_SLOTS)
+		num_active = H264_DPB_MAX_SLOTS;
+	for (i = n_init; i < num_active; i++)
+		list[i] = -1;
+	modify_list(dpb, list, num_active, rplm, n_rplm, cur_pic_num);
+	return num_active;
+}
+
 /* ---- control filling ---- */
 
 static int build_dpb_control(struct h264_dpb *dpb, struct vdec_h264_ctrls *ctrl,
@@ -313,10 +334,11 @@ int h264_dpb_begin_frame(struct h264_dpb *dpb, const struct h264_slice_hdr *hdr,
 
 	if (st == H264_SLICE_P || st == H264_SLICE_SP) {
 		n0 = build_list_p(dpb, list0);
-		if (hdr->ref_pic_list_modification_flag_l0)
-			modify_list(dpb, list0,
-				    hdr->num_ref_idx_l0_active_minus1 + 1,
-				    hdr->rplm_l0, hdr->n_rplm_l0, hdr->frame_num);
+		if (hdr->ref_pic_list_modification_flag_l0 && n0)
+			n0 = modified_len(dpb, list0, n0,
+					  hdr->num_ref_idx_l0_active_minus1 + 1,
+					  hdr->rplm_l0, hdr->n_rplm_l0,
+					  hdr->frame_num);
 		fill_ref_list(ctrl->slice_params.ref_pic_list0, list0, n0,
 			      map, hdr->num_ref_idx_l0_active_minus1 + 1);
 	} else if (st == H264_SLICE_B) {
@@ -334,14 +356,16 @@ int h264_dpb_begin_frame(struct h264_dpb *dpb, const struct h264_slice_hdr *hdr,
 				list1[1] = t;
 			}
 		}
-		if (hdr->ref_pic_list_modification_flag_l0)
-			modify_list(dpb, list0,
-				    hdr->num_ref_idx_l0_active_minus1 + 1,
-				    hdr->rplm_l0, hdr->n_rplm_l0, hdr->frame_num);
-		if (hdr->ref_pic_list_modification_flag_l1)
-			modify_list(dpb, list1,
-				    hdr->num_ref_idx_l1_active_minus1 + 1,
-				    hdr->rplm_l1, hdr->n_rplm_l1, hdr->frame_num);
+		if (hdr->ref_pic_list_modification_flag_l0 && n0)
+			n0 = modified_len(dpb, list0, n0,
+					  hdr->num_ref_idx_l0_active_minus1 + 1,
+					  hdr->rplm_l0, hdr->n_rplm_l0,
+					  hdr->frame_num);
+		if (hdr->ref_pic_list_modification_flag_l1 && n1)
+			n1 = modified_len(dpb, list1, n1,
+					  hdr->num_ref_idx_l1_active_minus1 + 1,
+					  hdr->rplm_l1, hdr->n_rplm_l1,
+					  hdr->frame_num);
 		fill_ref_list(ctrl->slice_params.ref_pic_list0, list0, n0,
 			      map, hdr->num_ref_idx_l0_active_minus1 + 1);
 		fill_ref_list(ctrl->slice_params.ref_pic_list1, list1, n1,
