@@ -35,6 +35,10 @@ static bool mp_size_supported(int w, int h)
     if (w == VIDEO_LEGACY_WIDTH && h == VIDEO_LEGACY_HEIGHT)
         return true;
 #endif
+#ifdef VIDEO_HIRES_WIDTH
+    if (w == VIDEO_HIRES_WIDTH && h == VIDEO_HIRES_HEIGHT)
+        return true;
+#endif
     return false;
 }
 
@@ -422,10 +426,11 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     max_ref = sps->max_num_ref_frames ? sps->max_num_ref_frames : 1;
     max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
     if (sps->vui_reorder_valid) {
-        /* refs 与重排共享 DPB。+5 = bump滞后1 + 入队未上屏1 + 在屏curr/prev 2
-         * + 解码中1；+4 时真机实测 begin_frame 周期性等 25-50ms(播放抖动) */
+        /* refs 与重排共享 DPB。+4 = bump滞后1 + 入队未上屏1 + 在屏1 + 解码中1；
+         * 阻塞 commit 返回=旧帧已离屏，在屏只押 1(NONBLOCK 在飞翻页时代要押
+         * curr/pending 2 格即 +5，且真机实测再少 1 个会周期性等 25-50ms) */
         reorder = sps->vui_max_num_reorder_frames;
-        cap_count = sps->vui_max_dec_frame_buffering + 5;
+        cap_count = sps->vui_max_dec_frame_buffering + 4;
     } else {
         reorder = max_ref < VDEC_REORDER_DEPTH ? VDEC_REORDER_DEPTH : max_ref;
         cap_count = max_ref + reorder + 3;
@@ -528,8 +533,8 @@ int mediaplayer_stop(mediaplayer_t *mp)
     pthread_join(mp->decode_thread, NULL);
     atomic_store(&mp->running, 0);
 
-    // 等积压的 FLIP 回流，只剩屏上帧(curr)+可能未收事件的 pending
-    for (wait = 0; wait < 40 && mp->items_in_flight > 2; wait++) {
+    // 等积压的 FLIP 回流，只剩屏上帧(curr)
+    for (wait = 0; wait < 40 && mp->items_in_flight > 1; wait++) {
         usleep(10 * 1000);
         mp_reclaim_free_items(mp);
     }

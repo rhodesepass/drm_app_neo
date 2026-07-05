@@ -9,7 +9,6 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <sys/mman.h>
-#include <poll.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -158,44 +157,6 @@ static inline int64_t dw_now_us(void){
     return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
 
-// flip event = pending 帧已被硬件 latch(正在扫描)，被换下的 curr 离屏，
-// 此刻回收才安全。事件只由显示线程消费(其他线程不 read drm fd)。
-static void dw_flip_handler(int fd, unsigned int sequence,
-                            unsigned int tv_sec, unsigned int tv_usec,
-                            unsigned int crtc_id, void *user_data){
-    layer_t *layer = (layer_t *)user_data;
-    (void)fd; (void)sequence; (void)tv_sec; (void)tv_usec; (void)crtc_id;
-    if(!layer || !layer->pending_item)
-        return;
-    if(layer->curr_item)
-        spsc_bq_push(&layer->free_queue, layer->curr_item);
-    layer->curr_item = layer->pending_item;
-    layer->pending_item = NULL;
-}
-
-// 等 pending 翻页完成。timeout_ms=0 即"有事件就收，没有不等"。
-// 超时(事件丢失，不应发生)按已 latch 强制推进，避免卡死或漏回收。
-static void dw_reap_flip(drm_warpper_t *drm_warpper, layer_t *layer, int timeout_ms){
-    drmEventContext ev = {
-        .version = DRM_EVENT_CONTEXT_VERSION,
-        .page_flip_handler2 = dw_flip_handler,
-    };
-    struct pollfd pfd = { .fd = drm_warpper->fd, .events = POLLIN };
-
-    while(layer->pending_item){
-        int pr = poll(&pfd, 1, timeout_ms);
-        if(pr > 0){
-            drmHandleEvent(drm_warpper->fd, &ev);
-            continue;
-        }
-        if(pr == 0 && timeout_ms > 0)
-            log_error("flip event lost, force-completing");
-        if(timeout_ms > 0)
-            dw_flip_handler(drm_warpper->fd, 0, 0, 0, 0, layer);
-        break;
-    }
-}
-
 static void* drm_warpper_display_thread(void *arg){
     drm_warpper_t *drm_warpper = (drm_warpper_t *)arg;
     int ret;
@@ -212,9 +173,6 @@ static void* drm_warpper_display_thread(void *arg){
     while(atomic_load(&drm_warpper->thread_running)){
         drmModeAtomicReq *req = NULL;
         drained_frames_t drained[4] = { 0 };
-
-        // 顺手收上一次翻页的完成事件(不等待)，让离屏帧尽快回流
-        dw_reap_flip(drm_warpper, &drm_warpper->layer[DRM_WARPPER_LAYER_VIDEO], 0);
 
         for(int i = 0; i < 4; i++){
             layer_t* layer = &drm_warpper->layer[i];
@@ -277,30 +235,16 @@ static void* drm_warpper_display_thread(void *arg){
         }
 
         if(req){
-            layer_t *vlayer = &drm_warpper->layer[DRM_WARPPER_LAYER_VIDEO];
             bool has_video = drained[DRM_WARPPER_LAYER_VIDEO].n > 0;
             int64_t c0, cdt;
-            uint32_t flags = 0;
-            void *udata = NULL;
 
-            // BSP 式非阻塞翻页：commit 只递交，硬件在下一个 vblank 用
-            // shadow-load latch，节拍不再被"等 vblank"的墙钟卡住。
-            // 单发在飞：上一发未完成先收其事件(避免 -EBUSY)
-            if(has_video){
-                dw_reap_flip(drm_warpper, vlayer, 200);
-                // CRTC_ID 每发都带：把 crtc state 拉进 commit，
-                // PAGE_FLIP_EVENT 才会挂到该 CRTC 上产生完成事件
-                drmModeAtomicAddProperty(req,
-                                         drm_warpper->plane_ids[DRM_WARPPER_LAYER_VIDEO],
-                                         drm_warpper->plane_props[DRM_WARPPER_LAYER_VIDEO].crtc_id,
-                                         drm_warpper->crtc_id);
-                flags = DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT;
-                udata = vlayer;
-            }
-
+            // 阻塞 commit：返回 = 新帧已在 vblank latch、旧帧离屏，被换下的
+            // curr 立即回收——video 层在屏只押 1 格 capture buffer(32MB 机
+            // 型的省钱点)。代价是本线程每帧最多干等一个 vblank，同队列的
+            // UI/overlay item 顺延；它们反正也要等下一个 vblank 才生效。
             c0 = dw_now_us();
             pthread_mutex_lock(&drm_warpper->commit_mutex);
-            ret = drmModeAtomicCommit(drm_warpper->fd, req, flags, udata);
+            ret = drmModeAtomicCommit(drm_warpper->fd, req, 0, NULL);
             pthread_mutex_unlock(&drm_warpper->commit_mutex);
             cdt = dw_now_us() - c0;
             if(cdt > 60000)
@@ -350,17 +294,10 @@ static void* drm_warpper_display_thread(void *arg){
                     // 被跳过的 n-1 帧从未递交给硬件，立即回收
                     for(int k = 0; k < n - 1; k++)
                         spsc_bq_push(&layer->free_queue, drained[i].items[k]);
-                    if(i == DRM_WARPPER_LAYER_VIDEO && has_video){
-                        // 最后一帧在飞(pending)，flip event 到达才顶替 curr
-                        layer->pending_item = drained[i].items[n - 1];
-                    }
-                    else{
-                        // 非 video 层不带事件(实践中也不走帧翻页)：沿用
-                        // curr 直换，旧 curr 立即回收
-                        if(layer->curr_item)
-                            spsc_bq_push(&layer->free_queue, layer->curr_item);
-                        layer->curr_item = drained[i].items[n - 1];
-                    }
+                    // 阻塞 commit 已返回 = 旧 curr 离屏，直换并立即回收
+                    if(layer->curr_item)
+                        spsc_bq_push(&layer->free_queue, layer->curr_item);
+                    layer->curr_item = drained[i].items[n - 1];
                 }
                 else{
                     // commit 被拒：屏上还是旧 curr，本轮所有帧原样回收
@@ -666,7 +603,7 @@ int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int
         return -1;
     }
     // 必须 ≥ 全部在飞帧 item 数(video 层 VDEC_CAPTURE_BUF_MAX_SMALL=16
-    // 加跨会话残留的 curr/pending)：push 是阻塞语义，容量不足会让显示线程
+    // 加跨会话残留的 curr)：push 是阻塞语义，容量不足会让显示线程
     // 卡在 drain 中途
     ret = spsc_bq_init(&layer->free_queue, 20);
     if(ret < 0){
@@ -680,7 +617,6 @@ int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int
     layer->height = height;
 
     layer->curr_item = NULL;
-    layer->pending_item = NULL;
     layer->needs_full_mount = false;
 
     return 0;

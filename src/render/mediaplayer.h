@@ -82,6 +82,6 @@ int mediaplayer_start(mediaplayer_t *mediaplayer);
 /* get current status: "stopped", "playing", */
 mp_status_t mediaplayer_get_status(mediaplayer_t *mediaplayer);
 
-/* 按当前视频尺寸强制重挂 video 层(未播放过则挂 native 黑帧 buffer)。
+/* 按当前视频尺寸刷新 video 层几何记录(幂等，plane 实际状态由下一个 FLIP 决定)。
    供过渡 middle_cb 在画面被遮盖的时机调用 */
 int mediaplayer_remount_video_layer(mediaplayer_t *mediaplayer);

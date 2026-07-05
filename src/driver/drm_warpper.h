@@ -55,10 +55,9 @@ typedef struct{
     drm_warpper_layer_mode_t mode;
     int width;
     int height;
+    // 阻塞 commit 返回即旧帧离屏，在屏只押 curr 一格(试过 NONBLOCK+
+    // PAGE_FLIP_EVENT 在飞翻页，要多押一个 pending，为 32MB 机型撤回)
     drm_warpper_queue_item_t* curr_item;
-    // NONBLOCK+PAGE_FLIP_EVENT 在飞的翻页：flip event 到达 = 新帧已被
-    // 硬件 latch，被换下的 curr 才真正离屏、可回收(事件定回收点，不猜)
-    drm_warpper_queue_item_t* pending_item;
     // 惰性挂载(video 层专用)：几何先存这，显示线程翻第一帧时连同
     // CRTC_ID/SRC_*/CRTC_* 一起 commit——plane 用真实帧启用，无需黑 buffer
     bool needs_full_mount;
