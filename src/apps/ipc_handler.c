@@ -8,6 +8,7 @@
 #include <string.h>
 #include <ui_screens/ui_services.h>
 #include <ui/ipc_helper.h>
+#include <ui/uix_session.h>
 #include <utils/log.h>
 #include <utils/settings.h>
 #include <render/mediaplayer.h>
@@ -186,18 +187,14 @@ inline static int handle_settings_get(ipc_req_t *req, ipc_resp_t *resp){
 
 inline static int handle_settings_set(ipc_req_t *req, ipc_resp_t *resp){
     settings_lock(&g_settings);
-    usb_mode_t curr_usb_mode = g_settings.usb_mode;
     g_settings.brightness = req->settings.brightness;
     g_settings.switch_interval = req->settings.switch_interval;
     g_settings.switch_mode = req->settings.switch_mode;
+    // usb_mode 字段保留落盘占位但不再触发 usbctl：USB 由 usb_aio_handler 接管
     g_settings.usb_mode = req->settings.usb_mode;
     g_settings.ctrl_word = req->settings.ctrl_word;
     settings_unlock(&g_settings);
-    
-    if(curr_usb_mode != req->settings.usb_mode){
-        settings_set_usb_mode(req->settings.usb_mode);
-    }
-    
+
     // 保存设置并应用（设置亮度）
     settings_update(&g_settings);
     resp->type = IPC_RESP_OK;
@@ -479,6 +476,66 @@ inline static int handle_overlay_schedule_transition_video(apps_t *apps, ipc_req
 }
 
 // =========================================
+// UIX 子模块 处理方法（外部交互会话，轮询式）
+// =========================================
+// handler 只登记会话 + 通知 LVGL 线程弹屏，立即返回；结果靠 SESSION_POLL 取。
+
+static int uix_post_helper(ui_ipc_helper_req_type_t type, ipc_resp_t *resp, int ok_len){
+    ui_ipc_helper_req_t* helper_req = (ui_ipc_helper_req_t*)malloc(sizeof(ui_ipc_helper_req_t));
+    if(helper_req == NULL){
+        log_error("uix_post_helper: malloc failed");
+        resp->type = IPC_RESP_ERROR_NOMEM;
+        return sizeof(ipc_resp_type_t);
+    }
+    helper_req->type = type;
+    helper_req->on_heap = true;
+    ui_ipc_helper_request(helper_req);
+    resp->type = IPC_RESP_OK;
+    return ok_len;
+}
+
+inline static int handle_uix_confirm_start(ipc_req_t *req, ipc_resp_t *resp){
+    uint32_t id = uix_session_confirm_start(&req->uix_confirm_start);
+    if(id == 0){
+        resp->type = IPC_RESP_ERROR_STATE_CONFLICT;
+        return sizeof(ipc_resp_type_t);
+    }
+    resp->uix_session_start.session_id = id;
+    return uix_post_helper(UI_IPC_HELPER_REQ_TYPE_UIX_SHOW, resp,
+                           calculate_ipc_resp_size_by_req(req->type));
+}
+
+inline static int handle_uix_usb_select_start(ipc_req_t *req, ipc_resp_t *resp){
+    uint32_t id = uix_session_usb_select_start(&req->uix_usb_select_start);
+    if(id == 0){
+        resp->type = IPC_RESP_ERROR_STATE_CONFLICT;
+        return sizeof(ipc_resp_type_t);
+    }
+    resp->uix_session_start.session_id = id;
+    return uix_post_helper(UI_IPC_HELPER_REQ_TYPE_UIX_SHOW, resp,
+                           calculate_ipc_resp_size_by_req(req->type));
+}
+
+inline static int handle_uix_session_poll(ipc_req_t *req, ipc_resp_t *resp){
+    uint32_t state = UIX_NOT_FOUND, choice = 0;
+    uix_session_poll(req->uix_session.session_id, &state, &choice);
+    resp->uix_session_poll.state = state;
+    resp->uix_session_poll.choice = choice;
+    resp->type = IPC_RESP_OK;
+    return calculate_ipc_resp_size_by_req(req->type);
+}
+
+inline static int handle_uix_session_cancel(ipc_req_t *req, ipc_resp_t *resp){
+    if(uix_session_cancel(req->uix_session.session_id)){
+        // 撤回屏上的交互界面
+        return uix_post_helper(UI_IPC_HELPER_REQ_TYPE_UIX_DISMISS, resp,
+                               calculate_ipc_resp_size_by_req(req->type));
+    }
+    resp->type = IPC_RESP_OK;
+    return calculate_ipc_resp_size_by_req(req->type);
+}
+
+// =========================================
 // 全局请求 处理方法
 // =========================================
 extern int g_exitcode;
@@ -532,6 +589,14 @@ int apps_ipc_handler(apps_t *apps, uint8_t* rxbuf, size_t rxlen,uint8_t* txbuf, 
             return handle_overlay_schedule_transition_video(apps, req, resp);
         case IPC_REQ_APP_EXIT:
             return handle_app_exit(req, resp);
+        case IPC_REQ_UIX_CONFIRM_START:
+            return handle_uix_confirm_start(req, resp);
+        case IPC_REQ_UIX_USB_SELECT_START:
+            return handle_uix_usb_select_start(req, resp);
+        case IPC_REQ_UIX_SESSION_POLL:
+            return handle_uix_session_poll(req, resp);
+        case IPC_REQ_UIX_SESSION_CANCEL:
+            return handle_uix_session_cancel(req, resp);
         default:
             log_error("apps_ipc_handler: unknown request type: %d", req->type);
             resp->type = IPC_RESP_ERROR_UNKNOWN;

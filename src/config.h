@@ -91,6 +91,16 @@
 
     #define VIDEO_WIDTH 384
     #define VIDEO_HEIGHT 640
+
+    // 兼容 720x1280 时代高清素材：真实内容 720x1280，编码宽按 32 对齐补到 736。
+    // 挂载时 src 裁窗取左 720x1280(丢掉右 16px 对齐 padding)，
+    // 再由 DEFE frontend 硬件缩小到屏幕 360x640(等比 1/2)。
+    // VE 解码耗时与 720 档相同(~20-26ms/帧)，capture buffer 数由
+    // VDEC_CAPTURE_LARGE_AREA 按编码面积自动落到 LARGE 档。
+    #define VIDEO_HIRES_WIDTH 736           // 对齐后编码宽
+    #define VIDEO_HIRES_HEIGHT 1280
+    #define VIDEO_HIRES_CROP_WIDTH 720      // 真实内容宽(裁窗)
+
     #define UI_WIDTH 360
     #define UI_HEIGHT 640
     #define OVERLAY_WIDTH 360
@@ -111,6 +121,7 @@
     #define UI_MAINMENU_Y 190
     #define UI_WARNING_Y 565
     #define UI_CONFIRM_Y (UI_HEIGHT - 125)
+    #define UI_USBSELECT_Y (UI_HEIGHT - 190)
 
 #elif defined(USE_480_854_SCREEN)
     #error "USE_480_854_SCREEN is not supported yet!"
@@ -150,6 +161,7 @@
     #define UI_MAINMENU_Y 380
     #define UI_WARNING_Y 1130
     #define UI_CONFIRM_Y (UI_HEIGHT - 250)
+    #define UI_USBSELECT_Y (UI_HEIGHT - 380)
 
 #endif // USE_360_640_SCREEN, USE_480_854_SCREEN, USE_720_1280_SCREEN
 
@@ -192,10 +204,16 @@
 #define VDEC_OUTPUT_BUF_COUNT 2
 // B 帧重排深度下限（素材 has_b_frames=2）
 #define VDEC_REORDER_DEPTH 2
-// capture(解码帧) 数 = max_ref + reorder + 3，夹在下面区间内
-// 720 档 tiled NV12 每帧 1.35MB，10 帧 13.5MB（CMA 32MB）
-#define VDEC_CAPTURE_BUF_MIN 6
-#define VDEC_CAPTURE_BUF_MAX 10
+// capture(解码帧) 数：有 VUI bitstream_restriction 时用编码器承诺的
+// DPB 联合上限(max_dec_frame_buffering + bump滞后1 + 入队1 + 在屏1 + 解码中1，
+// x264 常见 4+4=8)；无 VUI 退回 max_ref+reorder+3 的不相交最差账。
+// 在屏 1 格是阻塞 commit 换来的(NONBLOCK 在飞翻页要押 2)。
+// 按分辨率分档钳制：720 档帧大(1.4MB)钳 8 ≈11.3MB；360 档帧小(0.37MB)放到 16
+// ≈5.9MB，容野素材的逆天 ref 数
+#define VDEC_CAPTURE_BUF_MIN 5
+#define VDEC_CAPTURE_BUF_MAX_LARGE 8
+#define VDEC_CAPTURE_BUF_MAX_SMALL 16
+#define VDEC_CAPTURE_LARGE_AREA (600 * 1000) /* 编码像素数阈值(720 档 942k) */
 
 
 // ========== Animation Configuration ==========

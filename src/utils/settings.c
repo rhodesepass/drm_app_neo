@@ -85,7 +85,7 @@ void settings_init(settings_t *settings){
         else{
             fclose(f);
             set_brightness(settings->brightness);
-            settings_set_usb_mode(settings->usb_mode);
+            // usb_mode 已废弃：USB 由 usb_aio_handler 的 greeter 流程接管，开机不再拉 usbctl
             // log_settings(settings);
             pthread_mutex_init(&settings->mtx, NULL);
             return;
@@ -104,7 +104,6 @@ void settings_init(settings_t *settings){
     settings->ctrl_word.no_intro_block = 0;
     settings->ctrl_word.no_overlay_block = 0;
     settings->theme_id = 0;
-    settings_set_usb_mode(settings->usb_mode);
     pthread_mutex_init(&settings->mtx, NULL);
     settings_save(settings);
     return;

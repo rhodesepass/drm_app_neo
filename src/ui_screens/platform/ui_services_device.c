@@ -40,6 +40,7 @@ static screen_id_t map_screen(curr_screen_t s)
         case curr_screen_t_SCREEN_WARNING:    return SCREEN_WARNING;
         case curr_screen_t_SCREEN_CONFIRM:    return SCREEN_CONFIRM;
         case curr_screen_t_SCREEN_APPLIST:    return SCREEN_APPLIST;
+        case curr_screen_t_SCREEN_USBSELECT:  return SCREEN_USBSELECT;
         default:                              return SCREEN_MAINMENU;
     }
 }
@@ -56,6 +57,7 @@ static curr_screen_t unmap_screen(screen_id_t s)
         case SCREEN_WARNING:    return curr_screen_t_SCREEN_WARNING;
         case SCREEN_CONFIRM:    return curr_screen_t_SCREEN_CONFIRM;
         case SCREEN_APPLIST:    return curr_screen_t_SCREEN_APPLIST;
+        case SCREEN_USBSELECT:  return curr_screen_t_SCREEN_USBSELECT;
         default:                return curr_screen_t_SCREEN_MAINMENU;
     }
 }

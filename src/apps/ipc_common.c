@@ -53,6 +53,16 @@ size_t calculate_ipc_req_size(ipc_req_type_t type){
         case IPC_REQ_APP_EXIT:
             size += sizeof(ipc_req_app_exit_data_t);
             break;
+        case IPC_REQ_UIX_CONFIRM_START:
+            size += sizeof(ipc_req_uix_confirm_start_data_t);
+            break;
+        case IPC_REQ_UIX_USB_SELECT_START:
+            size += sizeof(ipc_req_uix_usb_select_start_data_t);
+            break;
+        case IPC_REQ_UIX_SESSION_POLL:
+        case IPC_REQ_UIX_SESSION_CANCEL:
+            size += sizeof(ipc_req_uix_session_data_t);
+            break;
         default:
             log_error("calculate_ipc_req_size: unknown request type: %d", type);
             break;
@@ -110,6 +120,16 @@ size_t calculate_ipc_resp_size_by_req(ipc_req_type_t type){
             // No additional data
             break;
         case IPC_REQ_APP_EXIT:
+            // No additional data
+            break;
+        case IPC_REQ_UIX_CONFIRM_START:
+        case IPC_REQ_UIX_USB_SELECT_START:
+            size += sizeof(ipc_resp_uix_session_start_data_t);
+            break;
+        case IPC_REQ_UIX_SESSION_POLL:
+            size += sizeof(ipc_resp_uix_session_poll_data_t);
+            break;
+        case IPC_REQ_UIX_SESSION_CANCEL:
             // No additional data
             break;
         default:
@@ -171,6 +191,18 @@ void ipc_print_req_type(ipc_req_type_t type){
             break;
         case IPC_REQ_APP_EXIT:
             log_debug("IPC_REQ_APP_EXIT");
+            break;
+        case IPC_REQ_UIX_CONFIRM_START:
+            log_debug("IPC_REQ_UIX_CONFIRM_START");
+            break;
+        case IPC_REQ_UIX_USB_SELECT_START:
+            log_debug("IPC_REQ_UIX_USB_SELECT_START");
+            break;
+        case IPC_REQ_UIX_SESSION_POLL:
+            log_debug("IPC_REQ_UIX_SESSION_POLL");
+            break;
+        case IPC_REQ_UIX_SESSION_CANCEL:
+            log_debug("IPC_REQ_UIX_SESSION_CANCEL");
             break;
         default:
             log_debug("IPC_REQ_UNKNOWN (%d)", type);

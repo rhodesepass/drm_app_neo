@@ -127,6 +127,7 @@ set(EPASS_SOURCES
   src/ui/filemanager.c
   src/ui/battery.c
   src/ui/ipc_helper.c
+  src/ui/uix_session.c
 
   # 手写 UI (取代 EEZ)
   src/ui_screens/screen_manager.c
@@ -142,6 +143,7 @@ set(EPASS_SOURCES
   src/ui_screens/screens/screen_applist.c
   src/ui_screens/screens/screen_warning.c
   src/ui_screens/screens/screen_confirm.c
+  src/ui_screens/screens/screen_usbselect.c
   src/ui_screens/platform/ui_backend_device.c
   src/ui_screens/platform/ui_plane_device.c
   src/ui_screens/platform/ui_services_device.c

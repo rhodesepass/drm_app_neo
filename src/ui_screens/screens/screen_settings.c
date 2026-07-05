@@ -23,7 +23,7 @@ static const char *theme_options(void)
 }
 
 static struct {
-    lv_obj_t *sw_mode, *sw_int, *usb, *theme;   // 下拉
+    lv_obj_t *sw_mode, *sw_int, *theme;   // 下拉
 } self;
 
 // ---- 开关回调 ----
@@ -33,7 +33,6 @@ static void on_no_overlay(lv_event_t *e){ ui_backend_no_overlay_set(lv_obj_has_s
 // ---- 下拉回调 ----
 static void on_sw_mode(lv_event_t *e)   { ui_backend_sw_mode_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 static void on_sw_int(lv_event_t *e)    { ui_backend_sw_interval_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
-static void on_usb(lv_event_t *e)       { ui_backend_usb_mode_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 static void on_theme(lv_event_t *e)     { ui_backend_theme_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 // ---- 按钮 ----
 static void on_clear_cache(lv_event_t *e){ (void)e; /* 占位键: 吸收进设置屏首个 release，避免误触 slider */ }
@@ -80,8 +79,7 @@ lv_obj_t *screen_settings_create(void)
                                  "顺序播放\n随机播放\n手动切换", ui_backend_sw_mode_get(), on_sw_mode);
     self.sw_int  = make_dropdown(root, 195, 210, 144, 175, "自动切换间隔",
                                  "1分钟\n3分钟\n5分钟\n10分钟\n30分钟", ui_backend_sw_interval_get(), on_sw_int);
-    self.usb     = make_dropdown(root, 22, 292, 151, 263, "USB模式",
-                                 "文件(MTP)\nShell(串口)\n网络(rndis)\n仅充电\n管理器APP", ui_backend_usb_mode_get(), on_usb);
+    // USB 模式下拉已废弃：插入时由 usb_aio_handler 弹选择屏（greeter 流程）
     self.theme   = make_dropdown(root, 195, 292, 144, 263, "主题",
                                  theme_options(), ui_backend_theme_get(), on_theme);
 
@@ -102,6 +100,5 @@ void screen_settings_tick(void)
 {
     sync_dd(self.sw_mode, ui_backend_sw_mode_get());
     sync_dd(self.sw_int,  ui_backend_sw_interval_get());
-    sync_dd(self.usb,     ui_backend_usb_mode_get());
     sync_dd(self.theme,   ui_backend_theme_get());
 }

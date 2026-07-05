@@ -162,6 +162,7 @@ void ui_backend_sw_interval_set(int v)
     settings_unlock(&g_settings);
     settings_update(&g_settings);
 }
+// usb_mode 已废弃（USB 归 usb_aio_handler 的 greeter 流程），接口保留给 sim/兼容
 int  ui_backend_usb_mode_get(void)    { return (int)g_settings.usb_mode; }
 void ui_backend_usb_mode_set(int v)
 {
@@ -169,7 +170,6 @@ void ui_backend_usb_mode_set(int v)
     g_settings.usb_mode = (usb_mode_t)v;
     settings_unlock(&g_settings);
     settings_update(&g_settings);
-    settings_set_usb_mode((usb_mode_t)v);
 }
 
 bool ui_backend_lowbat_trip_get(void) { return g_settings.ctrl_word.lowbat_trip; }

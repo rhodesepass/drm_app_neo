@@ -1,5 +1,6 @@
 #include <apps/apps.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ui_screens/ui_services.h>
 #include <unistd.h>
@@ -35,13 +36,6 @@ cacheassets_t g_cacheassets;
 prts_t g_prts;
 apps_t g_apps;
 
-buffer_object_t g_video_buf;
-#ifdef VIDEO_LEGACY_WIDTH
-// 旧素材(384x640)modeset 专用：frontend 的读取 stride 取自所挂 fb 的 pitch，
-// 必须用与解码帧同宽的 fb 才能让 DEFE 正确读取再放大
-buffer_object_t g_video_buf_legacy;
-#endif
-
 int g_running = 1;
 int g_exitcode = 0;
 bool g_use_sd = false;
@@ -53,38 +47,37 @@ void signal_handler(int sig)
     g_exitcode = 0;
 }
 
-// video 层按解码尺寸挂载(atomic plane commit)；尺寸未变时跳过
+// video 层按解码尺寸记录挂载几何(惰性：plane 由显示线程随首帧启用，
+// 不占黑 buffer；stop 后 plane disable，露出 DEBE 黑背景)。
 // 返回 -1 表示不支持的尺寸
 //
-// FB 按 VE 输出尺寸(VIDEO_WIDTH/HEIGHT，32 对齐)分配；VIDEO_WIDTH 通常 > 屏幕真实
-// 宽度(对齐 padding)。挂载统一走 src 裁窗 + dst=屏幕真实尺寸:
-//   当代素材:crop 左 SCREEN_WIDTH×SCREEN_HEIGHT，dst 同尺寸，1:1 不缩放(裁掉右侧 padding)。
-//   旧素材(384x640,真实 360x640):crop 左 360×640，再 DEFE 放大到 720×1280(等比 2x)，
-//     padding 被裁窗排除不参与缩放采样。
+// vdec fb 宽为 VE 输出宽(32 对齐)，通常 > 屏幕真实宽度。统一走 src 裁窗 +
+// dst=屏幕真实尺寸:
+//   当代素材:crop 左 SCREEN_WIDTH×SCREEN_HEIGHT，1:1 不缩放(裁掉右侧 padding)。
+//   旧素材(384x640,真实 360x640)@720 档:crop 左 360×640，DEFE 放大到 720×1280(等比 2x)。
+//   高清素材(736x1280,真实 720x1280)@360 档:crop 左 720×1280，DEFE 缩小到 360×640(等比 1/2)。
+//   padding 均被裁窗排除不参与缩放采样。
 int video_layer_ensure_mount(int src_w, int src_h){
-    static int s_mounted_w = 0;
-    static int s_mounted_h = 0;
-
-    if (src_w == s_mounted_w && src_h == s_mounted_h)
-        return 0;
-
     if (src_w == VIDEO_WIDTH && src_h == VIDEO_HEIGHT) {
-        drm_warpper_mount_layer_cropped(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
-                                        &g_video_buf, SCREEN_WIDTH, SCREEN_HEIGHT);
+        drm_warpper_set_layer_geometry(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                       SCREEN_WIDTH, SCREEN_HEIGHT,
+                                       SCREEN_WIDTH, SCREEN_HEIGHT);
 #ifdef VIDEO_LEGACY_WIDTH
     } else if (src_w == VIDEO_LEGACY_WIDTH && src_h == VIDEO_LEGACY_HEIGHT) {
-        drm_warpper_mount_layer_rect(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
-                                     &g_video_buf_legacy,
-                                     VIDEO_LEGACY_CROP_WIDTH, VIDEO_LEGACY_HEIGHT,
-                                     SCREEN_WIDTH, SCREEN_HEIGHT);
+        drm_warpper_set_layer_geometry(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                       VIDEO_LEGACY_CROP_WIDTH, VIDEO_LEGACY_HEIGHT,
+                                       SCREEN_WIDTH, SCREEN_HEIGHT);
+#endif
+#ifdef VIDEO_HIRES_WIDTH
+    } else if (src_w == VIDEO_HIRES_WIDTH && src_h == VIDEO_HIRES_HEIGHT) {
+        drm_warpper_set_layer_geometry(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                       VIDEO_HIRES_CROP_WIDTH, VIDEO_HIRES_HEIGHT,
+                                       SCREEN_WIDTH, SCREEN_HEIGHT);
 #endif
     } else {
         log_error("unsupported video size %dx%d", src_w, src_h);
         return -1;
     }
-
-    s_mounted_w = src_w;
-    s_mounted_h = src_h;
     return 0;
 }
 
@@ -97,7 +90,6 @@ void mount_video_layer_callback(void *userdata,bool is_last){
 // ============ 组件依赖关系： ============
 // LayerAnimation 依赖 PRTS定时器 与 drm warpper
 // mediaplayer 依赖 drm warpper
-// cacheassets 依赖 mediaplayer 初始化用的那个buffer
 // overlay 依赖 drm warpper 与 layer animation
 // prts 依赖 overlay
 // apps 依赖 prts
@@ -164,12 +156,8 @@ int main(int argc, char *argv[]){
         VIDEO_HEIGHT, 
     DRM_WARPPER_LAYER_MODE_MB32_NV12);
 
-    // FIXME：
-    // 用来跑modeset的buffer，实际上是不用的，这一片内存你也可以拿去干别的
-    // 期待有能人帮优化掉这个allocate。
-    // 20260110: 这个内存如果用做别的话，modeset的话会显示成很难看的绿色。先闲置把
-    drm_warpper_allocate_buffer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, &g_video_buf);
-    // drm_warpper_mount_layer(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0, &video_buf);
+    // 老 FIXME 里那两块"跑 modeset 用"的黑 buffer 已优化掉：video 层惰性
+    // 挂载(首帧随 mount 属性一起 commit)，stop 后 disable plane 露出黑背景
 
     /* initialize mediaplayer */
     if (mediaplayer_init(&g_mediaplayer, &g_drm_warpper) != 0) {
@@ -177,31 +165,6 @@ int main(int argc, char *argv[]){
         drm_warpper_destroy(&g_drm_warpper);
         return -1;
     }
-
-    // 填充video buffer，防止闪烁。
-    fill_nv12_buffer_with_color(
-        g_video_buf.vaddr,
-        VIDEO_WIDTH,
-        VIDEO_HEIGHT,
-        0xff000000
-    );
-
-#ifdef VIDEO_LEGACY_WIDTH
-    drm_warpper_allocate_buffer_sized(
-        &g_drm_warpper,
-        DRM_WARPPER_LAYER_VIDEO,
-        VIDEO_LEGACY_WIDTH,
-        VIDEO_LEGACY_HEIGHT,
-        &g_video_buf_legacy
-    );
-    // 同样填黑：脏 buffer 参与 modeset 会闪绿(见上方 FIXME)
-    fill_nv12_buffer_with_color(
-        g_video_buf_legacy.vaddr,
-        VIDEO_LEGACY_WIDTH,
-        VIDEO_LEGACY_HEIGHT,
-        0xff000000
-    );
-#endif
 
     // mediaplayer_set_video(&g_mediaplayer, "/assets/MS/loop.mp4");
     // mediaplayer_start(&g_mediaplayer);

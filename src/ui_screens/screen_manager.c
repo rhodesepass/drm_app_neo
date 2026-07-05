@@ -17,6 +17,7 @@
 #include "screens/screen_applist.h"
 #include "screens/screen_warning.h"
 #include "screens/screen_confirm.h"
+#include "screens/screen_usbselect.h"
 
 typedef lv_obj_t *(*screen_create_fn)(void);
 typedef void (*screen_tick_fn)(void);
@@ -79,6 +80,7 @@ static void register_screens(void)
     s_screens[SCREEN_APPLIST]    = (screen_entry_t){ screen_applist_create,    screen_applist_tick,    NULL, 0 };
     s_screens[SCREEN_WARNING]    = (screen_entry_t){ screen_warning_create,    NULL,                   NULL, UI_WARNING_Y };
     s_screens[SCREEN_CONFIRM]    = (screen_entry_t){ screen_confirm_create,    NULL,                   NULL, UI_CONFIRM_Y };
+    s_screens[SCREEN_USBSELECT]  = (screen_entry_t){ screen_usbselect_create,  NULL,                   NULL, UI_USBSELECT_Y };
 }
 
 // 瞬切内容，不做 LVGL 软件过渡。过渡观感交给硬件图层 Y 滑动(ui_plane_move)：

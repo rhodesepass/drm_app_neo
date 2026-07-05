@@ -23,6 +23,7 @@ typedef enum {
     SCREEN_APPLIST,
     SCREEN_WARNING,
     SCREEN_CONFIRM,
+    SCREEN_USBSELECT,
     SCREEN_COUNT
 } screen_id_t;
 

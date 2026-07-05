@@ -129,6 +129,13 @@ typedef struct{
 } ipc_req_app_exit_data_t;
 // 退出应用 - 响应数据（空）
 
+// ========== UIX 子模块（外部交互会话）==========
+// 轮询式：START 立即返回 session_id，结果由客户端 SESSION_POLL 轮询。
+// handler 不等用户操作（IPC 线程不能阻塞，UI 结果产生在 LVGL 线程）。
+// 同时只允许一个会话，冲突回 IPC_RESP_ERROR_STATE_CONFLICT。
+// 类型定义在独立小头（sim 的 UI 代码也要编，不能拖进 prts 等设备侧依赖）。
+#include <ui/uix_types.h>
+
 // =====================================
 // 请求 部分
 // =====================================
@@ -177,7 +184,13 @@ typedef enum {
     // 全局请求
     IPC_REQ_APP_EXIT = 14,
 
-    IPC_REQ_MAX = 16,
+    // UIX 子模块（外部交互会话，usb_aio_handler 用）
+    IPC_REQ_UIX_CONFIRM_START = 16,
+    IPC_REQ_UIX_USB_SELECT_START = 17,
+    IPC_REQ_UIX_SESSION_POLL = 18,
+    IPC_REQ_UIX_SESSION_CANCEL = 19,
+
+    IPC_REQ_MAX = 20,
 } ipc_req_type_t;
 
 typedef struct {
@@ -194,6 +207,9 @@ typedef struct {
         ipc_req_overlay_schedule_transition_data_t overlay_schedule_transition;
         ipc_req_overlay_schedule_transition_video_data_t overlay_schedule_transition_video;
         ipc_req_app_exit_data_t app_exit;
+        ipc_req_uix_confirm_start_data_t uix_confirm_start;
+        ipc_req_uix_usb_select_start_data_t uix_usb_select_start;
+        ipc_req_uix_session_data_t uix_session;
     };
 } ipc_req_t;
 
@@ -220,6 +236,8 @@ typedef struct {
         ipc_prts_operator_info_data_t prts_operator_info;
         ipc_settings_data_t settings;
         ipc_mediaplayer_video_path_data_t mediaplayer_video_path;
+        ipc_resp_uix_session_start_data_t uix_session_start;
+        ipc_resp_uix_session_poll_data_t uix_session_poll;
     };
 } ipc_resp_t;
 
