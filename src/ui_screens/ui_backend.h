@@ -47,6 +47,8 @@ bool ui_backend_no_intro_get(void);     void ui_backend_no_intro_set(bool v);
 bool ui_backend_no_overlay_get(void);   void ui_backend_no_overlay_set(bool v);
 // 配色方案索引 (见 ui_theme 预设)。set 会持久化并立即应用 (ui_theme_apply)。
 int  ui_backend_theme_get(void);        void ui_backend_theme_set(int id);
+// 让 usb_aio_handler 回 greeter 重新枚举 (USB 卡在错误模式时的恢复手段)
+void ui_backend_usb_reset(void);
 
 // ---- 干员列表 ----
 typedef struct {

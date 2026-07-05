@@ -36,7 +36,7 @@ static void on_sw_int(lv_event_t *e)    { ui_backend_sw_interval_set(lv_dropdown
 static void on_theme(lv_event_t *e)     { ui_backend_theme_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 // ---- 按钮 ----
 static void on_clear_cache(lv_event_t *e){ (void)e; /* 占位键: 吸收进设置屏首个 release，避免误触 slider */ }
-static void on_srgn(lv_event_t *e)       { (void)e; ui_hook_srgn_config(); }
+static void on_usb_reset(lv_event_t *e)  { (void)e; ui_backend_usb_reset(); }
 static void on_back(lv_event_t *e)       { (void)e; screen_show(SCREEN_MAINMENU); }
 
 static lv_obj_t *make_switch(lv_obj_t *root, int y, const char *text, bool on, lv_event_cb_t cb)
@@ -80,10 +80,11 @@ lv_obj_t *screen_settings_create(void)
     self.sw_int  = make_dropdown(root, 195, 210, 144, 175, "自动切换间隔",
                                  "1分钟\n3分钟\n5分钟\n10分钟\n30分钟", ui_backend_sw_interval_get(), on_sw_int);
     // USB 模式下拉已废弃：插入时由 usb_aio_handler 弹选择屏（greeter 流程）
-    self.theme   = make_dropdown(root, 195, 292, 144, 263, "主题",
+    self.theme   = make_dropdown(root, 23, 292, 151, 263, "主题",
                                  theme_options(), ui_backend_theme_get(), on_theme);
 
-    ui_text_button(root, 23, 513, 316, 52, UI_SEM_DANGER, "进入底层设置srgn_config", on_srgn);
+
+    ui_text_button(root, 23, 513, 316, 52, UI_SEM_DANGER, "重置USB模式", on_usb_reset);
     ui_text_button(root, 23, 574, 316, 51, UI_SEM_DEFAULT, "返回", on_back);
 
     return root;

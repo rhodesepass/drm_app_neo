@@ -23,6 +23,7 @@ typedef enum {
 
 void add_style_label_large(lv_obj_t *obj);     // 标题 (FONT_TITLE)
 void add_style_label_small(lv_obj_t *obj);     // 正文 (FONT_BODY)
+void set_style_label_size(lv_obj_t *obj, bool large); // 二选一，切换标题/正文字号
 void add_style_fa_label(lv_obj_t *obj);        // 图标 (FONT_ICON)
 void add_style_main_btn(lv_obj_t *obj);        // 主菜单大按钮
 void add_style_main_small_btn(lv_obj_t *obj);  // 主菜单小按钮 (重启/关机)

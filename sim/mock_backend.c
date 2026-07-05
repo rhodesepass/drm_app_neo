@@ -47,6 +47,7 @@ int  ui_backend_sw_interval_get(void) { return s_sw_interval; }
 void ui_backend_sw_interval_set(int v) { s_sw_interval = v; log_info("[mock] sw_interval=%d", v); }
 int  ui_backend_usb_mode_get(void) { return s_usb_mode; }
 void ui_backend_usb_mode_set(int v) { s_usb_mode = v; log_info("[mock] usb_mode=%d", v); }
+void ui_backend_usb_reset(void) { log_info("[mock] usb reset -> greeter"); }
 bool ui_backend_lowbat_trip_get(void) { return s_lowbat; }
 void ui_backend_lowbat_trip_set(bool v) { s_lowbat = v; log_info("[mock] lowbat=%d", v); }
 bool ui_backend_no_intro_get(void) { return s_no_intro; }

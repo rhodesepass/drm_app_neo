@@ -18,14 +18,20 @@ static lv_timer_t *g_ui_ipc_timer = NULL;
 // 当前正在展示的 UIX 会话（LVGL 线程私有）
 static uint32_t g_uix_shown_id = 0;
 
-static void uix_confirm_proceed(void) { uix_session_finish(g_uix_shown_id, UIX_CONFIRMED, 0); g_uix_shown_id = 0; }
-static void uix_confirm_cancel(void)  { uix_session_finish(g_uix_shown_id, UIX_DENIED, 0); g_uix_shown_id = 0; }
+static void uix_confirm_proceed(void) {
+    uix_session_finish(g_uix_shown_id, UIX_CONFIRMED, 0);
+    g_uix_shown_id = 0;
+}
+static void uix_confirm_cancel(void) {
+    uix_session_finish(g_uix_shown_id, UIX_DENIED, 0);
+    g_uix_shown_id = 0;
+}
 
 // 交互屏还在最前时收屏，否则不打扰用户当前所在界面
 static void uix_dismiss_ui(void){
     screen_id_t cur = screens_current();
     if(cur == SCREEN_CONFIRM || cur == SCREEN_USBSELECT){
-        screen_show(SCREEN_MAINMENU);
+        screen_show(SCREEN_SPINNER);
     }
     g_uix_shown_id = 0;
 }
@@ -38,7 +44,7 @@ static void uix_show(void){
     switch(kind){
         case UIX_KIND_CONFIRM:
             g_uix_shown_id = id;
-            screen_confirm_show2(title, desc, uix_confirm_proceed, uix_confirm_cancel);
+            screen_confirm_show_uix(title, desc, uix_confirm_proceed, uix_confirm_cancel);
             break;
         case UIX_KIND_USB_SELECT:
             g_uix_shown_id = id;

@@ -17,6 +17,7 @@
 #include "utils/misc.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <sys/statvfs.h>
@@ -163,6 +164,7 @@ void ui_backend_sw_interval_set(int v)
     settings_update(&g_settings);
 }
 // usb_mode 已废弃（USB 归 usb_aio_handler 的 greeter 流程），接口保留给 sim/兼容
+void ui_backend_usb_reset(void)       { system("usbaioctl greeter &"); }
 int  ui_backend_usb_mode_get(void)    { return (int)g_settings.usb_mode; }
 void ui_backend_usb_mode_set(int v)
 {

@@ -40,6 +40,16 @@ void add_style_label_small(lv_obj_t *obj)
     lv_obj_add_style(obj, style_label_small(), LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
+void set_style_label_size(lv_obj_t *obj, bool large)
+{
+    lv_obj_remove_style(obj, style_label_large(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_remove_style(obj, style_label_small(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    if (large)
+        add_style_label_large(obj);
+    else
+        add_style_label_small(obj);
+}
+
 // ---- fa_label: 图标 ----
 static lv_style_t *style_fa_label(void)
 {

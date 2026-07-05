@@ -17,13 +17,19 @@ static struct {
     void (*on_cancel)(void);
 } self;
 
+static void dismiss_cancel(void)
+{
+    void (*cb)(void) = self.on_cancel;
+    self.on_cancel = NULL;
+    self.on_proceed = NULL;
+    screen_show(SCREEN_SPINNER);
+    if (cb) cb();
+}
+
 static void on_cancel(lv_event_t *e)
 {
     (void)e;
-    void (*cb)(void) = self.on_cancel;
-    self.on_cancel = NULL;
-    screen_show(SCREEN_MAINMENU);
-    if (cb) cb();
+    dismiss_cancel();
 }
 static void on_proceed(lv_event_t *e)
 {
@@ -63,14 +69,34 @@ void screen_confirm_show(const char *title, void (*proceed)(void))
     screen_confirm_show2("=PRTS二次确认=", title ? title : "确认操作?", proceed, NULL);
 }
 
-void screen_confirm_show2(const char *head, const char *desc,
-                          void (*proceed)(void), void (*cancel)(void))
+static void show_impl(const char *head, const char *desc,
+                      void (*proceed)(void), void (*cancel)(void), bool desc_large)
 {
     lv_strlcpy(self.h, head ? head : "=PRTS二次确认=", sizeof(self.h));
     lv_strlcpy(self.t, desc ? desc : "确认操作?", sizeof(self.t));
     self.on_proceed = proceed;
     self.on_cancel = cancel;
     if (self.head) lv_label_set_text(self.head, self.h);
-    if (self.title) lv_label_set_text(self.title, self.t);
+    if (self.title) {
+        lv_label_set_text(self.title, self.t);
+        set_style_label_size(self.title, desc_large);
+    }
     screen_show(SCREEN_CONFIRM);
+}
+
+void screen_confirm_show2(const char *head, const char *desc,
+                          void (*proceed)(void), void (*cancel)(void))
+{
+    show_impl(head, desc, proceed, cancel, true);
+}
+
+void screen_confirm_show_uix(const char *head, const char *desc,
+                             void (*proceed)(void), void (*cancel)(void))
+{
+    show_impl(head, desc, proceed, cancel, false);
+}
+
+void screen_confirm_escape(void)
+{
+    dismiss_cancel();
 }

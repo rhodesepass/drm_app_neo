@@ -275,6 +275,14 @@ void screens_handle_key(uint32_t key)
         return;
     }
 
+    // 确认框：ESC 等同取消，回 spinner
+    if (s_current == SCREEN_CONFIRM) {
+        if (key == LV_KEY_ESC) {
+            screen_confirm_escape();
+        }
+        return;
+    }
+
     // 主菜单 / 干员列表：ESC 回 spinner
     if (s_current == SCREEN_MAINMENU || s_current == SCREEN_OPLIST) {
         if (key == LV_KEY_ESC) {
