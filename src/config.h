@@ -225,6 +225,10 @@
 #define LAYER_ANIMATION_STEP_TIME 20000 // 20ms, 1000ms / 50fps
 #define OVERLAY_ANIMATION_STEP_TIME 33000 // 33ms, 1000ms / 30fps
 
+// opinfo 元素引擎：单个 overlay 的元素数量上限（custom 超出时截断；
+// arknights 预设也从这个池里分配，改小前先数一遍预设元素数）
+#define OPINFO_ELEMENTS_MAX 24
+
 #define OVERLAY_ANIMATION_OPINFO_ARKNIGHTS_DURATION (2000 * 1000) // 2s
 
 // arknight overlay specfic. by frame count

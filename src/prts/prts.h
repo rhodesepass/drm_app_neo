@@ -77,7 +77,9 @@ typedef struct {
     // prts 当前状态
     prts_state_t state;
 
-    prts_operator_entry_t operators[PRTS_OPERATORS_MAX];
+    // 动态分配的干员列表（按需 realloc 扩容，上限 PRTS_OPERATORS_MAX）
+    prts_operator_entry_t* operators;
+    int operator_capacity;
     int operator_count;
     int operator_index;
 
@@ -95,6 +97,10 @@ typedef struct {
 
 void prts_init(prts_t* prts,overlay_t* overlay,bool use_sd);
 void prts_destroy(prts_t* prts);
+
+// 保证 operators 数组至少能容纳 need 个 entry（倍增 realloc，上限 PRTS_OPERATORS_MAX）。
+// 成功返回 0。注意 realloc 可能搬家：不要跨调用持有 entry 指针。
+int prts_operators_reserve(prts_t* prts, int need);
 
 void prts_request_set_operator(prts_t* prts,int operator_index);
 void prts_request_reload_assets(prts_t* prts);
