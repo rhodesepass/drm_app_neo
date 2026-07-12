@@ -91,8 +91,6 @@ void ui_battery_init(){
     lv_obj_set_pos(g_battery_obj, UI_WIDTH - S(UI_BATTERY_PADDING) - S(UI_BATTERY_SIZE), S(UI_BATTERY_PADDING));
     lv_obj_set_style_text_font(g_battery_obj, font_get(FONT_ICON, UI_BATTERY_SIZE), LV_PART_MAIN);
     lv_obj_set_style_text_color(g_battery_obj, lv_color_hex(0xffffffff), LV_PART_MAIN);
-    lv_obj_set_style_transform_scale_x(g_battery_obj, 100, LV_PART_MAIN);
-    lv_obj_set_style_transform_scale_y(g_battery_obj, 100, LV_PART_MAIN);
     lv_label_set_text(g_battery_obj, UI_BATTERY_FULL_CHAR);
     lv_obj_set_style_text_align(g_battery_obj, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
 
