@@ -114,10 +114,10 @@ int main(int argc, char *argv[]){
             printf("COMPILE_TIME: %s\n", COMPILE_TIME);
             return 0;
         }
-        else if(strcmp(argv[1], "sd") == 0){
-            g_use_sd = true;
-        }
     }
+
+    // 不再依赖启动参数：/sd 已挂载即启用 SD 资产扫描 (挂载由 init 脚本完成)
+    g_use_sd = is_sd_mounted();
 
 #ifdef APP_RELEASE
     log_warn("Release mode is enabled. Most logs are disabled.");

@@ -1,5 +1,12 @@
 # 字体子集化工具
 
+> 迁移说明：设备侧字体已改为**系统共享方案**——由独立仓 `epass-fonts` + buildroot
+> 包 `epass-fonts` 在 host 侧子集化并装到 `/usr/share/fonts/epass/`，app 构建期经
+> pkg-config(`epass-fonts`) 取目录。本目录下的工具现在只服务两件事：
+>   1. `export_board_charset.py`：扫本仓源码，把字表/图标码点导出到 buildroot
+>      `board/rhodesisland/epass/fonts/`，供 `epass-fonts` 包子集化使用（换字体/加文案后重跑）。
+>   2. `subset_fonts.py` + `font/`：仅剩模拟器 dev 回退用（顶层 CMake 用共享字体后设备侧不再依赖）。
+
 思源黑/宋全量各 16M/24M，全量入 git 不现实。这个独立工具把它们裁成 app 实际会显示的
 字形（几 M），产物用原文件名放到仓库 `font/` 根、随仓库提交；CMake 构建时从 `font/`
 拷进 `res/fonts`。

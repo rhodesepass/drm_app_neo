@@ -4,6 +4,17 @@ project(epass_ui_sim C)
 # 仓库根目录 (sim 的上一级)
 set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# 模拟器字体目录: 优先仓库内 font/ (子集, 现状不变); 若已移除, 回退到兄弟仓
+# epass-fonts/original (共享母本, 全量)。设备侧字体走 epass-fonts 包 (见顶层 CMakeLists)。
+if(EXISTS ${REPO}/font/SourceHanSansSC-Regular.otf)
+  set(SIM_FONT_DIR ${REPO}/font)
+elseif(EXISTS ${REPO}/../epass-fonts/original/SourceHanSansSC-Regular.otf)
+  set(SIM_FONT_DIR ${REPO}/../epass-fonts/original)
+else()
+  message(FATAL_ERROR "找不到模拟器字体: 既无 ${REPO}/font 也无 ../epass-fonts/original")
+endif()
+message(STATUS "sim font dir: ${SIM_FONT_DIR}")
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -70,8 +81,8 @@ function(add_sim_target name screen_define)
   # 图片目录: 走 lv_fs (libpng 解码), 需带盘符 'A:' 前缀
   target_compile_definitions(${name} PRIVATE
     ${screen_define}
-    FONT_REGISTRY_DIR="${REPO}/font"
-    UI_IMG_DIR="A:${REPO}/font"
+    FONT_REGISTRY_DIR="${SIM_FONT_DIR}"
+    UI_IMG_DIR="A:${SIM_FONT_DIR}"
   )
   target_compile_options(${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)
   target_link_libraries(${name}

@@ -75,7 +75,7 @@ static lv_style_t s_main_btn_def,   s_main_btn_foc;
 static lv_style_t s_main_small_def, s_main_small_foc;
 static lv_style_t s_op_btn_def,     s_op_btn_foc;
 static lv_style_t s_op_entry;       // 仅 margin，无色
-static lv_style_t s_flag_sd, s_flag_run, s_flag_fg, s_flag_notrun;
+static lv_style_t s_flag_sd, s_flag_run, s_flag_fg, s_flag_notrun, s_flag_res;
 static lv_style_t s_fill_primary, s_fill_warning, s_fill_danger, s_fill_success, s_fill_neutral;
 static lv_style_t s_spinner_arc, s_log_text;
 static lv_style_t s_focus;      // 键盘焦点外框 (比主题默认更粗、随 S() 缩放)
@@ -123,6 +123,7 @@ static void styles_ensure(void)
     init_flag_base(&s_flag_run);
     init_flag_base(&s_flag_fg);
     init_flag_base(&s_flag_notrun);
+    init_flag_base(&s_flag_res);
 
     init_fill(&s_fill_primary);
     init_fill(&s_fill_warning);
@@ -159,6 +160,7 @@ void styles_apply_palette(void)
     lv_style_set_bg_color(&s_flag_run,    ui_color(UI_C_SUCCESS));
     lv_style_set_bg_color(&s_flag_fg,     ui_color(UI_C_WARNING));
     lv_style_set_bg_color(&s_flag_notrun, ui_color(UI_C_MUTED));
+    lv_style_set_bg_color(&s_flag_res,    ui_color(UI_C_PRIMARY));
 
     lv_style_set_bg_color(&s_fill_primary, ui_color(UI_C_PRIMARY));
     lv_style_set_bg_color(&s_fill_warning, ui_color(UI_C_WARNING));
@@ -210,6 +212,11 @@ void add_style_sd_flag(lv_obj_t *obj)
 {
     styles_ensure();
     lv_obj_add_style(obj, &s_flag_sd, LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+void add_style_res_flag(lv_obj_t *obj)
+{
+    styles_ensure();
+    lv_obj_add_style(obj, &s_flag_res, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 void add_style_app_bg_running(lv_obj_t *obj)
 {

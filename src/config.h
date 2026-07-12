@@ -45,7 +45,12 @@
 // ========== Storage Configuration ==========
 #define NAND_MOUNT_POINT "/"
 #define SD_MOUNT_POINT "/sd"
-#define SD_DEV_PATH "/dev/mmcblk0"
+// NAND 启动时外置 SD 卡数据分区是 mmcblk0p1;
+// SD 启动时系统本身在 SD 上(root=mmcblk0p2), /sd 对应第三个 share 分区
+// (S000sdsetup 负责格式化)。运行时由 sd_dev_path() 按 cmdline 选择。
+#define SD_BOOT_CMDLINE_SIGN  "root=/dev/mmcblk0p2"
+#define SD_DEV_PATH_NAND_BOOT "/dev/mmcblk0p1"
+#define SD_DEV_PATH_SD_BOOT   "/dev/mmcblk0p3"
 
 // ========== PRTS Configuration ==========
 #define PRTS_OPERATORS_MAX 256

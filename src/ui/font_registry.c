@@ -7,8 +7,11 @@
 #include "utils/log.h"
 
 // 字体文件目录。FreeType 关了 LVGL port (PORT=0) ⇒ 直接走 stdio 文件路径，无 lv_fs 盘符。
-// sim 用 -DFONT_REGISTRY_DIR 指向仓库 font/；设备侧不定义此宏，运行时按可执行文件同级
-// res/fonts 解析 (见 respath)。
+// FONT_REGISTRY_DIR 编译期给定字体目录:
+//   - 设备侧: buildroot 顶层 CMake 从 pkg-config(epass-fonts) 取 fontsdir, 定为
+//     /usr/share/fonts/epass (系统共享字体, 见 buildroot package/epass-fonts)。
+//   - 模拟器: sim/CMakeLists 指向仓库 font/ 或兄弟仓 epass-fonts/original。
+// 未定义此宏 (纯本地 dev 构建, 无 epass-fonts) 时, 回退到可执行文件同级 res/fonts (respath)。
 #ifndef FONT_REGISTRY_DIR
 #include "config.h"
 #include "utils/respath.h"
@@ -29,7 +32,7 @@ typedef struct {
 } font_face_desc_t;
 
 static const font_face_desc_t s_faces[FONT_ROLE_COUNT] = {
-    [FONT_BODY]    = { "SourceHanSansSC-Regular.otf",        LV_FREETYPE_FONT_STYLE_NORMAL, 105   },
+    [FONT_BODY]    = { "SourceHanSansSC-Regular.otf",        LV_FREETYPE_FONT_STYLE_NORMAL, 110   },
     [FONT_TITLE]   = { "SourceHanSerifSC-Heavy.otf",         LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
     [FONT_DISPLAY] = { "BebasNeue.otf",                      LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
     [FONT_ICON]    = { "Font-Awesome-7-Free-Solid-900.otf",  LV_FREETYPE_FONT_STYLE_NORMAL, 0   },

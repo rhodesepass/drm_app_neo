@@ -17,6 +17,7 @@ typedef struct {
     lv_obj_t *name;
     lv_obj_t *desc;
     lv_obj_t *sd;
+    lv_obj_t *res; // 分辨率角标 (SD 上方)
     int       op_index; // 当前绑定干员，-1=空
 } oplist_slot_t;
 
@@ -75,6 +76,11 @@ static void slot_focus_cb(lv_event_t *e)
         refocus_op(s->op_index);
         self.scroll_guard = false;
     }
+
+    // 焦点入可见区自己瞬移(不带 LVGL 默认的平滑滚动动画)：弱端逐帧重绘那段太卡。
+    lv_group_t *g = screens_group();
+    lv_obj_t *foc = g ? lv_group_get_focused(g) : NULL;
+    if (foc) lv_obj_scroll_to_view_recursive(foc, LV_ANIM_OFF);
 }
 
 static void make_slot(int i)
@@ -94,6 +100,7 @@ static void make_slot(int i)
     add_style_op_btn(s->btn);
     lv_obj_add_event_cb(s->btn, slot_click_cb, LV_EVENT_PRESSED, s);
     lv_obj_add_event_cb(s->btn, slot_focus_cb, LV_EVENT_FOCUSED, s);
+    lv_obj_remove_flag(s->btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS); // 关默认动画滚动，改由 focus cb 无动画滚
 
     s->logo = lv_image_create(s->btn);
     lv_obj_set_pos(s->logo, 0, 0);
@@ -102,19 +109,24 @@ static void make_slot(int i)
 
     s->name = lv_label_create(s->btn);
     lv_obj_set_pos(s->name, S(68), 0);
-    lv_obj_set_width(s->name, S(232));
-    lv_label_set_long_mode(s->name, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_size(s->name, S(232), S(32)); // LONG_DOT 要固定高度才会截断，否则退化成换行
+    lv_label_set_long_mode(s->name, LV_LABEL_LONG_DOT);
     add_style_label_large(s->name);
 
     s->desc = lv_label_create(s->btn);
     lv_obj_set_pos(s->desc, S(68), S(32));
-    lv_obj_set_width(s->desc, S(213));
+    lv_obj_set_size(s->desc, S(213), S(32));
+    lv_label_set_long_mode(s->desc, LV_LABEL_LONG_DOT);
     add_style_label_small(s->desc);
 
     s->sd = lv_label_create(s->btn);
     lv_obj_set_pos(s->sd, S(281), S(47));
     add_style_sd_flag(s->sd);
     lv_label_set_text(s->sd, "SD");
+
+    s->res = lv_label_create(s->btn);
+    lv_obj_set_pos(s->res, S(281), S(30));
+    add_style_res_flag(s->res);
 
     s->op_index = -1;
 }
@@ -129,6 +141,12 @@ static void update_slot_content(int i, int op_idx)
     if (e.logo_path) lv_image_set_src(s->logo, e.logo_path);
     if (e.sd) lv_obj_remove_flag(s->sd, LV_OBJ_FLAG_HIDDEN);
     else      lv_obj_add_flag(s->sd, LV_OBJ_FLAG_HIDDEN);
+    if (e.res) {
+        lv_label_set_text(s->res, e.res);
+        lv_obj_remove_flag(s->res, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s->res, LV_OBJ_FLAG_HIDDEN);
+    }
     s->op_index = op_idx;
 }
 

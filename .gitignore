@@ -10,3 +10,4 @@ appconfig.json
 # 全量字体是几十 M 大二进制，只在本地留作子集化的输入 (见 tools/font_generate)。
 # font/ 根下的裁剪产物 (几 M) 随仓库提交，供 CMake 拷进 res/fonts。
 font/original/
+bridge_mcp.py

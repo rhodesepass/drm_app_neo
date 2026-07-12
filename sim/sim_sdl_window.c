@@ -11,6 +11,7 @@ typedef struct {
     SDL_Window   *window;
     SDL_Renderer *renderer;
     SDL_Texture  *texture;
+    SDL_Texture  *bg;        // 可选背景 (SIM_BG), 模拟 UI 层下方的立绘视频层
     uint8_t      *buf;       // LVGL DIRECT 单缓冲 (RGB565)
     int32_t       w, h;
     int           plane_y;   // viewport Y 偏移
@@ -91,17 +92,54 @@ void sim_window_set_key_cb(sim_key_cb_t cb) { s_key_cb = cb; }
 lv_indev_t *sim_window_indev(void)          { return s_indev; }
 
 // ---------------------------------------------------------------------------
+// 截图 (无人值守出图)
+//   SIM_SHOT=<path.bmp>   渲染稳定后存 BMP 并 exit(0)
+//   SIM_SHOT_MS=<延时ms>  等待时长, 默认 1500 (盖过切屏幕帘动画)
+// 与 SIM_SCREEN 组合即可逐屏批量截图 (见 epass_applications quick_start 的截图脚本)。
+// ---------------------------------------------------------------------------
+
+static void render_frame(void);
+
+static void shot_timer_cb(lv_timer_t *t)
+{
+    const char *path = lv_timer_get_user_data(t);
+    // sysmon 性能标签挂 sys 层, 不该进图; 藏掉后重新渲染一帧再读
+    lv_obj_add_flag(lv_layer_sys(), LV_OBJ_FLAG_HIDDEN);
+    lv_refr_now(NULL);
+    // 读后台缓冲须在 present 之前: 重画一遍再读, 不 present
+    render_frame();
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, s_win.w, s_win.h, 24,
+                                                       SDL_PIXELFORMAT_RGB24);
+    if (!surf ||
+        SDL_RenderReadPixels(s_win.renderer, NULL, SDL_PIXELFORMAT_RGB24,
+                             surf->pixels, surf->pitch) != 0 ||
+        SDL_SaveBMP(surf, path) != 0) {
+        log_error("SIM_SHOT failed: %s", SDL_GetError());
+        exit(1);
+    }
+    log_info("SIM_SHOT saved: %s", path);
+    exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // 呈现 (viewport)
 // ---------------------------------------------------------------------------
 
 void sim_window_set_plane_y(int y) { s_win.plane_y = y; }
 int  sim_window_get_plane_y(void)  { return s_win.plane_y; }
 
-void sim_window_present(void)
+// 露出处填 SIM_BG 或黑 (替设备 UI 层下方的立绘背景层)
+static void render_frame(void)
 {
-    SDL_RenderClear(s_win.renderer);  // 露出处填黑(替设备 UI 层下方的立绘背景层)
+    SDL_RenderClear(s_win.renderer);
+    if (s_win.bg) SDL_RenderCopy(s_win.renderer, s_win.bg, NULL, NULL);
     SDL_Rect dst = { 0, s_win.plane_y, s_win.w, s_win.h };
     SDL_RenderCopy(s_win.renderer, s_win.texture, NULL, &dst);
+}
+
+void sim_window_present(void)
+{
+    render_frame();
     SDL_RenderPresent(s_win.renderer);
 }
 
@@ -174,6 +212,24 @@ lv_display_t *sim_window_create(int32_t hor_res, int32_t ver_res)
     lv_indev_set_display(s_indev, disp);
 
     lv_timer_create(event_timer_cb, 5, NULL);  // SDL 事件泵
+
+    const char *bg = getenv("SIM_BG");  // BMP, 铺满窗口当立绘背景
+    if (bg) {
+        SDL_Surface *s = SDL_LoadBMP(bg);
+        if (s) {
+            s_win.bg = SDL_CreateTextureFromSurface(s_win.renderer, s);
+            SDL_FreeSurface(s);
+        } else {
+            log_error("SIM_BG load failed: %s", SDL_GetError());
+        }
+    }
+
+    const char *shot = getenv("SIM_SHOT");
+    if (shot) {
+        const char *ms = getenv("SIM_SHOT_MS");
+        lv_timer_t *t = lv_timer_create(shot_timer_cb, ms ? (uint32_t)atoi(ms) : 1500, (void *)shot);
+        lv_timer_set_repeat_count(t, 1);
+    }
 
     return disp;
 }

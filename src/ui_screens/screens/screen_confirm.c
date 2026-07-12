@@ -36,7 +36,8 @@ static void on_proceed(lv_event_t *e)
     (void)e;
     void (*cb)(void) = self.on_proceed;
     self.on_cancel = NULL;
-    screen_show(SCREEN_MAINMENU);
+    self.on_proceed = NULL;
+    screen_show(SCREEN_SPINNER);
     if (cb) cb();
 }
 

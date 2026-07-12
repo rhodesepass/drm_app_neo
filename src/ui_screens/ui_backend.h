@@ -56,6 +56,7 @@ typedef struct {
     const char *desc;
     const char *logo_path; // lv_fs 路径，NULL 用占位
     bool        sd;        // 来自 SD 卡
+    const char *res;       // 分辨率角标文字 "360"/"480"/"720"，NULL 不显示
 } ui_op_entry_t;
 int  ui_backend_oplist_count(void);
 bool ui_backend_oplist_get(int idx, ui_op_entry_t *out);

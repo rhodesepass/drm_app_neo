@@ -6,8 +6,9 @@
 // 字号以 360 基准书写，font_get 内部套 S() 换算到当前目标。
 // 句柄在 init / 进屏时建一次，按 (role, px) 缓存，严禁每帧重建。
 //
-// 字体走 FreeType stdio (LVGL port 关闭，无 lv_fs 盘符)。设备侧目录运行时按可执行文件
-// 同级 res/fonts 解析 (见 respath)；PC 模拟器用 -DFONT_REGISTRY_DIR=... 覆盖为仓库 font/。
+// 字体走 FreeType stdio (LVGL port 关闭，无 lv_fs 盘符)。字体目录优先由编译期
+// FONT_REGISTRY_DIR 给定 (设备侧 = 系统共享字体 /usr/share/fonts/epass, 来自 epass-fonts
+// 包; 模拟器 = 仓库 font/)；未定义时回退到可执行文件同级 res/fonts (见 respath)。
 //
 #include <lvgl/lvgl.h>
 

@@ -357,6 +357,15 @@ const char *ui_backend_sysinfo_text(void)
 
 // ================= 干员列表 (原 actions_oplist.c) =================
 int ui_backend_oplist_count(void) { return s_prts ? s_prts->operator_count : 0; }
+static const char *disp_type_badge(display_type_t t)
+{
+    switch (t) {
+        case DISPLAY_360_640:  return "360";
+        case DISPLAY_480_854:  return "480";
+        case DISPLAY_720_1280: return "720";
+        default:               return NULL;
+    }
+}
 bool ui_backend_oplist_get(int idx, ui_op_entry_t *out)
 {
     if (!s_prts || idx < 0 || idx >= s_prts->operator_count) return false;
@@ -365,6 +374,7 @@ bool ui_backend_oplist_get(int idx, ui_op_entry_t *out)
     out->desc      = op->description;
     out->logo_path = op->icon_path;
     out->sd        = (op->source != PRTS_SOURCE_NAND);
+    out->res       = disp_type_badge(op->disp_type);
     return true;
 }
 int ui_backend_oplist_current(void) { return s_prts ? s_prts->operator_index : 0; }

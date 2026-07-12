@@ -59,6 +59,18 @@ pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 
+# 系统共享字体 (buildroot 的 epass-fonts 包)。找到就用它导出的目录, 编译期把
+# FONT_REGISTRY_DIR 定成 /usr/share/fonts/epass, font_registry 直接读那里,
+# app 不再自带字体。找不到 (纯本地 dev 构建, 无 staging) 则回退到随可执行文件
+# 自带 res/fonts (下方 RES_FONT 那套)。
+pkg_check_modules(EPASS_FONTS QUIET epass-fonts)
+if(EPASS_FONTS_FOUND)
+  pkg_get_variable(EPASS_FONTS_DIR epass-fonts fontsdir)
+  message(STATUS "epass-fonts found, shared font dir: ${EPASS_FONTS_DIR}")
+else()
+  message(STATUS "epass-fonts not found, bundling fonts into res/fonts (dev fallback)")
+endif()
+
 # ============================================================================
 # LVGL 配置
 # ============================================================================
@@ -195,6 +207,10 @@ function(add_epass_target name screen_define)
     EPASS_GIT_TAG="${GIT_TAG}"
     COMPILE_TIME="${COMPILE_TIME}"
   )
+  # 用共享字体时把字体目录烘进二进制 (font_registry 走 FONT_REGISTRY_DIR 分支)
+  if(EPASS_FONTS_DIR)
+    target_compile_definitions(${name} PRIVATE FONT_REGISTRY_DIR="${EPASS_FONTS_DIR}")
+  endif()
   target_compile_options(${name} PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -Wno-format-truncation
@@ -216,13 +232,21 @@ function(add_epass_target name screen_define)
   # 资源拷贝：按 config.h 的 res/ 结构落到可执行文件同级
   set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
   add_custom_command(TARGET ${name} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_PNG}  ${RES_OUT_DIR}/
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR}/fallback ${RES_OUT_DIR}/fallback
     COMMENT "Copying assets -> res/ next to ${name}"
     VERBATIM
   )
+  # 仅无共享字体时才把字体自带进 res/fonts
+  if(NOT EPASS_FONTS_FOUND)
+    add_custom_command(TARGET ${name} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
+      COMMENT "Bundling fonts -> res/fonts (dev fallback)"
+      VERBATIM
+    )
+  endif()
 endfunction()
 
 target_compile_options(lvgl PRIVATE
@@ -251,5 +275,7 @@ add_epass_target(app_720 USE_720_1280_SCREEN)
 install(TARGETS app_360 app_720 DESTINATION bin)
 install(DIRECTORY ${ASSETS_DIR}/ DESTINATION bin/res
         FILES_MATCHING PATTERN "*.png")
-install(FILES ${RES_FONT} DESTINATION bin/res/fonts)
+if(NOT EPASS_FONTS_FOUND)
+  install(FILES ${RES_FONT} DESTINATION bin/res/fonts)
+endif()
 install(DIRECTORY ${ASSETS_DIR}/fallback DESTINATION bin/res)

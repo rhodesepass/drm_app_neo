@@ -192,13 +192,43 @@ int is_hex_color_6(const char *s) {
 }
 
 
+// 外置 SD 数据分区设备节点：按 /proc/cmdline 区分 NAND/SD 启动 (见 config.h 注释)
+const char* sd_dev_path(void){
+    static int cached = -1; // -1=未探测 0=NAND启动 1=SD启动
+    if (cached < 0) {
+        cached = 0;
+        char cmdline[512] = {0};
+        FILE *f = fopen("/proc/cmdline", "r");
+        if (f) {
+            size_t n = fread(cmdline, 1, sizeof(cmdline) - 1, f);
+            cmdline[n] = '\0';
+            fclose(f);
+            if (strstr(cmdline, SD_BOOT_CMDLINE_SIGN)) cached = 1;
+        }
+    }
+    return cached ? SD_DEV_PATH_SD_BOOT : SD_DEV_PATH_NAND_BOOT;
+}
+
 bool is_sdcard_inserted(){
-    FILE *f = fopen(SD_DEV_PATH, "r");
-    if(f == NULL){
-        return false;
+    return access(sd_dev_path(), F_OK) == 0;
+}
+
+// /sd 是否已挂载 (由 init 脚本负责挂载，这里只探测系统状态)
+bool is_sd_mounted(void){
+    FILE *f = fopen("/proc/mounts", "r");
+    if (f == NULL) return false;
+    bool found = false;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        char dev[128], mp[128];
+        if (sscanf(line, "%127s %127s", dev, mp) == 2 &&
+            strcmp(mp, SD_MOUNT_POINT) == 0) {
+            found = true;
+            break;
+        }
     }
     fclose(f);
-    return true;
+    return found;
 }
 
 void parse_log_file(FILE* parse_log_f,const char *path, const char *message, parse_log_type_t type){

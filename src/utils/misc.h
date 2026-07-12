@@ -20,7 +20,9 @@ int json_get_int(cJSON *obj, const char *key, int def) ;
 bool json_get_bool(cJSON *obj, const char *key, bool def) ;
 uint32_t parse_rgbff(const char *hex) ;
 int is_hex_color_6(const char *s) ;
+const char* sd_dev_path(void);
 bool is_sdcard_inserted();
+bool is_sd_mounted(void);
 
 // 对于需要写入日志文件以便检查格式错误的类型，需要一个专门的日志方法。
 typedef enum {
