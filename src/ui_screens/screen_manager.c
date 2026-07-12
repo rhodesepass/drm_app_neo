@@ -27,6 +27,7 @@ typedef struct {
     screen_tick_fn   tick;
     lv_obj_t        *obj;   // 懒创建后缓存
     int              panel_y; // 该屏 UI 平面在面板上的停靠 Y (DEBE 图层坐标)
+    bool             rebuild_pending; // 下次实际加载该屏时重建
 } screen_entry_t;
 
 static screen_entry_t s_screens[SCREEN_COUNT];
@@ -70,17 +71,17 @@ static void register_screens(void)
 {
     // 停靠 Y：mainmenu/oplist 是"滑到下方、上方露出立绘"的卡片；
     // 其余屏停靠 0 (满屏)；spinner 停在 SCREEN_HEIGHT (藏到屏幕下方)。
-    s_screens[SCREEN_MAINMENU]   = (screen_entry_t){ screen_mainmenu_create,   screen_mainmenu_tick,   NULL, UI_MAINMENU_Y };
-    s_screens[SCREEN_OPLIST]     = (screen_entry_t){ screen_oplist_create,     NULL,                   NULL, UI_OPLIST_Y };
-    s_screens[SCREEN_SYSINFO]    = (screen_entry_t){ screen_sysinfo_create,    screen_sysinfo_tick,    NULL, 0 };
-    s_screens[SCREEN_SPINNER]    = (screen_entry_t){ screen_spinner_create,    NULL,                   NULL, SCREEN_HEIGHT };
-    s_screens[SCREEN_DISPLAYIMG] = (screen_entry_t){ screen_displayimg_create, screen_displayimg_tick, NULL, 0 };
-    s_screens[SCREEN_FILEMANAGER]= (screen_entry_t){ screen_filemanager_create,NULL,                   NULL, 0 };
-    s_screens[SCREEN_SETTINGS]   = (screen_entry_t){ screen_settings_create,   screen_settings_tick,   NULL, 0 };
-    s_screens[SCREEN_APPLIST]    = (screen_entry_t){ screen_applist_create,    screen_applist_tick,    NULL, 0 };
-    s_screens[SCREEN_WARNING]    = (screen_entry_t){ screen_warning_create,    NULL,                   NULL, UI_WARNING_Y };
-    s_screens[SCREEN_CONFIRM]    = (screen_entry_t){ screen_confirm_create,    NULL,                   NULL, UI_CONFIRM_Y };
-    s_screens[SCREEN_USBSELECT]  = (screen_entry_t){ screen_usbselect_create,  NULL,                   NULL, UI_USBSELECT_Y };
+    s_screens[SCREEN_MAINMENU]   = (screen_entry_t){ screen_mainmenu_create,   screen_mainmenu_tick,   NULL, UI_MAINMENU_Y, false };
+    s_screens[SCREEN_OPLIST]     = (screen_entry_t){ screen_oplist_create,     NULL,                   NULL, UI_OPLIST_Y, false };
+    s_screens[SCREEN_SYSINFO]    = (screen_entry_t){ screen_sysinfo_create,    screen_sysinfo_tick,    NULL, 0, false };
+    s_screens[SCREEN_SPINNER]    = (screen_entry_t){ screen_spinner_create,    NULL,                   NULL, SCREEN_HEIGHT, false };
+    s_screens[SCREEN_DISPLAYIMG] = (screen_entry_t){ screen_displayimg_create, screen_displayimg_tick, NULL, 0, false };
+    s_screens[SCREEN_FILEMANAGER]= (screen_entry_t){ screen_filemanager_create,NULL,                   NULL, 0, false };
+    s_screens[SCREEN_SETTINGS]   = (screen_entry_t){ screen_settings_create,   screen_settings_tick,   NULL, 0, false };
+    s_screens[SCREEN_APPLIST]    = (screen_entry_t){ screen_applist_create,    screen_applist_tick,    NULL, 0, false };
+    s_screens[SCREEN_WARNING]    = (screen_entry_t){ screen_warning_create,    NULL,                   NULL, UI_WARNING_Y, false };
+    s_screens[SCREEN_CONFIRM]    = (screen_entry_t){ screen_confirm_create,    NULL,                   NULL, UI_CONFIRM_Y, false };
+    s_screens[SCREEN_USBSELECT]  = (screen_entry_t){ screen_usbselect_create,  NULL,                   NULL, UI_USBSELECT_Y, false };
 }
 
 // 瞬切内容，不做 LVGL 软件过渡。过渡观感交给硬件图层 Y 滑动(ui_plane_move)：
@@ -88,9 +89,29 @@ static void register_screens(void)
 // 会持续撕裂；DEBE 图层滑动只挪坐标不重绘 FB，才是无撕裂的过渡。
 static void load_now(screen_id_t id)
 {
-    if (s_screens[id].obj) {
-        lv_screen_load(s_screens[id].obj);
+    screen_entry_t *screen = &s_screens[id];
+    if (!screen->obj) {
+        return;
     }
+
+    if (screen->rebuild_pending) {
+        lv_obj_t *old = screen->obj;
+        lv_obj_t *fresh = screen->create();
+        if (!fresh) {
+            log_error("screen %d rebuild failed", (int)id);
+            return;
+        }
+
+        screen->obj = fresh;
+        screen->rebuild_pending = false;
+        lv_screen_load(fresh);
+
+        // 新屏成为 active 后再删旧屏；旧屏可能仍是切屏前实际显示的页面。
+        lv_obj_delete(old);
+        return;
+    }
+
+    lv_screen_load(screen->obj);
 }
 
 // ---- 过渡幕帘 ----
@@ -246,12 +267,10 @@ void screens_rebuild(screen_id_t id)
     if (id < 0 || id >= SCREEN_COUNT || !s_screens[id].obj) {
         return;
     }
-    bool was_current = (s_current == id);
-    lv_obj_delete(s_screens[id].obj);
-    s_screens[id].obj = s_screens[id].create();
-    if (was_current) {
-        load_now(id);
-    }
+
+    // 这里只标脏。screen_show 会先把 UI 平面下潜到幕帘位置，swap_cb 真正加载
+    // 该屏时才重建，避免刷新完成通知删除仍处于 active 状态的干员页。
+    s_screens[id].rebuild_pending = true;
 }
 
 // ============ 按键导航状态机 (原 scr_transition.c::screen_key_event_cb) ============

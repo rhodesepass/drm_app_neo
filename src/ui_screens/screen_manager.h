@@ -42,7 +42,7 @@ screen_id_t screens_current(void);
 // 键盘导航分组 (各屏在 SCREEN_LOAD_START 时把自己的可聚焦控件加进来)。
 lv_group_t *screens_group(void);
 
-// 丢弃某屏的缓存实例 (下次 screen_show 会重建，读到最新后端数据)。设备侧 IPC 刷新干员列表用。
+// 标记某屏缓存过期；下次实际加载该屏时安全重建，读到最新后端数据。
 void screens_rebuild(screen_id_t id);
 
 // 编码器/按键导航状态机 (原 scr_transition.c 的 screen_key_event_cb)。
