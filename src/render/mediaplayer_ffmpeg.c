@@ -27,6 +27,7 @@
 
 #include "driver/drm_warpper.h"
 #include "utils/log.h"
+#include "utils/compat.h"
 #include "config.h"
 #include "utils/misc.h"
 

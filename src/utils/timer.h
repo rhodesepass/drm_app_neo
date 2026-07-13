@@ -3,8 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include <time.h>
 #include "config.h"
+#include "utils/timer_backend.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,7 +35,7 @@ typedef void (*prts_timer_cb)(void *userdata,bool is_last);
 typedef struct {
     uint32_t gen;          // generation（用于 handle 校验；同时低 16 bit 用于 SIGEV_THREAD 的 sival_int）
     bool active;
-    timer_t t;
+    os_timer_handle_t t;
 
     prts_timer_cb cb;
     void *userdata;

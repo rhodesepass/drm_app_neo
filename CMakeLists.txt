@@ -64,7 +64,11 @@ endif()
 # ============================================================================
 find_package(PNG REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBDRM REQUIRED libdrm)
+# libdrm 仅设备/Linux PC 需要（drm_warpper.h 的结构体类型）；Windows(mingw) 无此
+# 包，PC 的 drm_warpper.h 走占位类型（见 #ifdef _WIN32）。
+if(NOT WIN32)
+  pkg_check_modules(LIBDRM REQUIRED libdrm)
+endif()
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 if(NOT TARGET_PC)
   pkg_check_modules(LIBEVDEV REQUIRED libevdev)
@@ -130,8 +134,6 @@ set(EPASS_SOURCES
   src/apps/extmap.c
   src/apps/apps_cfg_parse.c
   src/apps/ipc_common.c
-  src/apps/ipc_server.c
-  src/apps/ipc_handler.c
 
   src/render/layer_animation.c
   src/render/lvgl_drm_warp.c
@@ -180,6 +182,15 @@ set(EPASS_SOURCES
   src/utils/imgscale.c
 )
 
+# 纯 POSIX 子系统：IPC(unix socket + epoll) 与 posix 定时器后端。设备端与 Linux
+# PC 都用；Windows PC 交叉编译时剔除（apps.c/main.c 已 #ifdef _WIN32 stub 掉调用
+# 侧，timer 换 win32 后端）。见下方 add_epass_pc_target 的 if(WIN32) 分流。
+set(POSIX_ONLY_SOURCES
+  src/apps/ipc_server.c
+  src/apps/ipc_handler.c
+  src/utils/timer_backend_posix.c
+)
+
 string(TIMESTAMP COMPILE_TIME "%Y-%m-%d %H:%M:%S")
 
 set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
@@ -192,7 +203,7 @@ file(GLOB RES_FONT CONFIGURE_DEPENDS ${FONT_DIR}/*.otf)
 # name: 可执行名; screen_define: 屏宏 (覆盖 config.h 的兜底默认)
 # ============================================================================
 function(add_epass_target name screen_define)
-  add_executable(${name} ${EPASS_SOURCES}
+  add_executable(${name} ${EPASS_SOURCES} ${POSIX_ONLY_SOURCES}
     # 设备后端：libdrm atomic + cedrus V4L2 + evdev
     src/driver/drm_warpper.c
     src/driver/key_enc_evdev.c
@@ -293,7 +304,6 @@ endif()
 if(TARGET_PC)
   pkg_check_modules(SDL2 REQUIRED sdl2)
   pkg_check_modules(FFMPEG REQUIRED libavformat libavcodec libavutil libswscale)
-  pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
 
   function(add_epass_pc_target name screen_define)
     add_executable(${name} ${EPASS_SOURCES}
@@ -302,6 +312,12 @@ if(TARGET_PC)
       src/driver/key_sdl.c
       src/render/mediaplayer_ffmpeg.c
     )
+    # 平台相关：Windows 换 win32 定时器后端并剔除 IPC(unix socket)；Linux PC 同设备
+    if(WIN32)
+      target_sources(${name} PRIVATE src/utils/timer_backend_win32.c)
+    else()
+      target_sources(${name} PRIVATE ${POSIX_ONLY_SOURCES})
+    endif()
     target_include_directories(${name} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
@@ -313,13 +329,11 @@ if(TARGET_PC)
       ${FREETYPE_INCLUDE_DIRS}
       ${SDL2_INCLUDE_DIRS}
       ${FFMPEG_INCLUDE_DIRS}
-      ${FONTCONFIG_INCLUDE_DIRS}
     )
     target_compile_definitions(${name} PRIVATE
       _DEFAULT_SOURCE
       ${screen_define}
       EPASS_PC_TARGET
-      FONT_REGISTRY_USE_FONTCONFIG
       EPASS_GIT_VERSION="${GIT_COMMIT}"
       EPASS_GIT_TAG="${GIT_TAG}"
       COMPILE_TIME="${COMPILE_TIME}"
@@ -330,28 +344,40 @@ if(TARGET_PC)
       -ffile-prefix-map=${CMAKE_SOURCE_DIR}/src/=/
       $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
     )
+    # pkg-config 的库目录（交叉环境是 /mingw64/lib，不在 ld 默认搜索路径）
+    target_link_directories(${name} PRIVATE
+      ${SDL2_LIBRARY_DIRS}
+      ${FFMPEG_LIBRARY_DIRS}
+      ${FREETYPE_LIBRARY_DIRS}
+    )
     # lvgl(静态库) 在前，其依赖的 freetype 等在后（宿主 ld 不做隐式二级依赖解析）
+    # Windows(mingw) 无 dl/rt：dlopen 不用，clock_gettime 在 libc、定时器走 win32。
+    set(_pc_extra_libs m pthread)
+    if(NOT WIN32)
+      list(APPEND _pc_extra_libs dl rt)
+    endif()
     target_link_libraries(${name}
       lvgl
       ${PNG_LIBRARIES}
       ${FREETYPE_LIBRARIES}
       ${SDL2_LIBRARIES}
       ${FFMPEG_LIBRARIES}
-      ${FONTCONFIG_LIBRARIES}
-      m
-      dl
-      pthread
-      rt
+      ${_pc_extra_libs}
     )
-    # 资源拷贝同设备；fonts 恒自带（fontconfig 未命中时的精确回退源）
+    # 资源拷贝同设备；fonts 恒自带（PC 字体解析直接走 res/fonts）
+    # pcdata 骨架与可执行同级（运行时 ./pcdata，见 config.h EPASS_PC_TARGET）
     set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
+    set(PCDATA_OUT_DIR $<TARGET_FILE_DIR:${name}>/pcdata)
     add_custom_command(TARGET ${name} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}
       COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
       COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_PNG}  ${RES_OUT_DIR}/
       COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR}/fallback ${RES_OUT_DIR}/fallback
-      COMMENT "Copying assets -> res/ next to ${name}"
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${PCDATA_OUT_DIR}/assets
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${PCDATA_OUT_DIR}/app
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${PCDATA_OUT_DIR}/dispimg
+      COMMENT "Copying assets -> res/ and ensuring pcdata/{assets,app,dispimg} next to ${name}"
       VERBATIM
     )
   endfunction()

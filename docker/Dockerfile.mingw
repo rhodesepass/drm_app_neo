@@ -1,0 +1,33 @@
+# mingw-w64 交叉编译 EPass DRM PC target → Windows x86_64 .exe
+#
+# 工具链：Arch 原生的 mingw-w64-gcc（Linux 上跑的交叉编译器）
+# 依赖库：SDL2 / ffmpeg / freetype / libpng —— 从 MSYS2 预编译仓库装到 /mingw64，
+#         pacman 自动解析依赖闭包（zlib/bzip2/harfbuzz/… 一并拉齐），不从源码编。
+#
+# 通常不直接用本 Dockerfile，用仓库根的 ./build_cross_windows.sh 一键完成
+# （它负责 build 本镜像 + 交叉编译 + 收集 DLL）。手动等价：
+#   docker build -t epass-mingw -f docker/Dockerfile.mingw .
+#   docker run --rm -v "$PWD":/work -w /work epass-mingw bash -c \
+#     'cmake -S . -B build-win -DTARGET_PC=ON --toolchain cmake/toolchain-mingw64.cmake \
+#      && cmake --build build-win --target app_pc_720 -j$(nproc) \
+#      && MINGW_SYSROOT=/mingw64 bash scripts/collect-dll.sh build-win/app_pc_720.exe'
+FROM archlinux:latest
+
+# 交叉工具链 + 构建工具
+RUN pacman -Sy --noconfirm --needed archlinux-keyring && \
+    pacman -S  --noconfirm --needed mingw-w64-gcc cmake make pkgconf && \
+    yes | pacman -Scc
+
+# 挂 MSYS2 mingw64 仓库（预编译 Windows 二进制，包内路径即 /mingw64/…）
+# 用官方源站 repo.msys2.org（mirror.msys2.org 的 CDN 后端偶有未同步导致 404）
+RUN printf '\n[mingw64]\nSigLevel = Never\nServer = https://repo.msys2.org/mingw/mingw64/\n' >> /etc/pacman.conf && \
+    pacman -Sy --noconfirm && \
+    pacman -S --noconfirm --noscriptlet \
+      mingw-w64-x86_64-SDL2 \
+      mingw-w64-x86_64-freetype \
+      mingw-w64-x86_64-libpng \
+      mingw-w64-x86_64-ffmpeg && \
+    yes | pacman -Scc
+
+WORKDIR /work
+CMD ["bash"]

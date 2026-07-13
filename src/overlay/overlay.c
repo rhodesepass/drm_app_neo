@@ -7,6 +7,8 @@
 #include "config.h"
 #include "driver/drm_warpper.h"
 #include "utils/log.h"
+#include "utils/misc.h"
+#include "utils/compat.h"
 #include "utils/timer.h"
 #include "render/layer_animation.h"
 #include "utils/stb_image.h"
@@ -47,10 +49,7 @@ int load_img_assets(char *image_path, uint32_t** addr,int* w,int* h){
 }
 
 uint64_t get_us(void){
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    uint64_t time_us = t.tv_sec * 1000000 + (t.tv_nsec / 1000);
-    return time_us;
+    return get_mono_us();
 }
 
 

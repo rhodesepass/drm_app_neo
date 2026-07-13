@@ -873,7 +873,13 @@
 #define LV_USE_FS_STDIO 1
 #if LV_USE_FS_STDIO
     #define LV_FS_STDIO_LETTER 'A'     /**< Set an upper-case driver-identifier letter for this driver (e.g. 'A'). */
+    /* Linux: A: 后接以 / 开头的绝对路径，前缀 "/" 拼成 //abs（等价 /abs）。
+     * Windows: 绝对路径自带盘符（C:\...），前缀留空，A: 后直接跟真实路径。 */
+    #ifdef _WIN32
+    #define LV_FS_STDIO_PATH ""
+    #else
     #define LV_FS_STDIO_PATH "/"         /**< Set the working directory. File/directory paths will be appended to it. */
+    #endif
     #define LV_FS_STDIO_CACHE_SIZE 0    /**< >0 to cache this number of bytes in lv_fs_read() */
 #endif
 
@@ -1331,8 +1337,13 @@
 
 #endif /*LV_USE_LOVYAN_GFX*/
 
-/** Driver for evdev input devices */
+/** Driver for evdev input devices（Windows 无 linux/input.h；工程用自己的输入后端，
+ *  LVGL 自带 evdev 驱动本就没被调用，Windows 下直接关掉编译） */
+#ifdef _WIN32
+#define LV_USE_EVDEV    0
+#else
 #define LV_USE_EVDEV    1
+#endif
 
 /** Driver for libinput input devices */
 #define LV_USE_LIBINPUT    0

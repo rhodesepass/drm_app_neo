@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <sys/statvfs.h>
+#include <limits.h>
 #include <dirent.h>
 
 extern settings_t g_settings;
@@ -72,11 +72,12 @@ static void dispimg_scan(void)
     }
     struct dirent *e;
     while ((e = readdir(dir)) != NULL && s_di.count < DISPLAYIMG_MAX_COUNT) {
-        if (e->d_type != DT_REG) continue;
         int t = dispimg_type(e->d_name);
         if (t < 0) continue;
-        snprintf(s_di.files[s_di.count].img_path, DISPLAYIMG_MAX_PATH_LENGTH,
-                 "A:%s%s", DISPLAYIMG_PATH, e->d_name);
+        char abs[PATH_MAX];
+        join_path(abs, sizeof(abs), DISPLAYIMG_PATH, e->d_name);
+        if (!path_is_file(abs)) continue;
+        set_lvgl_path(s_di.files[s_di.count].img_path, DISPLAYIMG_MAX_PATH_LENGTH, abs);
         s_di.files[s_di.count].is_gif = (t == 3);
         s_di.count++;
     }
@@ -121,7 +122,7 @@ void ui_backend_dispimg_force(const char *path)
 {
     int t = dispimg_type(path);
     if (t < 0) return;
-    snprintf(s_di.forced, sizeof(s_di.forced), "A:%s", path);
+    set_lvgl_path(s_di.forced, sizeof(s_di.forced), path);
     s_di.forced_is_gif = (t == 3);
     s_di.forced_active = true;
 }
@@ -220,18 +221,8 @@ void ui_backend_theme_set(int id)
 }
 
 // ================= 存储 / sysinfo (原 actions_sysinfo.c) =================
-static uint64_t fs_avail(const char *mp)
-{
-    struct statvfs s;
-    if (statvfs(mp, &s) != 0) return 0;
-    return (uint64_t)s.f_bavail * s.f_bsize;
-}
-static uint64_t fs_total(const char *mp)
-{
-    struct statvfs s;
-    if (statvfs(mp, &s) != 0) return 0;
-    return (uint64_t)s.f_blocks * s.f_bsize;
-}
+static uint64_t fs_avail(const char *mp) { return fs_avail_bytes(mp); }
+static uint64_t fs_total(const char *mp) { return fs_total_bytes(mp); }
 static void fmt_size(uint64_t bytes, char *buf, size_t sz)
 {
     double v = (double)bytes;

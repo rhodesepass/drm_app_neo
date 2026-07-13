@@ -2,19 +2,35 @@
 #include "utils/log.h"
 #include "config.h"
 
-#include <unistd.h>
 #include <string.h>
 #include <stdio.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #define RESPATH_MAX 512
 #define RESPATH_RING 4
 
-// readlink 失败时的兜底, 维持旧设备布局, 避免直接炸。
+// 定位失败时的兜底, 维持旧设备布局, 避免直接炸。
 static char s_res_dir[RESPATH_MAX] = "/root/" RES_SUBDIR;
 
 void respath_init(void)
 {
     char exe[RESPATH_MAX];
+#ifdef _WIN32
+    DWORD n = GetModuleFileNameA(NULL, exe, sizeof(exe) - 1);
+    if (n == 0 || n >= sizeof(exe) - 1) {
+        log_warn("respath: GetModuleFileNameA failed, fallback to %s", s_res_dir);
+        return;
+    }
+    exe[n] = '\0';
+    // 截目录：Windows 路径分隔符可能是 \ 或 /，取最后一个。
+    char *slash = strrchr(exe, '\\');
+    char *fwd = strrchr(exe, '/');
+    if (fwd > slash) slash = fwd;
+#else
     ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
     if (n <= 0) {
         log_warn("respath: readlink /proc/self/exe failed, fallback to %s", s_res_dir);
@@ -22,6 +38,7 @@ void respath_init(void)
     }
     exe[n] = '\0';
     char *slash = strrchr(exe, '/');
+#endif
     if (slash) {
         *slash = '\0';
     }

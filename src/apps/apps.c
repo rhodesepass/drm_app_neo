@@ -1,21 +1,27 @@
 #include "apps.h"
 #include "utils/log.h"
 #include "utils/timer.h"
+#include "utils/compat.h"
 #include <apps/apps_cfg_parse.h>
 #include <apps/extmap.h>
 #include <config.h>
 #include <errno.h>
-#include <signal.h>
 #include <stdlib.h>
-#include <sys/wait.h>
 #include <ui_screens/ui_services.h>
-#include <unistd.h>
 #include <utils/misc.h>
 #include "apps/ipc_common.h"
+// 进程启动/IPC 是纯 POSIX 子系统；Windows(PC 交叉编译)下整体 stub，见下方
+// #ifdef _WIN32 分支。这两块只在设备侧重要。
+#ifndef _WIN32
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "apps/ipc_server.h"
+#endif
 
 static void apps_bg_app_check_timer_cb(void *userdata, bool is_last) {
     apps_t *apps = (apps_t *)userdata;
+#ifndef _WIN32
     for (int i = 0; i < apps->app_count; i++) {
         if (apps->apps[i].type == APP_TYPE_BACKGROUND) {
         if (apps->apps[i].pid != -1) {
@@ -29,6 +35,9 @@ static void apps_bg_app_check_timer_cb(void *userdata, bool is_last) {
         }
         }
     }
+#else
+    (void)apps; // Windows 无后台进程，pid 恒 -1
+#endif
 }
 
 int apps_init(apps_t *apps, prts_t *prts, bool use_sd) {
@@ -63,8 +72,10 @@ int apps_init(apps_t *apps, prts_t *prts, bool use_sd) {
     prts_timer_create(&apps->bg_app_check_timer, 0, APPS_BG_APP_CHECK_PERIOD, -1,
                         apps_bg_app_check_timer_cb, apps);
 
+#ifndef _WIN32
     atomic_store(&apps->ipc_running, 1);
     pthread_create(&apps->ipc_thread, NULL, apps_ipc_server_thread, apps);
+#endif
 
     log_info("==> Apps Initalized! %d apps loaded", apps->app_count);
     return 0;
@@ -75,6 +86,7 @@ static int kill_app_background(int pgid);
 int apps_destroy(apps_t *apps) {
     prts_timer_cancel(apps->bg_app_check_timer);
 
+#ifndef _WIN32
     //kill all background apps
     for (int i = 0; i < apps->app_count; i++) {
         if (apps->apps[i].type == APP_TYPE_BACKGROUND && apps->apps[i].pid != -1) {
@@ -93,13 +105,16 @@ int apps_destroy(apps_t *apps) {
 
     atomic_store(&apps->ipc_running, 0);
     pthread_join(apps->ipc_thread, NULL);
-    fclose(apps->parse_log_f);
+#endif
+    if (apps->parse_log_f)
+        fclose(apps->parse_log_f);
     return 0;
 }
 
 extern int g_exitcode;
 extern int g_running;
 
+#ifndef _WIN32
 static int launch_app_foreground(const char *basename, const char *working_dir,
                                  const char *args) {
     if (!basename || !working_dir)
@@ -193,6 +208,24 @@ static int kill_app_background(int pgid) {
     kill(-pgid, SIGKILL);
     return 0;
 }
+#else // _WIN32：fork/exec/kill 无等价，进程启动整套 stub（仅设备侧需要）
+static int launch_app_foreground(const char *basename, const char *working_dir,
+                                 const char *args) {
+    (void)basename; (void)working_dir; (void)args;
+    log_warn("app launch not supported on this platform (Windows)");
+    return -1;
+}
+static int launch_app_background(const char *basename, const char *working_dir,
+                                 const char *arg_path) {
+    (void)basename; (void)working_dir; (void)arg_path;
+    log_warn("app launch not supported on this platform (Windows)");
+    return -1;
+}
+static int kill_app_background(int pgid) {
+    (void)pgid;
+    return -1;
+}
+#endif // _WIN32
 
 int apps_try_launch_by_file(apps_t *apps, const char *working_dir,
                             const char *basename) {

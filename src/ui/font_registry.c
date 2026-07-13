@@ -6,21 +6,15 @@
 
 #include "utils/log.h"
 
-// 字体文件路径解析（三种后端，只影响"family/文件名 -> 路径"这一层）：
-//   - FONT_REGISTRY_USE_FONTCONFIG (PC Target): fontconfig 按 family 匹配系统字体；
-//     若 fontconfig 兜底给了别的 family，回退到可执行文件同级 res/fonts 的自带字体
-//     （仓库四款字体随构建拷入，保证观感精确）。
+// 字体文件路径解析（两种后端，只影响"文件名 -> 路径"这一层）：
 //   - FONT_REGISTRY_DIR 编译期给定字体目录: 设备侧 = pkg-config(epass-fonts) 的
 //     /usr/share/fonts/epass。
-//   - 都未定义 (纯本地 dev 构建): 回退 res/fonts (respath)。
+//   - 未定义 (PC Target / 纯本地 dev 构建): 回退可执行文件同级 res/fonts (respath)，
+//     仓库四款字体随构建拷入。
 // FreeType 关了 LVGL port (PORT=0) ⇒ 直接走 stdio 文件路径，无 lv_fs 盘符。
-#if defined(FONT_REGISTRY_USE_FONTCONFIG) || !defined(FONT_REGISTRY_DIR)
+#ifndef FONT_REGISTRY_DIR
 #include "config.h"
 #include "utils/respath.h"
-#endif
-#ifdef FONT_REGISTRY_USE_FONTCONFIG
-#include <fontconfig/fontconfig.h>
-#include <unistd.h>
 #endif
 
 // FreeType 字形缓存条目数 (弱端取较小值，跑起来盯 RAM 再调)
@@ -33,67 +27,21 @@
 //   常带较大 line gap, 单行文字上下留白多)。0 = 保持字体默认 (多行正文要靠它撑行距)。
 typedef struct {
     const char *filename;
-    const char *family; // fontconfig 匹配用（PC Target）
     lv_freetype_font_style_t style;
     int lh_pct;
 } font_face_desc_t;
 
 static const font_face_desc_t s_faces[FONT_ROLE_COUNT] = {
-    [FONT_BODY]    = { "SourceHanSansSC-Regular.otf",       "Source Han Sans SC",   LV_FREETYPE_FONT_STYLE_NORMAL, 110 },
-    [FONT_TITLE]   = { "SourceHanSerifSC-Heavy.otf",        "Source Han Serif SC",  LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
-    [FONT_DISPLAY] = { "BebasNeue.otf",                     "Bebas Neue",           LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
-    [FONT_ICON]    = { "Font-Awesome-7-Free-Solid-900.otf", "Font Awesome 7 Free",  LV_FREETYPE_FONT_STYLE_NORMAL, 0   },
+    [FONT_BODY]    = { "SourceHanSansSC-Regular.otf",       LV_FREETYPE_FONT_STYLE_NORMAL, 110 },
+    [FONT_TITLE]   = { "SourceHanSerifSC-Heavy.otf",        LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
+    [FONT_DISPLAY] = { "BebasNeue.otf",                     LV_FREETYPE_FONT_STYLE_NORMAL, 115 },
+    [FONT_ICON]    = { "Font-Awesome-7-Free-Solid-900.otf", LV_FREETYPE_FONT_STYLE_NORMAL, 0   },
 };
 
-#ifdef FONT_REGISTRY_USE_FONTCONFIG
-// fontconfig：family -> 字体文件绝对路径。精确命中请求的 family 才算数——
-// fontconfig 永远会兜底返回"最接近"的字体，兜底结果不如仓库自带的四款准确。
-static int resolve_font_fontconfig(const font_face_desc_t *face, char *out, size_t out_sz)
-{
-    static FcConfig *s_fc;
-    if (!s_fc) {
-        s_fc = FcInitLoadConfigAndFonts();
-        if (!s_fc) return -1;
-    }
-
-    FcPattern *pat = FcPatternCreate();
-    FcPatternAddString(pat, FC_FAMILY, (const FcChar8 *)face->family);
-    FcConfigSubstitute(s_fc, pat, FcMatchPattern);
-    FcDefaultSubstitute(pat);
-
-    FcResult res;
-    FcPattern *match = FcFontMatch(s_fc, pat, &res);
-    FcPatternDestroy(pat);
-    if (!match) return -1;
-
-    int rc = -1;
-    FcChar8 *file = NULL, *family = NULL;
-    if (FcPatternGetString(match, FC_FILE, 0, &file) == FcResultMatch &&
-        FcPatternGetString(match, FC_FAMILY, 0, &family) == FcResultMatch &&
-        strcasecmp((const char *)family, face->family) == 0) {
-        snprintf(out, out_sz, "%s", (const char *)file);
-        rc = 0;
-    }
-    FcPatternDestroy(match);
-    return rc;
-}
-#endif
-
-// 解析角色字体的文件路径（见文件头注释的三种后端）
+// 解析角色字体的文件路径（见文件头注释的两种后端）
 static void resolve_font_path(const font_face_desc_t *face, char *out, size_t out_sz)
 {
-#ifdef FONT_REGISTRY_USE_FONTCONFIG
-    if (resolve_font_fontconfig(face, out, out_sz) == 0) {
-        return;
-    }
-    // fontconfig 未精确命中 -> 自带字体回退
-    snprintf(out, out_sz, "%s/%s/%s", respath_dir(), RES_FONTS_SUBDIR, face->filename);
-    if (access(out, R_OK) == 0) {
-        log_warn("font_registry: fontconfig 未命中 '%s'，回退自带 %s", face->family, out);
-    } else {
-        log_error("font_registry: fontconfig 未命中 '%s' 且无自带字体，交给 FreeType 报错", face->family);
-    }
-#elif defined(FONT_REGISTRY_DIR)
+#ifdef FONT_REGISTRY_DIR
     snprintf(out, out_sz, "%s/%s", FONT_REGISTRY_DIR, face->filename);
 #else
     snprintf(out, out_sz, "%s/%s/%s", respath_dir(), RES_FONTS_SUBDIR, face->filename);
@@ -126,10 +74,7 @@ int font_registry_init(void)
     }
     s_reg.count = 0;
     s_reg.inited = true;
-#if defined(FONT_REGISTRY_USE_FONTCONFIG)
-    log_info("font_registry: initialized (fontconfig, fallback=%s/%s, glyph_cache=%d)",
-             respath_dir(), RES_FONTS_SUBDIR, FONT_REGISTRY_GLYPH_CACHE_CNT);
-#elif defined(FONT_REGISTRY_DIR)
+#if defined(FONT_REGISTRY_DIR)
     log_info("font_registry: initialized (dir=%s, glyph_cache=%d)",
              FONT_REGISTRY_DIR, FONT_REGISTRY_GLYPH_CACHE_CNT);
 #else

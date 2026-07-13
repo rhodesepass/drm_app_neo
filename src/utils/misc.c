@@ -4,19 +4,40 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <sys/time.h>
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/statvfs.h>
+#endif
 #include "utils/cJSON.h"
 #include "utils/misc.h"
+#include "utils/compat.h"
 #include "config.h"
 
 uint64_t get_now_us(void){
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (long long)tv.tv_sec * 1000000ll + tv.tv_usec;
+}
+
+uint64_t get_mono_us(void){
+#ifdef _WIN32
+    LARGE_INTEGER freq, cnt;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&cnt);
+    return (uint64_t)cnt.QuadPart * 1000000ULL / (uint64_t)freq.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+#endif
 }
 
 void fill_nv12_buffer_with_color(uint8_t* buf, int width, int height, uint32_t rgb){
@@ -100,18 +121,63 @@ int file_exists_executable(const char *filepath) {
     return access(filepath, X_OK) == 0;
 }
 
+bool path_is_dir(const char *path) {
+    if (!path || path[0] == '\0') return false;
+    struct stat st;
+    if (stat(path, &st) != 0) return false;
+    return S_ISDIR(st.st_mode);
+}
+
+bool path_is_file(const char *path) {
+    if (!path || path[0] == '\0') return false;
+    struct stat st;
+    if (stat(path, &st) != 0) return false;
+    return S_ISREG(st.st_mode);
+}
+
+uint64_t fs_avail_bytes(const char *mp) {
+#ifdef _WIN32
+    ULARGE_INTEGER avail;
+    if (!GetDiskFreeSpaceExA(mp, &avail, NULL, NULL)) return 0;
+    return (uint64_t)avail.QuadPart;
+#else
+    struct statvfs s;
+    if (statvfs(mp, &s) != 0) return 0;
+    return (uint64_t)s.f_bavail * s.f_bsize;
+#endif
+}
+
+uint64_t fs_total_bytes(const char *mp) {
+#ifdef _WIN32
+    ULARGE_INTEGER total;
+    if (!GetDiskFreeSpaceExA(mp, NULL, &total, NULL)) return 0;
+    return (uint64_t)total.QuadPart;
+#else
+    struct statvfs s;
+    if (statvfs(mp, &s) != 0) return 0;
+    return (uint64_t)s.f_blocks * s.f_bsize;
+#endif
+}
+
 void set_lvgl_path(char *dst, size_t dst_sz, const char *abs_path) {
     if (!dst || dst_sz == 0) return;
     if (!abs_path || abs_path[0] == '\0') {
         dst[0] = '\0';
         return;
     }
-    // 已经是 LVGL 格式
-    if (isalpha((unsigned char)abs_path[0]) && abs_path[1] == ':') {
-        safe_strcpy(dst, dst_sz, abs_path);
-        return;
+    // 剥掉已有 LVGL 盘符(仅 'A'，见 lv_conf LV_FS_STDIO_LETTER)，再规范化。
+    // 只认 'A' 而非任意字母：Windows 真实盘符 C:\ 不能被误当 LVGL 盘符剥掉。
+    const char *raw = abs_path;
+    if (abs_path[0] == 'A' && abs_path[1] == ':') {
+        raw = abs_path + 2;
     }
-    snprintf(dst, dst_sz, "A:%s", abs_path);
+    // LV_FS_STDIO_PATH 为 "/"，相对路径会被拼成 "/./pcdata/..." → 打不开。
+    // realpath 成绝对路径后再加 A:（文件须已存在；失败则原样回退）。
+    char resolved[PATH_MAX];
+    const char *use = raw;
+    if (realpath(raw, resolved))
+        use = resolved;
+    snprintf(dst, dst_sz, "A:%s", use);
 }
 
 char* read_file_all(const char *filepath, size_t *out_len) {

@@ -1,6 +1,9 @@
 backup/
 build/
 build_dev*/
+build-pc/
+build-win/
+dist/
 
 .cache
 appconfig.json

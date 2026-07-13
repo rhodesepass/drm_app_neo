@@ -2,6 +2,7 @@
 #include "ui_screens/ui_services.h"
 #include "ui/font_registry.h"
 #include "utils/log.h"
+#include "utils/compat.h"
 #include "config.h"
 #include "icons.h"
 #include "ui_metrics.h"

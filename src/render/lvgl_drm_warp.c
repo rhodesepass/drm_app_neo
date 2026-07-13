@@ -12,6 +12,8 @@
 #include "config.h"
 #include "render/layer_animation.h"
 #include "utils/log.h"
+#include "utils/misc.h"
+#include "utils/compat.h"
 #include "driver/key_enc_evdev.h"
 #include "ui/filemanager.h"
 #include "ui/font_registry.h"
@@ -26,10 +28,7 @@
 
 static uint32_t lvgl_drm_warp_tick_get_cb(void)
 {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    uint64_t time_ms = t.tv_sec * 1000 + (t.tv_nsec / 1000000);
-    return time_ms;
+    return (uint32_t)(get_mono_us() / 1000);
 }
 
 static void lvgl_drm_warp_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map)

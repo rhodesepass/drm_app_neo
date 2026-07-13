@@ -3,10 +3,10 @@
 #include "utils/timer.h"
 
 #include <errno.h>
-#include <signal.h>
 #include <string.h>
 
 #include "utils/log.h"
+#include "utils/timer_backend.h"
 
 // 单实例入口（S）：SIGEV_THREAD trampoline 通过它定位到 tm
 static prts_timer_t *g_prts_tm_singleton = NULL;
@@ -27,13 +27,9 @@ static inline void unpack_sigval_u32(int packed, uint16_t *out_id, uint16_t *out
     *out_gen = (uint16_t)((u >> 16) & 0xFFFFu);
 }
 
-static inline void us_to_timespec(uint64_t us, struct timespec *out)
-{
-    out->tv_sec = (time_t)(us / 1000000ULL);
-    out->tv_nsec = (long)((us % 1000000ULL) * 1000ULL);
-}
-
-static void prts_timer_trampoline(union sigval sv)
+// OS 后端触发时回调此函数（posix shim / win32 队列回调均指向它）。
+// slot 校验、计数递减、auto-free 全在这里，平台无关。
+void prts_timer_on_fire(int packed_tag)
 {
     prts_timer_t *tm = g_prts_tm_singleton;
     if (!tm) {
@@ -41,7 +37,7 @@ static void prts_timer_trampoline(union sigval sv)
     }
 
     uint16_t id = 0, gen16 = 0;
-    unpack_sigval_u32(sv.sival_int, &id, &gen16);
+    unpack_sigval_u32(packed_tag, &id, &gen16);
     if (id == 0 || id > PRTS_TIMER_MAX) {
         return;
     }
@@ -65,7 +61,7 @@ static void prts_timer_trampoline(union sigval sv)
         s->remaining--;
         if (s->remaining == 0) {
             // auto free：到期后删除 timer 并回收 slot
-            (void)timer_delete(s->t);
+            os_timer_disarm(s->t);
             s->active = false;
             s->gen++; // 使旧回调线程失效（handle/sigval 均 mismatch）
             if (tm->free_top < PRTS_TIMER_MAX) {
@@ -125,7 +121,7 @@ static int prts_timer_cancel_locked(prts_timer_t *tm, uint32_t id, uint32_t gen)
     }
 
     // stop future triggers
-    (void)timer_delete(s->t);
+    os_timer_disarm(s->t);
 
     s->active = false;
     s->gen++; // invalidate outstanding callbacks/handles
@@ -165,7 +161,7 @@ int prts_timer_destroy(prts_timer_t *tm)
     for (uint32_t id = 1; id <= PRTS_TIMER_MAX; id++) {
         prts_timer_slot_t *s = &tm->slots[id];
         if (s->active) {
-            (void)timer_delete(s->t);
+            os_timer_disarm(s->t);
             s->active = false;
             s->gen++;
         }
@@ -223,52 +219,23 @@ int prts_timer_create(prts_timer_handle_t *out,
     s->remaining = fire_count;
     s->active = true;
 
-    struct sigevent sev;
-    memset(&sev, 0, sizeof(sev));
-    sev.sigev_notify = SIGEV_THREAD;
-    sev.sigev_notify_function = prts_timer_trampoline;
-    sev.sigev_value.sival_int = pack_sigval_u32(id16, (uint16_t)(s->gen & 0xFFFFu));
+    uint64_t first_us = start_delay_us;
+    if (first_us == 0) {
+        first_us = (interval_us != 0) ? interval_us : 1;
+    }
+    // one-shot（fire_count==1）不设周期
+    uint64_t period_us = (fire_count == 1) ? 0 : interval_us;
+    int packed = pack_sigval_u32(id16, (uint16_t)(s->gen & 0xFFFFu));
 
-    timer_t t;
-    int rc = timer_create(CLOCK_MONOTONIC, &sev, &t);
+    int rc = os_timer_arm(&s->t, first_us, period_us, packed);
     if (rc != 0) {
-        int err = errno;
         // 回收 slot
         s->active = false;
         s->gen++;
         tm->free_ids[tm->free_top++] = id16;
         pthread_mutex_unlock(&tm->mtx);
-        log_error("prts_timer_create: timer_create failed: %s(%d)", strerror(err), err);
-        return -err;
-    }
-    s->t = t;
-
-    uint64_t first_us = start_delay_us;
-    if (first_us == 0) {
-        first_us = (interval_us != 0) ? interval_us : 1;
-    }
-
-    struct itimerspec its;
-    memset(&its, 0, sizeof(its));
-    us_to_timespec(first_us, &its.it_value);
-    if (fire_count == 1) {
-        // one-shot：不设置 interval
-        its.it_interval.tv_sec = 0;
-        its.it_interval.tv_nsec = 0;
-    } else {
-        us_to_timespec(interval_us, &its.it_interval);
-    }
-
-    rc = timer_settime(s->t, 0, &its, NULL);
-    if (rc != 0) {
-        int err = errno;
-        (void)timer_delete(s->t);
-        s->active = false;
-        s->gen++;
-        tm->free_ids[tm->free_top++] = id16;
-        pthread_mutex_unlock(&tm->mtx);
-        log_error("prts_timer_create: timer_settime failed: %s(%d)", strerror(err), err);
-        return -err;
+        log_error("prts_timer_create: os_timer_arm failed: %s(%d)", strerror(-rc), -rc);
+        return rc;
     }
 
     *out = (((uint64_t)s->gen) << 32) | (uint64_t)id16;

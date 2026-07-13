@@ -644,10 +644,12 @@ int prts_operator_scan_assets(prts_t *prts,char* dirpath,prts_source_t source){
 
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL){
-        if(entry->d_type != DT_DIR){
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
         }
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+        char sub[256];
+        join_path(sub, sizeof(sub), dirpath, entry->d_name);
+        if(!path_is_dir(sub)){
             continue;
         }
         if (prts->operator_count >= PRTS_OPERATORS_MAX) {

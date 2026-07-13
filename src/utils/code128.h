@@ -26,24 +26,13 @@
 #include <stddef.h>
 
 // credits to https://www.transmissionzero.co.uk/computing/building-dlls-with-mingw/
+/* 本工程把 code128 静态编进可执行文件，从不建/用它的 DLL 形态。ADDAPI 一律留空：
+   否则 Windows 分支默认 dllimport 会让链接去找 __imp_ 符号而失败。 */
+#define ADDAPI
 #ifdef _WIN32
-
-    /* You should define ADD_EXPORTS *only* when building the DLL. */
-    #ifdef ADD_EXPORTS
-        #define ADDAPI __declspec(dllexport)
-    #else
-        #define ADDAPI __declspec(dllimport)
-    #endif
-
-    /* Define calling convention in one place, for convenience. */
     #define ADDCALL __cdecl
-
-#else /* _WIN32 not defined. */
-
-    /* Define with no value on non-Windows OSes. */
-    #define ADDAPI
+#else
     #define ADDCALL
-
 #endif
 
 

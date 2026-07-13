@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
+#include "utils/compat.h"
 
 int spsc_bq_init(spsc_bq_t *q, size_t capacity)
 {

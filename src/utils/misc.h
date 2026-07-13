@@ -7,12 +7,17 @@
 #include <stdio.h>
 
 uint64_t get_now_us(void);
+uint64_t get_mono_us(void);  // 单调时钟（不受墙钟跳变影响），用于计时/动画/超时
 void fill_nv12_buffer_with_color(uint8_t* buf, int width, int height, uint32_t rgb);
 void safe_strcpy(char *dst, size_t dst_sz, const char *src) ;
 int join_path(char *dst, size_t dst_sz, const char *base, const char *rel) ;
 const char* path_basename(const char *path) ;
 int file_exists_readable(const char *filepath) ;
 int file_exists_executable(const char *filepath) ;
+bool path_is_dir(const char *path) ;  // stat 判目录，跨平台（mingw dirent 无 d_type）
+bool path_is_file(const char *path) ; // stat 判普通文件，跨平台
+uint64_t fs_avail_bytes(const char *mountpoint) ;  // 挂载点可用字节（跨平台）
+uint64_t fs_total_bytes(const char *mountpoint) ;  // 挂载点总字节（跨平台）
 void set_lvgl_path(char *dst, size_t dst_sz, const char *abs_path) ;
 char* read_file_all(const char *filepath, size_t *out_len) ;
 const char* json_get_string(cJSON *obj, const char *key) ;

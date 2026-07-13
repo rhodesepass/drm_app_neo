@@ -225,10 +225,12 @@ int apps_cfg_scan(apps_t *apps,char* dirpath,app_source_t source){
 
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL){
-        if(entry->d_type != DT_DIR){
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
         }
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+        char sub[256];
+        join_path(sub, sizeof(sub), dirpath, entry->d_name);
+        if(!path_is_dir(sub)){
             continue;
         }
         if (apps->app_count >= APPS_MAX) {

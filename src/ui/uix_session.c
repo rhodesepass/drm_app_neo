@@ -1,8 +1,8 @@
 #include "ui/uix_session.h"
 #include <pthread.h>
 #include <string.h>
-#include <time.h>
 #include <utils/log.h>
+#include <utils/misc.h>
 
 static struct {
     pthread_mutex_t mtx;
@@ -11,7 +11,7 @@ static struct {
     uix_kind_t kind;
     uix_state_t state;
     uint32_t choice;
-    struct timespec deadline; // timeout_ms != 0 时有效
+    uint64_t deadline_us; // timeout_ms != 0 时有效（单调时钟 us）
     bool has_deadline;
     char title[UIX_TITLE_MAX];
     char desc[UIX_DESC_MAX];
@@ -23,13 +23,7 @@ static void set_deadline(uint32_t timeout_ms) {
         S.has_deadline = false;
         return;
     }
-    clock_gettime(CLOCK_MONOTONIC, &S.deadline);
-    S.deadline.tv_sec += timeout_ms / 1000;
-    S.deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
-    if (S.deadline.tv_nsec >= 1000000000L) {
-        S.deadline.tv_sec++;
-        S.deadline.tv_nsec -= 1000000000L;
-    }
+    S.deadline_us = get_mono_us() + (uint64_t)timeout_ms * 1000ULL;
     S.has_deadline = true;
 }
 
@@ -135,10 +129,7 @@ bool uix_session_tick(void) {
     bool expired = false;
     pthread_mutex_lock(&S.mtx);
     if (S.kind != UIX_KIND_NONE && S.state == UIX_PENDING && S.has_deadline) {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        if (now.tv_sec > S.deadline.tv_sec ||
-            (now.tv_sec == S.deadline.tv_sec && now.tv_nsec >= S.deadline.tv_nsec)) {
+        if (get_mono_us() >= S.deadline_us) {
             S.state = UIX_TIMEOUT;
             expired = true;
             log_info("uix: session %u timed out", S.id);

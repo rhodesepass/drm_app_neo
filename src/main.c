@@ -7,11 +7,14 @@
 #include <stdint.h>
 #include <signal.h>
 #include <sys/time.h>
-#include <sys/wait.h>
+#ifndef _WIN32
+#include <sys/wait.h>  // Windows 无子进程回收（后台 app 走 POSIX，见 apps.c）
+#endif
 
 #include "config.h"
 #include "driver/drm_warpper.h"
 #include "utils/log.h"
+#include "utils/compat.h"
 #include "render/mediaplayer.h"
 #include "render/lvgl_drm_warp.h"
 #include "overlay/overlay.h"
@@ -224,7 +227,8 @@ int main(int argc, char *argv[]){
 
     // ============ 主循环 ===============
     while(g_running){
-        int status; 
+#ifndef _WIN32
+        int status;
         pid_t pid;
         // 处理子进程（后台app）退出
         while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
@@ -232,6 +236,7 @@ int main(int argc, char *argv[]){
                 log_info("child process %d exited with status %d", pid, WEXITSTATUS(status));
             }
         }
+#endif
         usleep(1 * 1000 * 1000);
     }
 
