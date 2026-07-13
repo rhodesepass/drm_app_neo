@@ -1,0 +1,18 @@
+{
+    "version": 1,
+    "uuid": "3de46ad7-11a1-4eda-bb64-a692f5873a53",
+    "name": "空素材默认展示",
+    "description": "默认素材,防止没有素材程序崩溃。",
+    "screen": "360x640",
+    "loop": {
+        "file": "loop_1.mp4"
+    },
+    "transition_in": {
+        "type": "fade",
+        "options": {
+            "duration": 200000,
+            "background_color": "#000000",
+            "image":"pr_glitch.jpg"
+        }
+    }
+}
