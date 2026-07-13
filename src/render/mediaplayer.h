@@ -7,10 +7,6 @@
 #include <stdatomic.h>
 
 #include "driver/drm_warpper.h"
-#include "vdec/mp4_demux.h"
-#include "vdec/h264_parser.h"
-#include "vdec/h264_dpb.h"
-#include "vdec/vdec_v4l2.h"
 
 /* native output frame size; 720 档另接受 VIDEO_LEGACY_* 旧素材(DEFE 放大) */
 #define MEDIAPLAYER_FRAME_WIDTH   VIDEO_WIDTH
@@ -27,12 +23,10 @@ typedef struct MultiThreadCtx {
 } MultiThreadCtx;
 
 typedef struct {
-    struct mp4_demux     demux;
-    struct h264_parser   parser;
-    struct h264_dpb      dpb;
-    struct vdec_ctx      vdec;
-    uint32_t             fb_ids[VDEC_MAX_CAP_BUFS];
-    uint32_t             gem_handles[VDEC_MAX_CAP_BUFS];
+    /* 解码后端私有会话状态：设备 = 自制 demux/parser/DPB + cedrus V4L2，
+     * PC = ffmpeg。init 时由后端分配，destroy 时释放；公共字段留在本结构，
+     * ipc_handler 等直接读 video_path/running。 */
+    void                *priv;
     bool                 session_open;
 
     pthread_t            decode_thread;

@@ -106,6 +106,9 @@ target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS})
 # ============================================================================
 # 源文件
 # ============================================================================
+# 平台无关的公共源；显示/视频/按键三个后端缝按 target 追加：
+#   设备 = drm_warpper.c + mediaplayer.c(+vdec) + key_enc_evdev.c
+#   PC   = drm_warpper_sdl.c + mediaplayer_ffmpeg.c + key_sdl.c
 set(EPASS_SOURCES
   src/main.c
 
@@ -118,17 +121,6 @@ set(EPASS_SOURCES
   src/apps/ipc_common.c
   src/apps/ipc_server.c
   src/apps/ipc_handler.c
-
-  src/driver/drm_warpper.c
-  src/driver/key_enc_evdev.c
-
-  src/render/mediaplayer.c
-  src/vdec/mp4_demux.c
-  src/vdec/bitreader.c
-  src/vdec/nalu.c
-  src/vdec/h264_parser.c
-  src/vdec/h264_dpb.c
-  src/vdec/vdec_v4l2.c
 
   src/render/layer_animation.c
   src/render/lvgl_drm_warp.c
@@ -189,7 +181,18 @@ file(GLOB RES_FONT CONFIGURE_DEPENDS ${FONT_DIR}/*.otf)
 # name: 可执行名; screen_define: 屏宏 (覆盖 config.h 的兜底默认)
 # ============================================================================
 function(add_epass_target name screen_define)
-  add_executable(${name} ${EPASS_SOURCES})
+  add_executable(${name} ${EPASS_SOURCES}
+    # 设备后端：libdrm atomic + cedrus V4L2 + evdev
+    src/driver/drm_warpper.c
+    src/driver/key_enc_evdev.c
+    src/render/mediaplayer.c
+    src/vdec/mp4_demux.c
+    src/vdec/bitreader.c
+    src/vdec/nalu.c
+    src/vdec/h264_parser.c
+    src/vdec/h264_dpb.c
+    src/vdec/vdec_v4l2.c
+  )
   target_include_directories(${name} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
@@ -268,6 +271,84 @@ target_link_libraries(vdec_selftest ${LIBDRM_LIBRARIES})
 
 add_epass_target(app_360 USE_360_640_SCREEN)
 add_epass_target(app_720 USE_720_1280_SCREEN)
+
+# ============================================================================
+# PC Target —— 完整应用跑在 PC：drm_warpper 换 SDL 合成后端、视频换 ffmpeg
+# 软解、按键换 SDL 键盘、字体走 fontconfig。数据目录见 config.h 的
+# EPASS_PC_TARGET 块（缺省 ./pcdata）。依赖缺失时跳过，不影响设备构建。
+# ============================================================================
+pkg_check_modules(SDL2 QUIET sdl2)
+pkg_check_modules(FFMPEG QUIET libavformat libavcodec libavutil libswscale)
+pkg_check_modules(FONTCONFIG QUIET fontconfig)
+
+function(add_epass_pc_target name screen_define)
+  add_executable(${name} ${EPASS_SOURCES}
+    # PC 后端：SDL 合成 + ffmpeg 解码 + SDL 键盘
+    src/driver/drm_warpper_sdl.c
+    src/driver/key_sdl.c
+    src/render/mediaplayer_ffmpeg.c
+  )
+  target_include_directories(${name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/lvgl
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui_screens/screens
+    ${LIBDRM_INCLUDE_DIRS}   # drm_warpper.h 的结构体仍引 xf86drm 类型（仅头文件）
+    ${PNG_INCLUDE_DIR}
+    ${FREETYPE_INCLUDE_DIRS}
+    ${SDL2_INCLUDE_DIRS}
+    ${FFMPEG_INCLUDE_DIRS}
+    ${FONTCONFIG_INCLUDE_DIRS}
+  )
+  target_compile_definitions(${name} PRIVATE
+    _DEFAULT_SOURCE
+    ${screen_define}
+    EPASS_PC_TARGET
+    FONT_REGISTRY_USE_FONTCONFIG
+    EPASS_GIT_VERSION="${GIT_COMMIT}"
+    EPASS_GIT_TAG="${GIT_TAG}"
+    COMPILE_TIME="${COMPILE_TIME}"
+  )
+  target_compile_options(${name} PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -Wno-format-truncation
+    -ffile-prefix-map=${CMAKE_SOURCE_DIR}/src/=/
+    $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
+  )
+  # lvgl(静态库) 在前，其依赖的 freetype 等在后（宿主 ld 不做隐式二级依赖解析）
+  target_link_libraries(${name}
+    lvgl
+    ${PNG_LIBRARIES}
+    ${FREETYPE_LIBRARIES}
+    ${SDL2_LIBRARIES}
+    ${FFMPEG_LIBRARIES}
+    ${FONTCONFIG_LIBRARIES}
+    m
+    dl
+    pthread
+    rt
+  )
+  # 资源拷贝同设备；fonts 恒自带（fontconfig 未命中时的精确回退源）
+  set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
+  add_custom_command(TARGET ${name} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}/fonts
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_PNG}  ${RES_OUT_DIR}/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RES_FONT} ${RES_OUT_DIR}/fonts/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR}/fallback ${RES_OUT_DIR}/fallback
+    COMMENT "Copying assets -> res/ next to ${name}"
+    VERBATIM
+  )
+endfunction()
+
+if(SDL2_FOUND AND FFMPEG_FOUND AND FONTCONFIG_FOUND)
+  add_epass_pc_target(app_pc_360 USE_360_640_SCREEN)
+  add_epass_pc_target(app_pc_720 USE_720_1280_SCREEN)
+  message(STATUS "PC targets enabled: app_pc_360 / app_pc_720")
+else()
+  message(STATUS "PC targets skipped (need sdl2 + ffmpeg{avformat,avcodec,avutil,swscale} + fontconfig)")
+endif()
 
 # ============================================================================
 # 安装规则 (可选)：bin/app_* 与 bin/res/ 同级，保持运行时相对结构
