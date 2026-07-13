@@ -25,6 +25,14 @@ find_package(PkgConfig REQUIRED)
 find_package(PNG REQUIRED)
 pkg_check_modules(SDL2 REQUIRED sdl2)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
+# overlay 仿真编译真实的 overlay/*.c，drm_warpper.h 引 xf86drm.h —— 只要头文件，不链接
+pkg_check_modules(LIBDRM REQUIRED libdrm)
+
+# overlay 仿真的固定视频底图（编译期烘进二进制，-DSIM_VIDEO_IMG= 可换）
+if(NOT SIM_VIDEO_IMG)
+  set(SIM_VIDEO_IMG ${REPO}/assets/fallback/pr_glitch.jpg)
+endif()
+message(STATUS "overlay sim video image: ${SIM_VIDEO_IMG}")
 
 # ============================================================================
 # LVGL (用 sim 专用的 lv_conf.h: 开 SDL + FreeType)
@@ -97,3 +105,70 @@ endfunction()
 
 add_sim_target(epass_ui_sim_360x640  USE_360_640_SCREEN)
 add_sim_target(epass_ui_sim_720x1280 USE_720_1280_SCREEN)
+
+# ============================================================================
+# Overlay 仿真 —— 真实 overlay 代码（元素引擎/transitions/worker/prts_timer/
+# layer_animation）跑在 SDL 合成窗口上；drm_warpper 用 sim_drm_warpper.c mock，
+# video 层为编译期固定图片。用法见 docs/overlay_dev_note.md 的 "PC 仿真" 一节。
+# ============================================================================
+set(OVERLAY_SIM_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/overlay_sim_main.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/overlay_sim_presets.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim_drm_warpper.c
+
+  ${REPO}/src/overlay/overlay.c
+  ${REPO}/src/overlay/opinfo.c
+  ${REPO}/src/overlay/transitions.c
+  ${REPO}/src/render/fbdraw.c
+  ${REPO}/src/render/layer_animation.c
+  ${REPO}/src/ui/font_registry.c
+  ${REPO}/src/utils/timer.c
+  ${REPO}/src/utils/cacheassets.c
+  ${REPO}/src/utils/imgscale.c
+  ${REPO}/src/utils/misc.c
+  ${REPO}/src/utils/cJSON.c
+  ${REPO}/src/utils/code128.c
+  ${REPO}/src/utils/respath.c
+  ${REPO}/src/utils/log.c
+)
+
+function(add_overlay_sim_target name screen_define)
+  add_executable(${name} ${OVERLAY_SIM_SOURCES})
+  target_include_directories(${name} PRIVATE
+    ${REPO}
+    ${REPO}/lvgl
+    ${REPO}/src
+    ${SDL2_INCLUDE_DIRS}
+    ${FREETYPE_INCLUDE_DIRS}
+    ${LIBDRM_INCLUDE_DIRS}
+  )
+  target_compile_definitions(${name} PRIVATE
+    _DEFAULT_SOURCE
+    ${screen_define}
+    FONT_REGISTRY_DIR="${SIM_FONT_DIR}"
+    SIM_VIDEO_IMG="${SIM_VIDEO_IMG}"
+  )
+  target_compile_options(${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  target_link_libraries(${name}
+    lvgl
+    ${SDL2_LIBRARIES}
+    ${FREETYPE_LIBRARIES}
+    ${PNG_LIBRARIES}
+    m
+    pthread
+    rt
+  )
+  # cacheassets/预设素材走可执行文件同级 res/（respath），照抄设备 target 的拷贝
+  set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
+  file(GLOB SIM_RES_PNG CONFIGURE_DEPENDS ${REPO}/assets/*.png)
+  add_custom_command(TARGET ${name} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RES_OUT_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SIM_RES_PNG} ${RES_OUT_DIR}/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${REPO}/assets/fallback ${RES_OUT_DIR}/fallback
+    COMMENT "Copying assets -> res/ next to ${name}"
+    VERBATIM
+  )
+endfunction()
+
+add_overlay_sim_target(epass_overlay_sim_360x640  USE_360_640_SCREEN)
+add_overlay_sim_target(epass_overlay_sim_720x1280 USE_720_1280_SCREEN)
