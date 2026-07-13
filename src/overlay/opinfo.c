@@ -39,24 +39,27 @@ typedef enum {
 } opinfo_eink_state_t;
 
 typedef struct {
-    fbdraw_rect_t bbox;   // 解析后的物理像素包围盒（也是绘制的裁剪区）
-    int group;            // 重叠组代表元素的下标
+    fbdraw_rect_t content; // 元素最终落位矩形（绘制与文本裁剪用）
+    fbdraw_rect_t bbox;    // 分组/清除范围：move 元素为运动路径并集，其余等于 content
+    int group;             // 重叠组代表元素的下标
 
     // 动画运行态
-    int cpidx, cpcnt;             // typewriter：已显示/总 codepoint 数
+    int cpidx, cpcnt;             // typewriter/scramble：已稳定/总 codepoint 数
     opinfo_eink_state_t eink;     // eink 闪烁状态机
     int fade_value;               // fade：当前不透明度
-    int wipe_value;               // wipe：当前已划入宽度（物理）
+    int wipe_value;               // wipe：当前已划入宽/高（物理，随 direction）
     int grow_value;               // grow：当前半径（360 基准）
     int scroll_value;             // scroll：当前偏移（物理）
+    int cur_dx, cur_dy;           // move：当前相对落点的偏移（物理）
 
     // image 元素的像素来源（用户图或 cacheasset，show 时解析）
     uint32_t* src_addr;
     int src_w, src_h;
 
-    unsigned int visible : 1; // 首次绘制后置位，组重画时参与
+    unsigned int visible : 1;  // 首次绘制后置位，组重画时参与；end_frame 退场后清零
     unsigned int dirty : 1;
     unsigned int done : 1;
+    unsigned int blink_on : 1; // blink：当前处于显示相
 } opinfo_el_state_t;
 
 // 引擎控制块。timer 回调线程与 worker 线程都会引用它，而 prts_timer_cancel
@@ -104,6 +107,55 @@ static void rect_union(fbdraw_rect_t* u, const fbdraw_rect_t* r, bool* set){
     if(r->y < u->y) u->y = r->y;
     u->w = x2 - u->x;
     u->h = y2 - u->y;
+}
+
+// a 与 window 的交集写回 a；无交集时 a 的 w/h 置 0
+static void rect_clip(fbdraw_rect_t* a, const fbdraw_rect_t* window){
+    int x1 = a->x > window->x ? a->x : window->x;
+    int y1 = a->y > window->y ? a->y : window->y;
+    int x2 = a->x + a->w < window->x + window->w ? a->x + a->w : window->x + window->w;
+    int y2 = a->y + a->h < window->y + window->h ? a->y + a->h : window->y + window->h;
+    a->x = x1;
+    a->y = y1;
+    a->w = x2 > x1 ? x2 - x1 : 0;
+    a->h = y2 > y1 ? y2 - y1 : 0;
+}
+
+// 半透明矩形的 src-over 填充（fbdraw_fill_rect 是裸写，fade 中的 rect 需要混合；
+// 只在影子缓冲(cached)上用，逐像素回读没有 uncached 的代价）
+static void fill_rect_blend(fbdraw_fb_t* fb, fbdraw_rect_t* rect, uint32_t color){
+    uint8_t a = (color >> 24) & 0xFF;
+    if(a == 255){
+        fbdraw_fill_rect(fb, rect, color);
+        return;
+    }
+    if(a == 0) return;
+    fbdraw_rect_t r = *rect;
+    fbdraw_rect_t screen = { 0, 0, fb->width, fb->height };
+    rect_clip(&r, &screen);
+    const uint8_t cr = (color >> 16) & 0xFF, cg = (color >> 8) & 0xFF, cb = color & 0xFF;
+    for(int y = r.y; y < r.y + r.h; y++){
+        uint32_t* row = fb->vaddr + y * fb->width;
+        for(int x = r.x; x < r.x + r.w; x++){
+            fbdraw_blend_over_at(&row[x], cr, cg, cb, a);
+        }
+    }
+}
+
+// scramble 的随机字符（xorshift，固件里无时钟/可重复性顾虑）
+static uint32_t scramble_rand(void){
+    static uint32_t s = 0x9E3779B9u;
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return s;
+}
+
+// 颜色 alpha 乘 opacity/255（fade 用于 text/rect 时走颜色通道）
+static uint32_t color_mul_alpha(uint32_t color, int opacity){
+    uint32_t a = (color >> 24) & 0xFF;
+    a = (a * (uint32_t)opacity + 127u) / 255u;
+    return (color & 0x00FFFFFF) | (a << 24);
 }
 
 static int bezier_ease(int frame, int total, int target){
@@ -155,8 +207,54 @@ static void el_draw_eink_flash(fbdraw_fb_t* fb, fbdraw_rect_t* r, opinfo_eink_st
     fbdraw_fill_rect(fb, r, c);
 }
 
-static void el_draw_text_rot90(fbdraw_fb_t* fb, const olopinfo_element_t* el, const opinfo_el_state_t* st){
-    fbdraw_rect_t r = st->bbox;
+// 按方向把 win 收缩成 wipe 已划入的窗口
+static void wipe_window(fbdraw_rect_t* win, int dir, int v){
+    switch(dir){
+    case OPINFO_WIPE_RTL:
+        win->x += win->w - v;
+        win->w = v;
+        break;
+    case OPINFO_WIPE_TTB:
+        win->h = v;
+        break;
+    case OPINFO_WIPE_BTT:
+        win->y += win->h - v;
+        win->h = v;
+        break;
+    default: // LTR
+        win->w = v;
+        break;
+    }
+}
+
+// scramble：前 cpidx 个 codepoint 原样保留，其余换成随机字符（\n 保留，多行结构不变）。
+// 随机字符是单字节 ASCII，不会超过原文的字节长度。
+static void scramble_build_text(const olopinfo_element_t* el, const opinfo_el_state_t* st,
+                                char* out, size_t out_sz){
+    static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&*+-/";
+    uint32_t ofs = 0;
+    size_t o = 0;
+
+    for(int cp = 0; cp < st->cpidx; cp++){
+        uint32_t prev = ofs;
+        if(lv_text_encoded_next(el->text, &ofs) == 0) break;
+        size_t len = ofs - prev;
+        if(o + len >= out_sz) break;
+        memcpy(out + o, el->text + prev, len);
+        o += len;
+    }
+
+    uint32_t codepoint;
+    while((codepoint = lv_text_encoded_next(el->text, &ofs)) != 0){
+        if(o + 1 >= out_sz) break;
+        out[o++] = (codepoint == '\n') ? '\n'
+                                       : charset[scramble_rand() % (sizeof(charset) - 1)];
+    }
+    out[o] = '\0';
+}
+
+static void el_draw_text_rot90(fbdraw_fb_t* fb, const olopinfo_element_t* el, const fbdraw_rect_t* pos){
+    fbdraw_rect_t r = *pos;
     const lv_font_t* font = el_font(el);
     int32_t ls = S(el->letter_space);
 
@@ -206,23 +304,44 @@ static void el_draw(opinfo_engine_t* d, int i){
     olopinfo_element_t* el = &d->els[i];
     opinfo_el_state_t* st = &d->st[i];
     fbdraw_fb_t* fb = &d->shadow_fb;
-    fbdraw_rect_t r = st->bbox;
+
+    if(el->anim == OPINFO_ANIM_BLINK && !st->blink_on){
+        return; // 熄灭相：组重组已清区域，不画即消失
+    }
+
+    // move 进行中的当前位置（非 move 时偏移恒为 0）
+    fbdraw_rect_t r = st->content;
+    r.x += st->cur_dx;
+    r.y += st->cur_dy;
+
     fbdraw_rect_t sr;
     fbdraw_fb_t src;
 
     switch(el->type){
-    case OPINFO_EL_TEXT:
+    case OPINFO_EL_TEXT: {
         if(el->anim == OPINFO_ANIM_TYPEWRITER){
             fbdraw_text_range(fb, &r, el->text, el_font(el), el->color,
                               S(el->line_height), 0, st->cpidx + 1);
-        } else {
-            fbdraw_text(fb, &r, el->text, el_font(el), el->color,
-                        S(el->line_height), S(el->letter_space));
+            break;
         }
+        if(el->anim == OPINFO_ANIM_SCRAMBLE && !st->done){
+            char scratch[sizeof(el->text)];
+            scramble_build_text(el, st, scratch, sizeof(scratch));
+            fbdraw_text(fb, &r, scratch, el_font(el), el->color,
+                        S(el->line_height), S(el->letter_space));
+            break;
+        }
+        uint32_t color = el->color;
+        if(el->anim == OPINFO_ANIM_FADE){
+            color = color_mul_alpha(color, st->fade_value);
+        }
+        fbdraw_text(fb, &r, el->text, el_font(el), color,
+                    S(el->line_height), S(el->letter_space));
         break;
+    }
 
     case OPINFO_EL_TEXT_ROT90:
-        el_draw_text_rot90(fb, el, st);
+        el_draw_text_rot90(fb, el, &r);
         break;
 
     case OPINFO_EL_IMAGE:
@@ -242,9 +361,12 @@ static void el_draw(opinfo_engine_t* d, int i){
             fbdraw_alpha_opacity_rect(&src, fb, &sr, &r, (uint8_t)st->fade_value);
         }
         else if(el->anim == OPINFO_ANIM_WIPE){
-            sr.w = st->wipe_value;
             fbdraw_rect_t dr = r;
-            dr.w = st->wipe_value;
+            wipe_window(&dr, el->wipe_dir, st->wipe_value);
+            sr.x = dr.x - r.x;
+            sr.y = dr.y - r.y;
+            sr.w = dr.w;
+            sr.h = dr.h;
             fbdraw_copy_rect(&src, fb, &sr, &dr);
         }
         else if(el->anim == OPINFO_ANIM_SCROLL){
@@ -266,16 +388,39 @@ static void el_draw(opinfo_engine_t* d, int i){
         }
         break;
 
-    case OPINFO_EL_RECT:
+    case OPINFO_EL_RECT: {
         if(el->anim == OPINFO_ANIM_EINK && st->eink != ANIMATION_EINK_CONTENT){
             el_draw_eink_flash(fb, &r, st->eink);
             break;
         }
-        if(el->anim == OPINFO_ANIM_WIPE){
-            r.w = st->wipe_value;
+        uint32_t color = el->color;
+        if(el->anim == OPINFO_ANIM_FADE){
+            color = color_mul_alpha(color, st->fade_value);
         }
-        fbdraw_fill_rect(fb, &r, el->color);
+        fbdraw_rect_t win = r;
+        if(el->anim == OPINFO_ANIM_WIPE){
+            wipe_window(&win, el->wipe_dir, st->wipe_value);
+        }
+        if(el->border_width > 0){
+            // 空心边框：4 条边（左右不含角，避免 fade 时角上双重混合），与 wipe 窗口求交
+            int bw = S(el->border_width);
+            fbdraw_rect_t bars[4] = {
+                { r.x, r.y, r.w, bw },                         // 上
+                { r.x, r.y + r.h - bw, r.w, bw },              // 下
+                { r.x, r.y + bw, bw, r.h - 2 * bw },           // 左
+                { r.x + r.w - bw, r.y + bw, bw, r.h - 2 * bw } // 右
+            };
+            for(int b = 0; b < 4; b++){
+                rect_clip(&bars[b], &win);
+                if(bars[b].w > 0 && bars[b].h > 0){
+                    fill_rect_blend(fb, &bars[b], color);
+                }
+            }
+        } else {
+            fill_rect_blend(fb, &win, color);
+        }
         break;
+    }
 
     case OPINFO_EL_BARCODE:
         if(el->anim == OPINFO_ANIM_EINK && st->eink != ANIMATION_EINK_CONTENT){
@@ -300,6 +445,16 @@ static void el_advance(opinfo_engine_t* d, int i){
     opinfo_el_state_t* st = &d->st[i];
     int frame = d->curr_frame;
     int speed = el->speed > 0 ? el->speed : 1;
+
+    // 退场：到 end_frame 隐藏并计为播放完毕，组重组机制会把区域清掉
+    if(el->end_frame > 0 && frame >= el->end_frame){
+        if(st->visible || !st->done){
+            st->visible = 0;
+            st->dirty = 1;
+            st->done = 1;
+        }
+        return;
+    }
 
     if(frame < el->start_frame){
         return;
@@ -352,15 +507,50 @@ static void el_advance(opinfo_engine_t* d, int i){
     case OPINFO_ANIM_WIPE: {
         if(st->done) break;
         int f = frame - el->start_frame;
+        int target = (el->wipe_dir == OPINFO_WIPE_TTB || el->wipe_dir == OPINFO_WIPE_BTT)
+                         ? st->content.h : st->content.w;
         if(f >= speed){
-            st->wipe_value = st->bbox.w;
+            st->wipe_value = target;
             st->done = 1;
         } else {
-            st->wipe_value = bezier_ease(f, speed, st->bbox.w);
+            st->wipe_value = bezier_ease(f, speed, target);
         }
         st->dirty = 1;
         break;
     }
+
+    case OPINFO_ANIM_MOVE: {
+        if(st->done) break;
+        int f = frame - el->start_frame;
+        if(f >= speed){
+            st->cur_dx = 0;
+            st->cur_dy = 0;
+            st->done = 1;
+        } else {
+            st->cur_dx = S(el->from_dx) - bezier_ease(f, speed, S(el->from_dx));
+            st->cur_dy = S(el->from_dy) - bezier_ease(f, speed, S(el->from_dy));
+        }
+        st->dirty = 1;
+        break;
+    }
+
+    case OPINFO_ANIM_SCRAMBLE:
+        if(st->done) break;
+        if(frame % speed == 0 && st->cpidx < st->cpcnt){
+            st->cpidx++;
+        }
+        if(st->cpidx >= st->cpcnt){
+            st->done = 1; // 本帧以真实文本收尾
+        }
+        st->dirty = 1; // 未稳定字符每帧跳变
+        break;
+
+    case OPINFO_ANIM_BLINK:
+        if((frame - el->start_frame) % speed == 0){
+            st->blink_on = !st->blink_on;
+            st->dirty = 1;
+        }
+        break;
 
     case OPINFO_ANIM_SCROLL:
         st->scroll_value -= S(speed);
@@ -467,10 +657,22 @@ static void el_resolve(opinfo_engine_t* d, int i){
         w_phys = OVERLAY_WIDTH - x;
     }
 
-    st->bbox.x = x;
-    st->bbox.y = y;
-    st->bbox.w = w_phys;
-    st->bbox.h = h_phys;
+    st->content.x = x;
+    st->content.y = y;
+    st->content.w = w_phys;
+    st->content.h = h_phys;
+
+    // 分组/清除范围：move 元素取运动路径（起点∪终点）的并集，其余等于落位矩形
+    st->bbox = st->content;
+    if(el->anim == OPINFO_ANIM_MOVE){
+        fbdraw_rect_t start_rect = st->content;
+        start_rect.x += S(el->from_dx);
+        start_rect.y += S(el->from_dy);
+        bool set = true;
+        rect_union(&st->bbox, &start_rect, &set);
+        st->cur_dx = S(el->from_dx);
+        st->cur_dy = S(el->from_dy);
+    }
 }
 
 static int group_find(opinfo_engine_t* d, int i){
@@ -529,13 +731,14 @@ static bool engine_compose(opinfo_engine_t* d){
         if(!dirty) continue;
 
         // 独占的打字机文本：字形只增不减，直接增量画新 codepoint，
-        // 免去整段文本的逐帧重排
-        if(members == 1 && d->els[g].anim == OPINFO_ANIM_TYPEWRITER){
+        // 免去整段文本的逐帧重排。（end_frame 退场时 visible=0，落入下面的
+        // 完整重组路径清区域）
+        if(members == 1 && d->els[g].anim == OPINFO_ANIM_TYPEWRITER && d->st[g].visible){
             opinfo_el_state_t* st = &d->st[g];
-            fbdraw_text_range(&d->shadow_fb, &st->bbox, d->els[g].text,
+            fbdraw_text_range(&d->shadow_fb, &st->content, d->els[g].text,
                               el_font(&d->els[g]), d->els[g].color,
                               S(d->els[g].line_height), st->cpidx, st->cpidx + 1);
-            fbdraw_copy_rect(&d->shadow_fb, &vram_fb, &st->bbox, &st->bbox);
+            fbdraw_copy_rect(&d->shadow_fb, &vram_fb, &st->content, &st->content);
             st->dirty = 0;
             continue;
         }
@@ -651,7 +854,9 @@ void overlay_opinfo_show_elements(overlay_t* overlay, olopinfo_params_t* params)
 
     for(int i = 0; i < d->count; i++){
         el_resolve(d, i);
-        if(d->els[i].anim == OPINFO_ANIM_SCROLL){
+        // 循环动画让引擎永不自然结束；带 end_frame 的循环元素会退场，不算
+        if((d->els[i].anim == OPINFO_ANIM_SCROLL || d->els[i].anim == OPINFO_ANIM_BLINK)
+           && d->els[i].end_frame == 0){
             d->has_loop = true;
         }
     }

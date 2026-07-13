@@ -35,11 +35,22 @@ typedef enum {
     OPINFO_ANIM_NONE,       // start_frame 时一次性画出
     OPINFO_ANIM_TYPEWRITER, // text: 逐 codepoint 打字机
     OPINFO_ANIM_EINK,       // image/rect/barcode: 黑白闪烁数次后出内容
-    OPINFO_ANIM_FADE,       // image: 不透明度 0->255 淡入
-    OPINFO_ANIM_WIPE,       // rect/image: 宽度按 cubic-bezier 从 0 划入
-    OPINFO_ANIM_SCROLL,     // image: 垂直循环滚动，永不结束
+    OPINFO_ANIM_FADE,       // image/text/rect: 不透明度 0->255 淡入
+    OPINFO_ANIM_WIPE,       // rect/image: 按 cubic-bezier 从 0 划入（direction 定方向）
+    OPINFO_ANIM_SCROLL,     // image: 垂直循环滚动，永不结束（除非 end_frame）
     OPINFO_ANIM_GROW,       // corner_fade: 半径从 0 长到目标值
+    OPINFO_ANIM_MOVE,       // text/text_rot90/image/rect/barcode: 从 from_dx/from_dy 偏移滑入落点
+    OPINFO_ANIM_SCRAMBLE,   // text: 乱码解码（随机字符跳变、逐个稳定成真实文本）
+    OPINFO_ANIM_BLINK,      // text/text_rot90/image/rect/barcode: 周期闪烁，永不结束（除非 end_frame）
 } opinfo_anim_t;
+
+// wipe 划入方向
+typedef enum {
+    OPINFO_WIPE_LTR, // 从左往右（默认）
+    OPINFO_WIPE_RTL, // 从右往左
+    OPINFO_WIPE_TTB, // 从上往下
+    OPINFO_WIPE_BTT, // 从下往上
+} opinfo_wipe_dir_t;
 
 // x,y 从哪个角落量起（右/下锚定时 x,y 是元素相应边到屏幕边缘的距离）。
 // 图片按原生尺寸绘制，锚定让"贴右下角"不依赖图片尺寸。
@@ -62,10 +73,14 @@ typedef struct {
     int w, h;
 
     int start_frame; // 动画从第几帧开始（30fps）
+    int end_frame;   // >0: 到该帧隐藏元素并视为播放完毕；0=永不退场
     // 语义随 anim 变化：
     //   typewriter=每 codepoint 帧数  eink=每闪烁态帧数  fade=每帧不透明度增量
     //   wipe=划入总帧数              scroll=每帧滚动像素  grow=每帧半径增量
+    //   move=滑入总帧数              scramble=每 codepoint 帧数  blink=半周期帧数
     int speed;
+    int wipe_dir;         // opinfo_wipe_dir_t，仅 wipe 用
+    int from_dx, from_dy; // move: 起点相对落点的偏移（360 基准）
 
     // text / text_rot90 / barcode
     char text[256];
@@ -77,6 +92,7 @@ typedef struct {
     bool bold_split;  // text_rot90: 空格前 faux bold、空格后常规（无空格则整体加粗）
 
     uint32_t color;   // text/rect/corner_fade 颜色 (ARGB)
+    int border_width; // rect: >0 画空心边框（360 基准线宽），0 实心
 
     // image 来源二选一
     int cacheasset_id;    // >=0: cacheasset_asset_id_t，忽略 image_path

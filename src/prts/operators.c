@@ -136,6 +136,9 @@ static const struct {
     { "wipe",       OPINFO_ANIM_WIPE,       40 },
     { "scroll",     OPINFO_ANIM_SCROLL,     1  },
     { "grow",       OPINFO_ANIM_GROW,       10 },
+    { "move",       OPINFO_ANIM_MOVE,       15 },
+    { "scramble",   OPINFO_ANIM_SCRAMBLE,   2  },
+    { "blink",      OPINFO_ANIM_BLINK,      15 },
 };
 
 static bool anim_valid_for_type(opinfo_anim_t anim, opinfo_element_type_t type) {
@@ -143,10 +146,14 @@ static bool anim_valid_for_type(opinfo_anim_t anim, opinfo_element_type_t type) 
     case OPINFO_ANIM_NONE:       return true;
     case OPINFO_ANIM_TYPEWRITER: return type == OPINFO_EL_TEXT;
     case OPINFO_ANIM_EINK:       return type == OPINFO_EL_IMAGE || type == OPINFO_EL_RECT || type == OPINFO_EL_BARCODE;
-    case OPINFO_ANIM_FADE:       return type == OPINFO_EL_IMAGE;
+    case OPINFO_ANIM_FADE:       return type == OPINFO_EL_IMAGE || type == OPINFO_EL_TEXT || type == OPINFO_EL_RECT;
     case OPINFO_ANIM_WIPE:       return type == OPINFO_EL_RECT || type == OPINFO_EL_IMAGE;
     case OPINFO_ANIM_SCROLL:     return type == OPINFO_EL_IMAGE;
     case OPINFO_ANIM_GROW:       return type == OPINFO_EL_CORNER_FADE;
+    case OPINFO_ANIM_SCRAMBLE:   return type == OPINFO_EL_TEXT;
+    case OPINFO_ANIM_MOVE:
+    case OPINFO_ANIM_BLINK:
+        return type != OPINFO_EL_CORNER_FADE;
     }
     return false;
 }
@@ -171,6 +178,25 @@ static int parse_custom_element(prts_t *prts, const char *op_dir, cJSON *jel, ol
     el->h = json_get_int(jel, "h", 0);
     el->start_frame = json_get_int(jel, "start_frame", 0);
     if (el->start_frame < 0) el->start_frame = 0;
+    el->end_frame = json_get_int(jel, "end_frame", 0);
+    if (el->end_frame < 0) el->end_frame = 0;
+    if (el->end_frame > 0 && el->end_frame <= el->start_frame) {
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "element.end_frame<=start_frame，按永不退场处理", PARSE_LOG_WARN);
+        el->end_frame = 0;
+    }
+    el->border_width = json_get_int(jel, "border_width", 0);
+    if (el->border_width < 0) el->border_width = 0;
+    el->from_dx = json_get_int(jel, "from_dx", 0);
+    el->from_dy = json_get_int(jel, "from_dy", 0);
+
+    const char *dir = json_get_string(jel, "direction");
+    if (dir) {
+        if (strcmp(dir, "ltr") == 0)      el->wipe_dir = OPINFO_WIPE_LTR;
+        else if (strcmp(dir, "rtl") == 0) el->wipe_dir = OPINFO_WIPE_RTL;
+        else if (strcmp(dir, "ttb") == 0) el->wipe_dir = OPINFO_WIPE_TTB;
+        else if (strcmp(dir, "btt") == 0) el->wipe_dir = OPINFO_WIPE_BTT;
+        else parse_log_file(prts->parse_log_f, (char*)op_dir, "element.direction 不合法，按 ltr 处理", PARSE_LOG_WARN);
+    }
 
     const char *anchor = json_get_string(jel, "anchor");
     if (anchor) {
@@ -224,6 +250,11 @@ static int parse_custom_element(prts_t *prts, const char *op_dir, cJSON *jel, ol
     }
     if (!anim_valid_for_type(el->anim, el->type)) {
         parse_log_file(prts->parse_log_f, (char*)op_dir, "element.animation 与 type 不匹配，按 none 处理", PARSE_LOG_WARN);
+        el->anim = OPINFO_ANIM_NONE;
+        default_speed = 0;
+    }
+    if (el->anim == OPINFO_ANIM_MOVE && el->from_dx == 0 && el->from_dy == 0) {
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "move 元素缺少 from_dx/from_dy，按 none 处理", PARSE_LOG_WARN);
         el->anim = OPINFO_ANIM_NONE;
         default_speed = 0;
     }
