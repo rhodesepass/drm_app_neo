@@ -22,8 +22,9 @@
 extern int g_running;
 extern int g_exitcode;
 
-// ui_backend_device 内部动作 (强制显图)
+// ui_backend_device 内部动作 (强制显图 / 重扫目录)
 extern void ui_backend_dispimg_force(const char *path);
+extern void ui_backend_dispimg_rescan(void);
 
 // ================= 枚举映射 curr_screen_t -> screen_id_t =================
 // 两套枚举值不同 (curr: WARNING=7,CONFIRM=8,APPLIST=9; screen_id: APPLIST=7,WARNING=8,CONFIRM=9)。
@@ -207,6 +208,10 @@ void ui_schedule_screen_transition(curr_screen_t to_screen)
 void ui_displayimg_force_dispimg(const char *path)
 {
     ui_backend_dispimg_force(path);
+}
+void ui_displayimg_rescan(void)
+{
+    ui_backend_dispimg_rescan();
 }
 curr_screen_t ui_get_current_screen(void) { return unmap_screen(screens_current()); }
 bool          ui_is_hidden(void)          { return screens_current() == SCREEN_SPINNER; }

@@ -125,6 +125,12 @@ void ui_backend_dispimg_force(const char *path)
     s_di.forced_is_gif = (t == 3);
     s_di.forced_active = true;
 }
+// 供 ui_services_device 的 ui_displayimg_rescan 调用 (IPC 素材刷新联动)。
+// screen_displayimg_tick 每帧按 s_di 当前状态 diff 重绘，这里只需重扫目录。
+void ui_backend_dispimg_rescan(void)
+{
+    dispimg_scan();
+}
 
 // ================= 生命周期 =================
 void ui_backend_init(void *prts, void *apps)

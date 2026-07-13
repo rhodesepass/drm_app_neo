@@ -71,16 +71,23 @@ void screen_displayimg_tick(void)
         lv_strlcpy(self.shown_path, p, sizeof(self.shown_path));
         lv_obj_clean(self.img_box);
         if (!warn && p[0]) {
+            lv_obj_t *im;
             if (ui_backend_dispimg_is_gif()) {
-                lv_obj_t *im = lv_gif_create(self.img_box);
+                im = lv_gif_create(self.img_box);
                 lv_gif_set_color_format(im, LV_COLOR_FORMAT_RGB565);
                 lv_gif_set_src(im, p);
-                lv_obj_center(im);
             } else {
-                lv_obj_t *im = lv_image_create(self.img_box);
+                im = lv_image_create(self.img_box);
                 lv_image_set_src(im, p);
-                lv_obj_center(im);
             }
+            // 按屏幕等比缩放 (contain-fit)：取宽高比中较小的一边为准，避免图片溢出屏幕。
+            int32_t sw = lv_image_get_src_width(im), sh = lv_image_get_src_height(im);
+            if (sw > 0 && sh > 0) {
+                uint32_t zoom_w = (uint32_t)(S(UI_BASE_WIDTH) * 256 / sw);
+                uint32_t zoom_h = (uint32_t)(S(UI_BASE_HEIGHT) * 256 / sh);
+                lv_image_set_scale(im, zoom_w < zoom_h ? zoom_w : zoom_h);
+            }
+            lv_obj_center(im);
         }
     }
 }

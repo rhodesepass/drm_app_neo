@@ -43,6 +43,7 @@ void ui_confirm(ui_confirm_type_t type);
 // ---- 切屏 / 显图 (供 IPC) ----
 void ui_schedule_screen_transition(curr_screen_t to_screen);
 void ui_displayimg_force_dispimg(const char *path);
+void ui_displayimg_rescan(void); // 重扫 /dispimg 目录 (IPC 素材刷新联动)
 
 // ---- 查询 ----
 curr_screen_t ui_get_current_screen(void);

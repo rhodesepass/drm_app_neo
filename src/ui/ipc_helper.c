@@ -69,6 +69,9 @@ static void ui_ipc_helper_timer_cb(lv_timer_t *timer){
             case UI_IPC_HELPER_REQ_TYPE_REFRESH_OPLIST:
                 // 干员素材重载后丢弃缓存屏，下次进入按新数据重建。
                 screens_rebuild(SCREEN_OPLIST);
+                // 同一次素材刷新 (usb_aio_handler 拔盘后触发) 也可能带来新的
+                // 扩列图文件，联动重扫 /dispimg；扩列图屏自身按 tick diff 刷新，无需 rebuild。
+                ui_displayimg_rescan();
                 break;
             case UI_IPC_HELPER_REQ_TYPE_UIX_SHOW:
                 uix_show();
