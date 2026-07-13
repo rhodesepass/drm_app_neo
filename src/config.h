@@ -225,6 +225,10 @@
 #define LAYER_ANIMATION_STEP_TIME 20000 // 20ms, 1000ms / 50fps
 #define OVERLAY_ANIMATION_STEP_TIME 33000 // 33ms, 1000ms / 30fps
 
+// opinfo 元素引擎：单个 overlay 的元素数量上限（custom 超出时截断；
+// arknights 预设也从这个池里分配，改小前先数一遍预设元素数）
+#define OPINFO_ELEMENTS_MAX 24
+
 #define OVERLAY_ANIMATION_OPINFO_ARKNIGHTS_DURATION (2000 * 1000) // 2s
 
 // arknight overlay specfic. by frame count
@@ -337,3 +341,28 @@
 #define DISPLAYIMG_MAX_COUNT 128
 #define DISPLAYIMG_MAX_PATH_LENGTH 128
 #define DISPLAYIMG_PATH "/dispimg/"
+
+
+// ========== PC Target 路径覆写 ==========
+// PC Target（SDL 后端 + ffmpeg 解码）：设备绝对路径整体挪到可写的数据目录，
+// 其余 sysfs/dev 路径保持原样（open 失败即天然 stub：电池/背光/SD 检测）。
+// 数据目录布局与设备根文件系统同构：pcdata/{assets,app,dispimg,epass_cfg.bin,*.log}
+#ifdef EPASS_PC_TARGET
+#ifndef EPASS_PC_DATA_DIR
+#define EPASS_PC_DATA_DIR "./pcdata"
+#endif
+#undef SETTINGS_FILE_PATH
+#define SETTINGS_FILE_PATH EPASS_PC_DATA_DIR "/epass_cfg.bin"
+#undef PRTS_OPERATOR_PARSE_LOG
+#define PRTS_OPERATOR_PARSE_LOG EPASS_PC_DATA_DIR "/asset.log"
+#undef PRTS_ASSET_DIR
+#define PRTS_ASSET_DIR EPASS_PC_DATA_DIR "/assets/"
+#undef APPS_PARSE_LOG
+#define APPS_PARSE_LOG EPASS_PC_DATA_DIR "/apps.log"
+#undef APPS_DIR
+#define APPS_DIR EPASS_PC_DATA_DIR "/app/"
+#undef SYSINFO_APP_PATH
+#define SYSINFO_APP_PATH "/proc/self/exe"
+#undef DISPLAYIMG_PATH
+#define DISPLAYIMG_PATH EPASS_PC_DATA_DIR "/dispimg/"
+#endif // EPASS_PC_TARGET

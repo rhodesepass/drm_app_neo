@@ -146,11 +146,9 @@ static void schedule_opinfo_timer_cb(void* userdata,bool is_last){
     log_info("schedule_opinfo_timer_cb: showing opinfo for operator %d (%s)",
              data->target_operator_index, target_operator->operator_name);
 
-    if(target_operator->opinfo_params.type == OPINFO_TYPE_ARKNIGHTS){
-        overlay_opinfo_show_arknights(prts->overlay, &target_operator->opinfo_params);
-    }
-    else if(target_operator->opinfo_params.type == OPINFO_TYPE_IMAGE){
-        overlay_opinfo_show_image(prts->overlay, &target_operator->opinfo_params);
+    // image / arknights / custom 都已在解析阶段翻译成元素列表，统一走元素引擎
+    if(target_operator->opinfo_params.type != OPINFO_TYPE_NONE){
+        overlay_opinfo_show_elements(prts->overlay, &target_operator->opinfo_params);
     }
     else{
         log_error("schedule_opinfo_timer_cb: invalid opinfo type: %d", target_operator->opinfo_params.type);
@@ -349,7 +347,6 @@ static void schedule_video_and_transitions(prts_t* prts, prts_video_t* video, ol
 typedef struct {
     prts_t* prts;
     int target_index;
-    prts_operator_entry_t* target_operator;
     bool *is_first_switch;
     bool on_heap;
 } switch_operator_secound_stage_data_t;
@@ -358,8 +355,17 @@ static void switch_operator_secound_stage(void* userdata,bool is_last){
     switch_operator_secound_stage_data_t* data = (switch_operator_secound_stage_data_t*)userdata;
     prts_t* prts = data->prts;
     int target_index = data->target_index;
-    prts_operator_entry_t* target_operator = data->target_operator;
     bool is_first_switch = *data->is_first_switch;
+
+    // operators 是动态数组（reload 时可能 realloc 搬家/重建），entry 一律按 index 现取
+    if(target_index < 0 || target_index >= prts->operator_count){
+        log_error("switch_operator_secound_stage: target_index %d 越界 (count: %d)", target_index, prts->operator_count);
+        if(data->on_heap){
+            free(data);
+        }
+        return;
+    }
+    prts_operator_entry_t* target_operator = &prts->operators[target_index];
 
 
     // 第一步。 存在intro video，且闭锁入场动画软压板没投
@@ -421,7 +427,6 @@ static void switch_operator(prts_t* prts,int target_index){
     switch_operator_secound_stage_data_t *data = malloc(sizeof(switch_operator_secound_stage_data_t));
     data->prts = prts;
     data->target_index = target_index;
-    data->target_operator = target_operator;
     data->is_first_switch = &is_first_switch;
     data->on_heap = true;
 
@@ -454,11 +459,19 @@ static void prts_reload_assets(prts_t* prts,bool is_first_load) {
 
     if(!is_first_load){
         memcpy(&operator_uuid_before, &prts->operators[prts->operator_index].uuid, sizeof(uuid_t));
+        // entry 即将释放/重建，先停掉可能还持着旧 opinfo_params 指针的 overlay worker，
+        // 否则下面的 free 就是 UAF
+        overlay_abort(prts->overlay);
     }
 
     prts->parse_log_f = fopen(PRTS_OPERATOR_PARSE_LOG, "w");
     if(prts->parse_log_f == NULL){
         log_error("failed to open parse log file: %s", PRTS_OPERATOR_PARSE_LOG);
+    }
+
+    // 释放旧 entry 的堆资源（opinfo 元素列表与其中已加载的图片）
+    for(int i = 0; i < prts->operator_count; i++){
+        prts_operator_entry_free(&prts->operators[i]);
     }
     prts->operator_count = 0;
 
@@ -477,6 +490,11 @@ static void prts_reload_assets(prts_t* prts,bool is_first_load) {
     if(prts->operator_count == 0){
         log_warn("no assets loaded, using fallback");
         ui_warning(UI_WARNING_NO_ASSETS);
+        if(prts_operators_reserve(prts, 1) != 0){
+            log_error("prts_reload_assets: reserve for fallback failed");
+            atomic_store(&prts->is_auto_switch_blocked,0);
+            return;
+        }
         prts_operator_try_load(prts, &prts->operators[0], (char *)respath(PRTS_FALLBACK_ASSET_SUBDIR), PRTS_SOURCE_NAND, 0);
         prts->operator_count = 1;
     }
@@ -600,10 +618,39 @@ void prts_request_reload_assets(prts_t* prts){
     spsc_bq_push(&prts->req_queue, (void *)req);
 }
 
+int prts_operators_reserve(prts_t* prts, int need){
+    if(need <= prts->operator_capacity){
+        return 0;
+    }
+    if(need > PRTS_OPERATORS_MAX){
+        return -1;
+    }
+
+    int new_cap = prts->operator_capacity > 0 ? prts->operator_capacity : 16;
+    while(new_cap < need){
+        new_cap *= 2;
+    }
+    if(new_cap > PRTS_OPERATORS_MAX){
+        new_cap = PRTS_OPERATORS_MAX;
+    }
+
+    prts_operator_entry_t* p = realloc(prts->operators, (size_t)new_cap * sizeof(prts_operator_entry_t));
+    if(p == NULL){
+        log_error("prts_operators_reserve: realloc to %d failed", new_cap);
+        return -1;
+    }
+    prts->operators = p;
+    prts->operator_capacity = new_cap;
+    return 0;
+}
+
 void prts_init(prts_t* prts, overlay_t* overlay, bool use_sd){
     log_info("==> PRTS Initializing...");
     prts->overlay = overlay;
     prts->use_sd = use_sd;
+    prts->operators = NULL;
+    prts->operator_capacity = 0;
+    prts->operator_count = 0;
 
     atomic_store(&prts->is_auto_switch_blocked, 0);
 
@@ -636,4 +683,15 @@ void prts_destroy(prts_t* prts){
     if(prts->timer_handle){
         prts_timer_cancel(prts->timer_handle);
     }
+    // overlay worker 可能还持有 entry 的 opinfo_params 指针，先停再释放
+    if(prts->overlay){
+        overlay_abort(prts->overlay);
+    }
+    for(int i = 0; i < prts->operator_count; i++){
+        prts_operator_entry_free(&prts->operators[i]);
+    }
+    free(prts->operators);
+    prts->operators = NULL;
+    prts->operator_capacity = 0;
+    prts->operator_count = 0;
 }

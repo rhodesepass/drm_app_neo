@@ -169,8 +169,12 @@ void ui_backend_sw_interval_set(int v)
     settings_unlock(&g_settings);
     settings_update(&g_settings);
 }
-// usb_mode 已废弃（USB 归 usb_aio_handler 的 greeter 流程），接口保留给 sim/兼容
+// usb_mode 已废弃（USB 归 usb_aio_handler 的 greeter 流程），接口保留做兼容
+#ifdef EPASS_PC_TARGET
+void ui_backend_usb_reset(void)       { log_info("[pc] usb reset (usbaioctl unavailable)"); }
+#else
 void ui_backend_usb_reset(void)       { system("usbaioctl greeter &"); }
+#endif
 int  ui_backend_usb_mode_get(void)    { return (int)g_settings.usb_mode; }
 void ui_backend_usb_mode_set(int v)
 {

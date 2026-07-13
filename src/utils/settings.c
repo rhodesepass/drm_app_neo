@@ -27,6 +27,11 @@ static void set_brightness(int brightness){
 }
 
 void settings_set_usb_mode(usb_mode_t usb_mode){
+#ifdef EPASS_PC_TARGET
+    // PC 上没有 usbctl（设备端 USB gadget 管理工具），仅记录
+    log_info("[pc] usb mode set to %d (usbctl unavailable)", (int)usb_mode);
+    return;
+#endif
     switch(usb_mode){
         case usb_mode_t_MTP:
             log_info("setting usb mode to MTP");

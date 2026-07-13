@@ -21,8 +21,22 @@
 #include "utils/misc.h"
 
 #include "vdec/nalu.h"
+#include "vdec/mp4_demux.h"
+#include "vdec/h264_parser.h"
+#include "vdec/h264_dpb.h"
+#include "vdec/vdec_v4l2.h"
 
 #define mp_get_now_us get_now_us
+
+/* 设备后端的会话私有状态（mediaplayer_t.priv） */
+typedef struct {
+    struct mp4_demux   demux;
+    struct h264_parser parser;
+    struct h264_dpb    dpb;
+    struct vdec_ctx    vdec;
+    uint32_t           fb_ids[VDEC_MAX_CAP_BUFS];
+    uint32_t           gem_handles[VDEC_MAX_CAP_BUFS];
+} mp_dev_priv_t;
 
 // main.c 提供，按解码尺寸记录 video 层挂载几何(720 档旧素材走 DEFE 放大)
 extern int video_layer_ensure_mount(int src_w, int src_h);
@@ -65,6 +79,7 @@ static inline int mp_trace_on(void)
 /* 收 free_queue：解除离屏槽位的 on_screen 占用并释放 item */
 static void mp_reclaim_free_items(mediaplayer_t *mp)
 {
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     drm_warpper_queue_item_t *item;
 
     while (drm_warpper_try_dequeue_free_item(mp->drm_warpper,
@@ -76,7 +91,7 @@ static void mp_reclaim_free_items(mediaplayer_t *mp)
         if (mp_trace_on())
             log_info("T R%d g%d", slot, (int)((ud >> 8) == mp->session_gen));
         if (slot >= 0 && (ud >> 8) == mp->session_gen)
-            h264_dpb_set_on_screen(&mp->dpb, slot, false);
+            h264_dpb_set_on_screen(&p->dpb, slot, false);
         mp->items_in_flight--;
         free(item);
     }
@@ -85,6 +100,7 @@ static void mp_reclaim_free_items(mediaplayer_t *mp)
 /* 把 slot 的帧入队显示。返回 0 成功。 */
 static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
 {
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     drm_warpper_queue_item_t *item = malloc(sizeof(*item));
 
     if (!item) {
@@ -98,8 +114,8 @@ static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
     item->on_heap = false; /* 帧类 item 由本模块经 free_queue 回收 */
 
     if (slot >= 0) {
-        h264_dpb_set_on_screen(&mp->dpb, slot, true);
-        h264_dpb_mark_displayed(&mp->dpb, slot);
+        h264_dpb_set_on_screen(&p->dpb, slot, true);
+        h264_dpb_mark_displayed(&p->dpb, slot);
     }
     if (mp_trace_on())
         log_info("T E%d", slot);
@@ -115,8 +131,9 @@ static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
 static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
                         struct h264_slice_hdr *hdr_out)
 {
-    const struct mp4_sample *sample = &mp->demux.samples[sample_idx];
-    const uint8_t *au = mp4_sample_data(&mp->demux, sample_idx);
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
+    const struct mp4_sample *sample = &p->demux.samples[sample_idx];
+    const uint8_t *au = mp4_sample_data(&p->demux, sample_idx);
     unsigned int cursor = 0, vcl_count = 0;
     struct nalu n, vcl = { 0 };
     struct h264_poc poc;
@@ -131,20 +148,20 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
     }
 
     while (nalu_next_length_prefixed(au, sample->size,
-                                     mp->demux.nal_length_size, &cursor, &n)) {
+                                     p->demux.nal_length_size, &cursor, &n)) {
         unsigned int t = nalu_h264_type(&n);
 
         if (t == H264_NAL_SPS || t == H264_NAL_PPS) {
-            h264_parser_parse_param_nal(&mp->parser, &n);
+            h264_parser_parse_param_nal(&p->parser, &n);
         } else if (t == H264_NAL_SLICE || t == H264_NAL_IDR) {
             vcl_count++;
             if (have_hdr)
                 continue;
-            if (h264_parser_parse_slice(&mp->parser, &n, hdr_out) < 0) {
+            if (h264_parser_parse_slice(&p->parser, &n, hdr_out) < 0) {
                 log_error("slice parse failed @%u", sample_idx);
                 return -1;
             }
-            h264_parser_compute_poc(&mp->parser, hdr_out, &poc);
+            h264_parser_compute_poc(&p->parser, hdr_out, &poc);
             vcl = n;
             have_hdr = true;
         }
@@ -159,7 +176,7 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
         return -1;
     }
 
-    if (h264_parser_fill_controls(&mp->parser, hdr_out, &poc, &ctrl) < 0) {
+    if (h264_parser_fill_controls(&p->parser, hdr_out, &poc, &ctrl) < 0) {
         log_error("fill_controls failed @%u", sample_idx);
         return -1;
     }
@@ -168,7 +185,7 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
 
     /* 无空槽 = 在飞帧太多，等显示线程回流(每 vblank 一次) */
     for (retry = 0; retry < 100; retry++) {
-        slot = h264_dpb_begin_frame(&mp->dpb, hdr_out, &poc, &ts, &ctrl);
+        slot = h264_dpb_begin_frame(&p->dpb, hdr_out, &poc, &ts, &ctrl);
         if (slot >= 0)
             break;
         usleep(5 * 1000);
@@ -182,13 +199,13 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
         log_info("T D%d @%u", slot, sample_idx);
     t1 = mp_get_now_us();
 
-    if (vdec_decode(&mp->vdec, slot, ts, vcl.data, vcl.size, &ctrl) < 0) {
+    if (vdec_decode(&p->vdec, slot, ts, vcl.data, vcl.size, &ctrl) < 0) {
         log_error("decode failed @%u", sample_idx);
-        h264_dpb_abort_frame(&mp->dpb);
+        h264_dpb_abort_frame(&p->dpb);
         return -1;
     }
 
-    h264_dpb_end_frame(&mp->dpb, hdr_out);
+    h264_dpb_end_frame(&p->dpb, hdr_out);
     t2 = mp_get_now_us();
     if (t2 - t0 > 50000)
         log_warn("slow @%u: slot_wait=%lldus ve=%lldus size=%u",
@@ -200,13 +217,14 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
 static void *mp_decode_thread(void *param)
 {
     mediaplayer_t *mp = (mediaplayer_t *)param;
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     unsigned int sample_idx = 0, outputs = 0;
     bool pending_flush = false;
     long long next_frame_time;
     int out;
 
     log_info("==> mp_decode Thread Started! dur=%uus samples=%u",
-             mp->frame_duration_us, mp->demux.samples_count);
+             mp->frame_duration_us, p->demux.samples_count);
 
     next_frame_time = mp_get_now_us() + mp->frame_duration_us;
 
@@ -230,11 +248,11 @@ static void *mp_decode_thread(void *param)
 
         /* GOP 边界(素材回绕)先按 flush 逐帧排空 DPB */
         if (pending_flush) {
-            out = h264_dpb_next_output(&mp->dpb, true);
+            out = h264_dpb_next_output(&p->dpb, true);
             if (out < 0)
                 pending_flush = false;
         } else {
-            out = h264_dpb_next_output(&mp->dpb, false);
+            out = h264_dpb_next_output(&p->dpb, false);
         }
 
         /* 没有可显示帧就继续喂 AU，直到重排队列吐出一帧 */
@@ -242,11 +260,11 @@ static void *mp_decode_thread(void *param)
             struct h264_slice_hdr hdr;
             int rc;
 
-            if (sample_idx >= mp->demux.samples_count) {
+            if (sample_idx >= p->demux.samples_count) {
                 /* EOS：排空后回 sample 0 循环（素材以 IDR 开头） */
                 sample_idx = 0;
                 pending_flush = true;
-                out = h264_dpb_next_output(&mp->dpb, true);
+                out = h264_dpb_next_output(&p->dpb, true);
                 break;
             }
 
@@ -256,8 +274,8 @@ static void *mp_decode_thread(void *param)
              * (POC 最大)反排其后 —— 屏上表现为每 GOP 边界一次帧序回跳
              * (slider 靶子第 7 趟必现，keyint=250)。sync 采样 = IDR。
              */
-            if (sample_idx > 0 && mp->demux.samples[sample_idx].sync) {
-                out = h264_dpb_next_output(&mp->dpb, true);
+            if (sample_idx > 0 && p->demux.samples[sample_idx].sync) {
+                out = h264_dpb_next_output(&p->dpb, true);
                 if (out >= 0)
                     break; /* 本档期先出旧帧，sample 不前进 */
             }
@@ -273,7 +291,7 @@ static void *mp_decode_thread(void *param)
             if (rc > 0)
                 continue;
 
-            out = h264_dpb_next_output(&mp->dpb, false);
+            out = h264_dpb_next_output(&p->dpb, false);
         }
 
         /* flush 刚排空：立即回到顶部从 sample 0 续喂，不空烧一个档期 */
@@ -289,7 +307,7 @@ static void *mp_decode_thread(void *param)
         }
 
         mp_reclaim_free_items(mp);
-        mp_enqueue_frame(mp, mp->fb_ids[out], out);
+        mp_enqueue_frame(mp, p->fb_ids[out], out);
         next_frame_time += mp->frame_duration_us;
         // 节拍诊断：定速落后量(正=落后)。落后持续增长 = 吞吐不足
         if (++outputs % 300 == 0)
@@ -315,20 +333,21 @@ decode_error:
 
 static void mp_close_session(mediaplayer_t *mp)
 {
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     unsigned int i;
 
     if (!mp->session_open)
         return;
 
-    for (i = 0; i < mp->vdec.cap_count; i++) {
-        if (mp->fb_ids[i]) {
-            drm_warpper_rm_fb(mp->drm_warpper, mp->fb_ids[i], mp->gem_handles[i]);
-            mp->fb_ids[i] = 0;
-            mp->gem_handles[i] = 0;
+    for (i = 0; i < p->vdec.cap_count; i++) {
+        if (p->fb_ids[i]) {
+            drm_warpper_rm_fb(mp->drm_warpper, p->fb_ids[i], p->gem_handles[i]);
+            p->fb_ids[i] = 0;
+            p->gem_handles[i] = 0;
         }
     }
-    vdec_close(&mp->vdec);
-    mp4_close(&mp->demux);
+    vdec_close(&p->vdec);
+    mp4_close(&p->demux);
     mp->session_open = false;
 }
 
@@ -336,6 +355,11 @@ int mediaplayer_init(mediaplayer_t *mp, drm_warpper_t *drm_warpper)
 {
     memset(mp, 0, sizeof(*mp));
 
+    mp->priv = calloc(1, sizeof(mp_dev_priv_t));
+    if (!mp->priv) {
+        log_error("mediaplayer priv alloc failed");
+        return -1;
+    }
     pthread_rwlock_init(&mp->thread.rwlock, NULL);
     atomic_store(&mp->running, 0);
     mp->drm_warpper = drm_warpper;
@@ -352,6 +376,8 @@ int mediaplayer_destroy(mediaplayer_t *mp)
 
     mediaplayer_stop(mp);
     pthread_rwlock_destroy(&mp->thread.rwlock);
+    free(mp->priv);
+    mp->priv = NULL;
 
     return 0;
 }
@@ -370,35 +396,36 @@ int mediaplayer_remount_video_layer(mediaplayer_t *mp)
 /* play_video/start 的公共段：input_path 已就绪 */
 static int mp_prepare_and_spawn(mediaplayer_t *mp)
 {
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     char video_path[32], media_path[32];
     const struct h264_sps *sps = NULL;
     unsigned int cap_count, max_ref, reorder, max_frame_num;
     unsigned int i;
 
-    if (mp4_open(&mp->demux, mp->input_path) < 0) {
+    if (mp4_open(&p->demux, mp->input_path) < 0) {
         log_error("mp4_open err: %s", mp->input_path);
         return -1;
     }
     mp->session_gen++;
     mp->session_open = true; /* demux 已开，之后统一走 close_session */
 
-    if (mp->demux.codec != MP4_CODEC_H264) {
+    if (p->demux.codec != MP4_CODEC_H264) {
         log_error("not an H264 mp4");
         goto error;
     }
-    if (mp->demux.max_sample_size > VDEC_OUTPUT_BUF_SIZE) {
-        log_error("max sample %u exceeds output buffer", mp->demux.max_sample_size);
+    if (p->demux.max_sample_size > VDEC_OUTPUT_BUF_SIZE) {
+        log_error("max sample %u exceeds output buffer", p->demux.max_sample_size);
         goto error;
     }
 
-    h264_parser_init(&mp->parser);
-    if (h264_parser_parse_avcc(&mp->parser, mp->demux.extradata,
-                               mp->demux.extradata_size) < 0) {
+    h264_parser_init(&p->parser);
+    if (h264_parser_parse_avcc(&p->parser, p->demux.extradata,
+                               p->demux.extradata_size) < 0) {
         log_error("avcC parse err");
         goto error;
     }
     for (i = 0; i < 32 && !sps; i++)
-        sps = h264_parser_get_sps(&mp->parser, i);
+        sps = h264_parser_get_sps(&p->parser, i);
     if (!sps) {
         log_error("no SPS in avcC");
         goto error;
@@ -420,8 +447,8 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     }
     video_layer_ensure_mount(mp->frame_width, mp->frame_height);
 
-    mp->frame_duration_us = mp->demux.frame_duration_us ?
-                            mp->demux.frame_duration_us : 33333;
+    mp->frame_duration_us = p->demux.frame_duration_us ?
+                            p->demux.frame_duration_us : 33333;
 
     max_ref = sps->max_num_ref_frames ? sps->max_num_ref_frames : 1;
     max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
@@ -454,24 +481,24 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
                          media_path, sizeof(media_path)) < 0)
         goto error;
 
-    if (vdec_open(&mp->vdec, video_path, media_path,
+    if (vdec_open(&p->vdec, video_path, media_path,
                   mp->frame_width, mp->frame_height,
                   cap_count, VDEC_OUTPUT_BUF_COUNT, VDEC_OUTPUT_BUF_SIZE) < 0)
         goto error;
 
-    for (i = 0; i < mp->vdec.cap_count; i++) {
+    for (i = 0; i < p->vdec.cap_count; i++) {
         if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
-                                         mp->vdec.cap[i].dmabuf_fd,
-                                         mp->vdec.cap_width,
-                                         mp->vdec.cap_height,
-                                         mp->vdec.cap_bytesperline,
-                                         mp->vdec.cap_uv_offset,
-                                         &mp->fb_ids[i],
-                                         &mp->gem_handles[i]) < 0)
+                                         p->vdec.cap[i].dmabuf_fd,
+                                         p->vdec.cap_width,
+                                         p->vdec.cap_height,
+                                         p->vdec.cap_bytesperline,
+                                         p->vdec.cap_uv_offset,
+                                         &p->fb_ids[i],
+                                         &p->gem_handles[i]) < 0)
             goto error;
     }
 
-    h264_dpb_init(&mp->dpb, cap_count, max_ref, max_frame_num, reorder);
+    h264_dpb_init(&p->dpb, cap_count, max_ref, max_frame_num, reorder);
 
     log_info("vdec: %ux%u max_ref=%u cap_bufs=%u dur=%uus",
              mp->frame_width, mp->frame_height, max_ref, cap_count,
