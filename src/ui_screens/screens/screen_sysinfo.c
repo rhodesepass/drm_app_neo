@@ -46,9 +46,9 @@ lv_obj_t *screen_sysinfo_create(void)
     self.arc_sd   = gauge(root, 195, 127, &self.pct_sd);
 
     lv_obj_t *t1 = lv_label_create(root);
-    lv_obj_set_pos(t1, S(52), S(180)); add_style_label_large(t1); lv_label_set_text(t1, "内部存储");
+    lv_obj_set_pos(t1, S(52), S(180)); add_style_label_large(t1); lv_label_set_text(t1, "系统盘");
     lv_obj_t *t2 = lv_label_create(root);
-    lv_obj_set_pos(t2, S(229), S(180)); add_style_label_large(t2); lv_label_set_text(t2, "SD卡");
+    lv_obj_set_pos(t2, S(229), S(180)); add_style_label_large(t2); lv_label_set_text(t2, "数据盘");
 
     self.lbl_nand = lv_label_create(root);
     lv_obj_set_pos(self.lbl_nand, S(35), S(210)); lv_obj_set_width(self.lbl_nand, S(134));
