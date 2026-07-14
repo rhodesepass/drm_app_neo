@@ -195,7 +195,7 @@ static void confirm_timer_cb(lv_timer_t *t)
     if (spsc_bq_try_pop(&s_confirm_q, &raw) != 0) return;
     ui_confirm_type_t type = (ui_confirm_type_t)(intptr_t)raw;
     if (type == UI_CONFIRM_TYPE_FORMAT_SD_CARD)
-        screen_confirm_show("确定格式化SD卡吗？", proceed_format_sd);
+        screen_confirm_show("确定格式化数据盘吗？", proceed_format_sd);
     else if (type == UI_CONFIRM_TYPE_SHUTDOWN)
         screen_confirm_show("确定要关机吗？", proceed_shutdown);
 }

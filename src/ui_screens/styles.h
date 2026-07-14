@@ -30,7 +30,7 @@ void add_style_main_small_btn(lv_obj_t *obj);  // 主菜单小按钮 (重启/关
 
 void add_style_op_btn(lv_obj_t *obj);          // 列表条目按钮 (干员/应用)
 void add_style_op_entry(lv_obj_t *obj);        // 列表条目外层间距
-void add_style_sd_flag(lv_obj_t *obj);         // "SD" 角标
+void add_style_sd_flag(lv_obj_t *obj);         // 数据盘来源角标 (资源位于 /sd 数据盘)
 void add_style_res_flag(lv_obj_t *obj);        // 分辨率角标 "360"/"480"/"720"
 void add_style_app_bg_running(lv_obj_t *obj);  // 应用"后台"角标
 void add_style_app_fg(lv_obj_t *obj);          // 应用"前台"角标

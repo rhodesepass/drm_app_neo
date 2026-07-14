@@ -122,7 +122,7 @@ static void make_slot(int i)
     s->sd = lv_label_create(s->btn);
     lv_obj_set_pos(s->sd, S(281), S(47));
     add_style_sd_flag(s->sd);
-    lv_label_set_text(s->sd, "SD");
+    lv_label_set_text(s->sd, "数据");
 
     s->res = lv_label_create(s->btn);
     lv_obj_set_pos(s->res, S(281), S(30));
