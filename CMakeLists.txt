@@ -87,36 +87,48 @@ else()
 endif()
 
 # ============================================================================
-# LVGL 配置
+# LVGL —— 优先用系统共享库, 否则下载 release 归档就地静态编 (无 submodule)
 # ============================================================================
-# 设置为 CACHE 变量以覆盖 LVGL 的默认值
-set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/src/lv_conf.h CACHE PATH "lv_conf.h path" FORCE)
-set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "Build LVGL examples" FORCE)
-set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "Build LVGL demos" FORCE)
-# lv_conf.h 里 LV_USE_THORVG_INTERNAL 已是 0；这里同步关掉 CMake 侧同名开关，
-# 否则 ThorVG 的 67 个 .cpp 会被无条件编译，逼着交叉工具链必须带 C++ 前端。
-set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "Use internal ThorVG (needs CXX)" FORCE)
-# lvgl/CMakeLists.txt 顶层无条件 enable_language(CXX ASM)，但工程里唯一用到
-# C++ 的地方就是上面关掉的 ThorVG。为了不强依赖交叉工具链自带 C++ 前端
-# (cc1plus)，把 CXX“编译器”指向 C 编译器本身，并跳过 CMake 的 try_compile
-# 探测——反正不会有真的 .cpp 落到它头上.....大概吧？！？！
-# 我是说，不会吧不会吧，不会真的有人用CPP吧？！
-set(CMAKE_CXX_COMPILER ${CMAKE_C_COMPILER} CACHE FILEPATH "" FORCE)
-set(CMAKE_CXX_COMPILER_FORCED TRUE)
-add_subdirectory(lvgl)
-
-# 不是哥们，你TM......
-# LVGL 自身的 os_desktop.cmake 把 src/ 下所有 .cpp（glTF viewer、TFT_eSPI、
-# LovyanGFX、vg_lite_tvg 等可选桥接，共二十来个，跟 lv_conf.h 的开关无关）
-# 无条件塞进主 lvgl 库，逼着上面那个假 CXX 编译器去真编译，必炸。
-# add_subdirectory 之后从 target 的 SOURCES 属性里把 .cpp 全部摘掉。
-# （不能用 git apply 打 patch：buildroot 打包源码会剥掉 .git，git 会向上
-# 认领到外层仓库，patch 静默失败。）
-get_target_property(LVGL_SRCS lvgl SOURCES)
-list(FILTER LVGL_SRCS EXCLUDE REGEX "\\.cpp$")
-set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SRCS}")
-# LVGL 开启 LV_USE_FREETYPE 后，其适配源需要 freetype 头
-target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS})
+# 设备/buildroot 构建: staging 里有 pkg-config 的 lvgl (共享库 + 权威 lv_conf.h)。
+# 找到就建一个同名 INTERFACE 目标 lvgl, 下游 target_link_libraries(... lvgl) 一行
+# 不用改 —— 等价于把静态 .a 换成 -llvgl, 符号名不变。
+# 找不到 (纯本地 PC 开发, 无 sysroot) 则退回 FetchContent 下载 v9.5.0 release 归档
+# 就地静态编, 用本仓库自带 src/lv_conf.h 作配置源。
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LVGL IMPORTED_TARGET lvgl)
+if(LVGL_FOUND)
+  message(STATUS "LVGL: using system shared lib ${LVGL_VERSION} (${LVGL_LIBDIR})")
+  # 同名 INTERFACE 目标 lvgl 转发系统库 (include/-L/-llvgl 都由 PkgConfig::LVGL 带);
+  # 不能直接 target_link_libraries(lvgl INTERFACE ${LVGL_LIBRARIES}), 因为它值就是
+  # 字符串 "lvgl" —— 会被当成对本目标自身的引用, -llvgl 反而丢掉。
+  add_library(lvgl INTERFACE)
+  target_link_libraries(lvgl INTERFACE PkgConfig::LVGL)
+else()
+  message(STATUS "LVGL: system lib not found, fetching v9.5.0 release archive (static)")
+  include(FetchContent)
+  set(LV_BUILD_CONF_PATH ${CMAKE_SOURCE_DIR}/src/lv_conf.h CACHE PATH "lv_conf.h path" FORCE)
+  set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "Build LVGL examples" FORCE)
+  set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "Build LVGL demos" FORCE)
+  set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "Use internal ThorVG (needs CXX)" FORCE)
+  # 独立工具链可能没 C++ 前端: 把 CXX 指向 C 编译器并跳过探测 (反正没真 .cpp 要编)
+  set(CMAKE_CXX_COMPILER ${CMAKE_C_COMPILER} CACHE FILEPATH "" FORCE)
+  set(CMAKE_CXX_COMPILER_FORCED TRUE)
+  # 解到名为 lvgl 的目录 (而非默认 _deps/lvgl-src), 好让下面把父目录加进 include 后
+  # 工程里的 #include <lvgl/lvgl.h> 照旧能解析。
+  FetchContent_Declare(lvgl
+    URL https://github.com/lvgl/lvgl/archive/refs/tags/v9.5.0.tar.gz
+    SOURCE_DIR ${CMAKE_BINARY_DIR}/_lvgl/lvgl)
+  FetchContent_MakeAvailable(lvgl)
+  # os_desktop.cmake 无条件把 src 下 .cpp (glTF/TFT_eSPI/LovyanGFX/vg_lite_tvg 桥接)
+  # 塞进 lvgl 库, 摘掉以免那个假 CXX 去真编 C++。
+  get_target_property(LVGL_SRCS lvgl SOURCES)
+  list(FILTER LVGL_SRCS EXCLUDE REGEX "\\.cpp$")
+  set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SRCS}")
+  target_include_directories(lvgl PRIVATE ${FREETYPE_INCLUDE_DIRS})
+  # LVGL 自身把源码根导出为 include (-> <lvgl.h>); 再把源码根的父目录加进来,
+  # 让 <lvgl/lvgl.h> 这种带前缀的写法也能解析 (设备侧靠 buildroot 全局 -I/usr/include)。
+  target_include_directories(lvgl INTERFACE ${CMAKE_BINARY_DIR}/_lvgl)
+endif()
 
 # ============================================================================
 # 源文件
@@ -274,9 +286,13 @@ function(add_epass_target name screen_define)
   endif()
 endfunction()
 
-target_compile_options(lvgl PRIVATE
-  $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
-)
+# 仅 FetchContent 静态编时 lvgl 是可编译目标, 才能给它加编译选项;
+# 系统共享库那条路 lvgl 是 INTERFACE 目标 (库已编好), 加 PRIVATE 属性会报错。
+if(NOT LVGL_FOUND)
+  target_compile_options(lvgl PRIVATE
+    $<$<BOOL:${APP_RELEASE}>:-DAPP_RELEASE>
+  )
+endif()
 
 if(NOT TARGET_PC)
   # vdec 解码栈独立验证工具（真机 bring-up 用，make vdec_selftest 手动构建）
