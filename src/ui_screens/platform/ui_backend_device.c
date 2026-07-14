@@ -351,7 +351,7 @@ const char *ui_backend_sysinfo_text(void)
              "版本号: %s 校验码: %08X\n"
              "程序生成时间: %s\n"
              "%s%s%s",
-             APP_SUBCODENAME, APP_VERSION_STRING, crc32_file("/root/epass_drm_app"),
+             APP_SUBCODENAME, APP_VERSION_STRING, crc32_file("/proc/self/exe"),
              COMPILE_TIME, mem, os, APP_ABOUT_MSG);
     return buf;
 }

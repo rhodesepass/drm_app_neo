@@ -2,6 +2,8 @@
 
 # Overlay层 开发指南
 
+> 面向**素材作者**（怎么写 `epconfig.json` 的 overlay 元素、分辨率适配、循环能力边界）见 [overlay_elements.md](overlay_elements.md)。本文是**固件侧**开发指南。
+
 ## 基本约束
 
 overlay 层用于在 VIDEO 之上 UI之下绘制“过渡动画（transition）”与“干员信息（opinfo）”等覆盖效果。核心约束是：**PRTS 的 timer 回调线程必须尽快返回**，因此任何可能耗时的逐帧绘制都要放到 overlay worker 线程执行。

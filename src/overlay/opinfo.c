@@ -12,6 +12,7 @@
 #include "utils/imgscale.h"
 #include "ui/font_registry.h"
 #include <src/misc/lv_text_private.h>
+#include <src/misc/lv_math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -50,7 +51,9 @@ typedef struct {
     int wipe_value;               // wipe：当前已划入宽/高（物理，随 direction）
     int grow_value;               // grow：当前半径（360 基准）
     int scroll_value;             // scroll：当前偏移（物理）
-    int cur_dx, cur_dy;           // move：当前相对落点的偏移（物理）
+    int cur_dx, cur_dy;           // move/sway：当前相对落点的偏移（物理）
+    int sprite_idx;               // sprite：当前帧下标
+    int anim_tick;                // sprite/sway：帧内计数器（不依赖全局帧号，免溢出）
 
     // image 元素的像素来源（用户图或 cacheasset，show 时解析）
     uint32_t* src_addr;
@@ -383,6 +386,13 @@ static void el_draw(opinfo_engine_t* d, int i){
             fbdraw_rect_t d2 = { r.x, r.y + (st->src_h - off), st->src_w, off };
             fbdraw_copy_rect(&src, fb, &s2, &d2);
         }
+        else if(el->anim == OPINFO_ANIM_SPRITE){
+            // 横向 strip：按当前帧下标裁一格贴出（bbox 已是单帧大小）
+            int fw = el->frames > 1 ? st->src_w / el->frames : st->src_w;
+            fbdraw_rect_t ss = { st->sprite_idx * fw, 0, fw, st->src_h };
+            fbdraw_rect_t dr = { r.x, r.y, fw, st->src_h };
+            fbdraw_copy_rect(&src, fb, &ss, &dr);
+        }
         else {
             fbdraw_copy_rect(&src, fb, &sr, &r);
         }
@@ -569,6 +579,32 @@ static void el_advance(opinfo_engine_t* d, int i){
         }
         st->dirty = 1;
         break;
+
+    case OPINFO_ANIM_SPRITE:
+        if(el->frames <= 1) break;
+        if(++st->anim_tick >= speed){
+            st->anim_tick = 0;
+            if(++st->sprite_idx >= el->frames) st->sprite_idx = 0;
+            st->dirty = 1;
+        }
+        break;
+
+    case OPINFO_ANIM_SWAY: {
+        // anim_tick 走一整圈 0..speed 映射到 0..360°，from_dx/from_dy 为半摆幅。
+        // sin 是简谐运动（端点慢、中间快），比线性往复自然。只在落点变化时标脏，
+        // 端点附近相邻帧偏移相同就不触发整组重画，省 uncached 显存带宽。
+        if(++st->anim_tick >= speed) st->anim_tick = 0;
+        int deg = speed > 0 ? (int)((int64_t)st->anim_tick * 360 / speed) : 0;
+        int32_t s = lv_trigo_sin((int16_t)deg); // -32767..32767
+        int ndx = (int)(((int64_t)S(el->from_dx) * s) / 32767);
+        int ndy = (int)(((int64_t)S(el->from_dy) * s) / 32767);
+        if(ndx != st->cur_dx || ndy != st->cur_dy){
+            st->cur_dx = ndx;
+            st->cur_dy = ndy;
+            st->dirty = 1;
+        }
+        break;
+    }
     }
 
     if(st->dirty){
@@ -609,6 +645,9 @@ static void el_resolve(opinfo_engine_t* d, int i){
         }
         w_phys = st->src_w;
         h_phys = st->src_h;
+        if(el->anim == OPINFO_ANIM_SPRITE && el->frames > 1){
+            w_phys = st->src_w / el->frames; // 落位/分组按单帧，不是整张 sheet
+        }
         break;
 
     case OPINFO_EL_TEXT: {
@@ -672,6 +711,15 @@ static void el_resolve(opinfo_engine_t* d, int i){
         rect_union(&st->bbox, &start_rect, &set);
         st->cur_dx = S(el->from_dx);
         st->cur_dy = S(el->from_dy);
+    } else if(el->anim == OPINFO_ANIM_SWAY){
+        // 摆动范围是落点 ±摆幅，两端都并进清除范围，否则拖影
+        fbdraw_rect_t a = st->content, b = st->content;
+        a.x += S(el->from_dx); a.y += S(el->from_dy);
+        b.x -= S(el->from_dx); b.y -= S(el->from_dy);
+        bool set = true;
+        rect_union(&st->bbox, &a, &set);
+        rect_union(&st->bbox, &b, &set);
+        // cur_dx/dy 初始 0：相位从 0 起，sin(0)=0，起手在落点
     }
 }
 
@@ -855,7 +903,9 @@ void overlay_opinfo_show_elements(overlay_t* overlay, olopinfo_params_t* params)
     for(int i = 0; i < d->count; i++){
         el_resolve(d, i);
         // 循环动画让引擎永不自然结束；带 end_frame 的循环元素会退场，不算
-        if((d->els[i].anim == OPINFO_ANIM_SCROLL || d->els[i].anim == OPINFO_ANIM_BLINK)
+        opinfo_anim_t a = d->els[i].anim;
+        if((a == OPINFO_ANIM_SCROLL || a == OPINFO_ANIM_BLINK ||
+            a == OPINFO_ANIM_SPRITE || a == OPINFO_ANIM_SWAY)
            && d->els[i].end_frame == 0){
             d->has_loop = true;
         }

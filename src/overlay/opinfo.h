@@ -42,6 +42,8 @@ typedef enum {
     OPINFO_ANIM_MOVE,       // text/text_rot90/image/rect/barcode: 从 from_dx/from_dy 偏移滑入落点
     OPINFO_ANIM_SCRAMBLE,   // text: 乱码解码（随机字符跳变、逐个稳定成真实文本）
     OPINFO_ANIM_BLINK,      // text/text_rot90/image/rect/barcode: 周期闪烁，永不结束（除非 end_frame）
+    OPINFO_ANIM_SPRITE,     // image: 横向精灵图逐帧循环播放，永不结束（除非 end_frame）
+    OPINFO_ANIM_SWAY,       // text/text_rot90/image/rect/barcode: 沿 from_dx/from_dy 正弦晃动，永不结束（除非 end_frame）
 } opinfo_anim_t;
 
 // wipe 划入方向
@@ -78,9 +80,11 @@ typedef struct {
     //   typewriter=每 codepoint 帧数  eink=每闪烁态帧数  fade=每帧不透明度增量
     //   wipe=划入总帧数              scroll=每帧滚动像素  grow=每帧半径增量
     //   move=滑入总帧数              scramble=每 codepoint 帧数  blink=半周期帧数
+    //   sprite=每帧停留帧数          sway=一个来回周期帧数
     int speed;
     int wipe_dir;         // opinfo_wipe_dir_t，仅 wipe 用
-    int from_dx, from_dy; // move: 起点相对落点的偏移（360 基准）
+    int from_dx, from_dy; // move: 起点相对落点的偏移（360 基准）；sway: 摆幅（360 基准）
+    int frames;           // sprite: 横向精灵图的帧数（单帧宽 = 图宽/frames）
 
     // text / text_rot90 / barcode
     char text[256];

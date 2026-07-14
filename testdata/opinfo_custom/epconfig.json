@@ -1,0 +1,228 @@
+{
+    "version": 1,
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Custom OpInfo 演示",
+    "description": "覆盖 custom 元素引擎全部 type / animation 的视觉测试包（无 intro，进场后尽快出 overlay）",
+    "icon": "icon.png",
+    "screen": "360x640",
+    "loop": {
+        "file": "loop.mp4"
+    },
+    "transition_in": {
+        "type": "fade",
+        "options": {
+            "duration": 200000,
+            "background_color": "#000000"
+        }
+    },
+    "overlay": {
+        "type": "custom",
+        "options": {
+            "appear_time": 100000,
+            "duration": 800000,
+            "elements": [
+                {
+                    "type": "text",
+                    "x": 70,
+                    "y": 40,
+                    "text": "ESTABLISHING LINK...",
+                    "font": "display",
+                    "font_size": 14,
+                    "color": "#AAAAAA",
+                    "animation": "typewriter",
+                    "start_frame": 0,
+                    "speed": 2,
+                    "end_frame": 75
+                },
+                {
+                    "type": "corner_fade",
+                    "color": "#1A3A6B",
+                    "w": 192,
+                    "animation": "grow",
+                    "start_frame": 10,
+                    "speed": 10
+                },
+                {
+                    "type": "rect",
+                    "x": 55,
+                    "y": 390,
+                    "w": 250,
+                    "h": 70,
+                    "border_width": 1,
+                    "color": "#FFFFFF",
+                    "animation": "move",
+                    "from_dx": -90,
+                    "from_dy": 0,
+                    "start_frame": 18,
+                    "speed": 15
+                },
+                {
+                    "type": "text",
+                    "x": 70,
+                    "y": 400,
+                    "text": "AMIYA",
+                    "font": "display",
+                    "font_size": 40,
+                    "color": "#FFFFFF",
+                    "animation": "typewriter",
+                    "start_frame": 28,
+                    "speed": 3
+                },
+                {
+                    "type": "rect",
+                    "x": 70,
+                    "y": 445,
+                    "w": 220,
+                    "h": 1,
+                    "color": "#FFFFFF",
+                    "animation": "wipe",
+                    "direction": "ltr",
+                    "start_frame": 55,
+                    "speed": 35
+                },
+                {
+                    "type": "rect",
+                    "x": 70,
+                    "y": 460,
+                    "w": 160,
+                    "h": 1,
+                    "color": "#FFFFFF",
+                    "animation": "wipe",
+                    "direction": "rtl",
+                    "start_frame": 65,
+                    "speed": 30
+                },
+                {
+                    "type": "barcode",
+                    "x": 1,
+                    "y": 430,
+                    "w": 50,
+                    "h": 180,
+                    "text": "OPERATOR - CUSTOM",
+                    "animation": "eink",
+                    "start_frame": 30,
+                    "speed": 12
+                },
+                {
+                    "type": "image",
+                    "image": "class_icon.png",
+                    "x": 70,
+                    "y": 475,
+                    "animation": "eink",
+                    "start_frame": 50,
+                    "speed": 12
+                },
+                {
+                    "type": "text",
+                    "x": 130,
+                    "y": 485,
+                    "text": "ID // 042-C7#F9",
+                    "font": "display",
+                    "font_size": 14,
+                    "color": "#FFFFFF",
+                    "animation": "scramble",
+                    "start_frame": 45,
+                    "speed": 2
+                },
+                {
+                    "type": "text",
+                    "x": 70,
+                    "y": 540,
+                    "text": "Operator of Rhodes Island\nCASTER / RHODES ISLAND\n@Hypergryph",
+                    "font": "body",
+                    "font_size": 12,
+                    "line_height": 14,
+                    "color": "#DDDDDD",
+                    "animation": "fade",
+                    "start_frame": 70,
+                    "speed": 10
+                },
+                {
+                    "type": "image",
+                    "image": "ark_logo.png",
+                    "anchor": "br",
+                    "x": 10,
+                    "y": 10,
+                    "animation": "fade",
+                    "start_frame": 35,
+                    "speed": 8
+                },
+                {
+                    "type": "text_rot90",
+                    "x": 8,
+                    "y": 80,
+                    "w": 28,
+                    "h": 280,
+                    "text": "RHODES ISLAND",
+                    "font": "display",
+                    "font_size": 22,
+                    "letter_space": 2,
+                    "bold_split": true,
+                    "color": "#FFFFFF",
+                    "animation": "move",
+                    "from_dx": -40,
+                    "from_dy": 0,
+                    "start_frame": 20,
+                    "speed": 18
+                },
+                {
+                    "type": "rect",
+                    "x": 330,
+                    "y": 24,
+                    "w": 10,
+                    "h": 10,
+                    "color": "#FF3B30",
+                    "animation": "blink",
+                    "start_frame": 55,
+                    "speed": 10
+                },
+                {
+                    "type": "text",
+                    "x": 280,
+                    "y": 24,
+                    "text": "LIVE",
+                    "font": "display",
+                    "font_size": 12,
+                    "color": "#FF3B30",
+                    "animation": "blink",
+                    "start_frame": 55,
+                    "speed": 10
+                },
+                {
+                    "type": "image",
+                    "image": "scroll_arrow.png",
+                    "x": 320,
+                    "y": 200,
+                    "animation": "scroll",
+                    "start_frame": 40,
+                    "speed": 2
+                },
+                {
+                    "type": "rect",
+                    "x": 300,
+                    "y": 80,
+                    "w": 40,
+                    "h": 80,
+                    "color": "#FFFFFF",
+                    "animation": "wipe",
+                    "direction": "ttb",
+                    "start_frame": 80,
+                    "speed": 40
+                },
+                {
+                    "type": "text",
+                    "x": 70,
+                    "y": 120,
+                    "text": "TITLE FONT 标题",
+                    "font": "title",
+                    "font_size": 18,
+                    "color": "#FFFFFF",
+                    "animation": "fade",
+                    "start_frame": 90,
+                    "speed": 12,
+                    "end_frame": 200
+                }
+            ]
+        }
+    }
+}

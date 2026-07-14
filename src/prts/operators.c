@@ -139,6 +139,8 @@ static const struct {
     { "move",       OPINFO_ANIM_MOVE,       15 },
     { "scramble",   OPINFO_ANIM_SCRAMBLE,   2  },
     { "blink",      OPINFO_ANIM_BLINK,      15 },
+    { "sprite",     OPINFO_ANIM_SPRITE,     4  },
+    { "sway",       OPINFO_ANIM_SWAY,       60 },
 };
 
 static bool anim_valid_for_type(opinfo_anim_t anim, opinfo_element_type_t type) {
@@ -151,8 +153,10 @@ static bool anim_valid_for_type(opinfo_anim_t anim, opinfo_element_type_t type) 
     case OPINFO_ANIM_SCROLL:     return type == OPINFO_EL_IMAGE;
     case OPINFO_ANIM_GROW:       return type == OPINFO_EL_CORNER_FADE;
     case OPINFO_ANIM_SCRAMBLE:   return type == OPINFO_EL_TEXT;
+    case OPINFO_ANIM_SPRITE:     return type == OPINFO_EL_IMAGE;
     case OPINFO_ANIM_MOVE:
     case OPINFO_ANIM_BLINK:
+    case OPINFO_ANIM_SWAY:
         return type != OPINFO_EL_CORNER_FADE;
     }
     return false;
@@ -188,6 +192,8 @@ static int parse_custom_element(prts_t *prts, const char *op_dir, cJSON *jel, ol
     if (el->border_width < 0) el->border_width = 0;
     el->from_dx = json_get_int(jel, "from_dx", 0);
     el->from_dy = json_get_int(jel, "from_dy", 0);
+    el->frames = json_get_int(jel, "frames", 0);
+    if (el->frames < 0) el->frames = 0;
 
     const char *dir = json_get_string(jel, "direction");
     if (dir) {
@@ -255,6 +261,16 @@ static int parse_custom_element(prts_t *prts, const char *op_dir, cJSON *jel, ol
     }
     if (el->anim == OPINFO_ANIM_MOVE && el->from_dx == 0 && el->from_dy == 0) {
         parse_log_file(prts->parse_log_f, (char*)op_dir, "move 元素缺少 from_dx/from_dy，按 none 处理", PARSE_LOG_WARN);
+        el->anim = OPINFO_ANIM_NONE;
+        default_speed = 0;
+    }
+    if (el->anim == OPINFO_ANIM_SWAY && el->from_dx == 0 && el->from_dy == 0) {
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "sway 元素缺少 from_dx/from_dy（摆幅），按 none 处理", PARSE_LOG_WARN);
+        el->anim = OPINFO_ANIM_NONE;
+        default_speed = 0;
+    }
+    if (el->anim == OPINFO_ANIM_SPRITE && el->frames < 2) {
+        parse_log_file(prts->parse_log_f, (char*)op_dir, "sprite 元素 frames<2，按 none 处理", PARSE_LOG_WARN);
         el->anim = OPINFO_ANIM_NONE;
         default_speed = 0;
     }
