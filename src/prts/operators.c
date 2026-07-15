@@ -550,13 +550,6 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
             safe_strcpy(operator->opinfo_params.top_right_bar_text, sizeof(operator->opinfo_params.top_right_bar_text),
                         (trbt && trbt[0]) ? trbt : "");
 
-            // 翻译成元素引擎的预设列表
-            if (overlay_opinfo_build_arknights_elements(&operator->opinfo_params) != 0) {
-                parse_log_file(prts->parse_log_f, path, "arknights 元素列表构建失败", PARSE_LOG_ERROR);
-                cJSON_Delete(json);
-                return -1;
-            }
-
         } else if (strcmp(ov_type, "custom") == 0) {
             operator->opinfo_params.type = OPINFO_TYPE_CUSTOM;
             if (!opt || !cJSON_IsObject(opt)) {

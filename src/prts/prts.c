@@ -146,8 +146,11 @@ static void schedule_opinfo_timer_cb(void* userdata,bool is_last){
     log_info("schedule_opinfo_timer_cb: showing opinfo for operator %d (%s)",
              data->target_operator_index, target_operator->operator_name);
 
-    // image / arknights / custom 都已在解析阶段翻译成元素列表，统一走元素引擎
-    if(target_operator->opinfo_params.type != OPINFO_TYPE_NONE){
+    // arknights 走专用实现；image / custom 在解析阶段翻译成元素列表走引擎
+    if(target_operator->opinfo_params.type == OPINFO_TYPE_ARKNIGHTS){
+        overlay_opinfo_show_arknights(prts->overlay, &target_operator->opinfo_params);
+    }
+    else if(target_operator->opinfo_params.type != OPINFO_TYPE_NONE){
         overlay_opinfo_show_elements(prts->overlay, &target_operator->opinfo_params);
     }
     else{

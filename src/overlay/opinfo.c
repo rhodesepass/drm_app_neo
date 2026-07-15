@@ -944,7 +944,7 @@ void overlay_opinfo_show_elements(overlay_t* overlay, olopinfo_params_t* params)
 }
 
 // ============================================================================
-// 元素列表构建（image / arknights 预设）
+// 元素列表构建（image）
 // ============================================================================
 
 void overlay_opinfo_element_init(olopinfo_element_t* el){
@@ -973,236 +973,688 @@ int overlay_opinfo_build_image_elements(olopinfo_params_t* params){
     return 0;
 }
 
-// cacheasset 的 360 基准宽度（asset 按当前分辨率制作，除回 UI_SCALE）
-static int cacheasset_base_w(cacheasset_asset_id_t id){
-    int w = 0, h = 0;
-    uint8_t* addr = NULL;
-    cacheassets_get_asset_from_global(id, &w, &h, &addr);
-    return addr ? w / UI_SCALE : 0;
+// ============================================================================
+// arknights 专用实现（手搓，不走元素引擎）
+// ============================================================================
+
+// 标记这个元素有没有更新过
+typedef struct{
+    unsigned int operator_name : 1 ;
+    unsigned int operator_code : 1 ;
+    unsigned int barcode : 1 ;
+    unsigned int staff_text : 1 ;
+    unsigned int class_icon : 1 ;
+    unsigned int aux_text : 1 ;
+    unsigned int fade_color : 1;
+    unsigned int rhodes:1;
+    unsigned int arrow:1;
+    unsigned int logo_fade:1;
+    unsigned int ak_bar_swipe:1;
+    unsigned int div_line_upper:1;
+    unsigned int div_line_lower:1;
+
+
+} arknights_overlay_update_t;
+
+typedef struct {
+    overlay_t* overlay;
+    olopinfo_params_t* params;
+
+    int curr_frame;
+
+    // codepoint index,codepoint count
+    int operator_name_cpidx;
+    int operator_name_cpcnt;
+
+    int operator_code_cpidx;
+    int operator_code_cpcnt;
+
+    int stuff_text_cpidx;
+    int stuff_text_cpcnt;
+
+    int aux_text_cpidx;
+    int aux_text_cpcnt;
+
+    int color_fade_value;
+
+    int logo_fade_value;
+
+    int ak_bar_swipe_bezeir_values[OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_FRAME_COUNT];
+
+    // 复用引擎的 eink 状态枚举（成员定义一致）
+    opinfo_eink_state_t class_icon_state;
+    opinfo_eink_state_t barcode_state;
+
+    int div_line_bezeir_values[OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT];
+
+    int arrow_y_value;
+
+    arknights_overlay_update_t update;
+} arknights_overlay_worker_data_t;
+
+
+// radius 是 360 基准的逻辑单位；物理上每个逻辑像素画成 UI_SCALE×UI_SCALE 的块，
+// 块内共享一个 alpha，保证 720 下渐变的物理尺寸和 360 一致。
+//
+// fade 三角和 logo 在右下角是同一片区域。单 buffer 直绘时如果“先画 fade 再贴 logo”
+// 分两次落盘，扫描线会抓到没有 logo 的中间态闪一下。所以每行先在栈上(cached)把
+// fade + logo 合成出最终像素，再一次 memcpy 进显存：每个像素每帧只写一次最终值。
+// 三角以外的 logo 像素跳过不画（logo 淡入头几帧三角还没长满时不透明度极低，无感）。
+static void draw_color_fade_and_logo(uint32_t* vaddr,int radius,uint32_t color,
+                                     uint32_t* logo_addr,int logo_w,int logo_h,int logo_opacity){
+    if(radius < 2){
+        return;
+    }
+
+    // alpha 只依赖逻辑坐标 x+y，先查表算好，省掉每像素一次除法
+    uint8_t alpha_lut[radius];
+    for(int s = 0; s <= radius - 2; s++){
+        alpha_lut[s] = 255 - (s * 255 / radius);
+    }
+
+    const int logo_x0 = OVERLAY_WIDTH - logo_w - S(10);
+    const int logo_y0 = OVERLAY_HEIGHT - logo_h - S(10);
+    const uint32_t rgb = color & 0x00FFFFFF;
+
+    uint32_t row[S(radius - 1)];
+
+    for(int py = 0; py < S(radius - 1); py++){
+        int ly = py / UI_SCALE;
+        int span = S(radius - 1 - ly);   // 本行 fade 覆盖的像素数，靠右边缘对齐
+        int fby = OVERLAY_HEIGHT - 1 - py;
+        int row_x0 = OVERLAY_WIDTH - span;
+
+        for(int i = 0; i < span; i++){
+            int px = span - 1 - i;       // px: 距右边缘的距离
+            row[i] = rgb | ((uint32_t)alpha_lut[px / UI_SCALE + ly] << 24);
+        }
+
+        if(logo_addr && logo_opacity > 0){
+            int lrow = fby - logo_y0;
+            if(lrow >= 0 && lrow < logo_h){
+                for(int lcol = 0; lcol < logo_w; lcol++){
+                    int i = logo_x0 + lcol - row_x0;
+                    if(i < 0 || i >= span) continue;
+                    uint32_t px32 = logo_addr[lrow * logo_w + lcol];
+                    uint8_t a = (px32 >> 24) & 0xFF;
+                    if(logo_opacity != 255) a = (uint8_t)(((uint32_t)a * logo_opacity + 127u) / 255u);
+                    fbdraw_blend_over_at(&row[i], (px32 >> 16) & 0xFF, (px32 >> 8) & 0xFF, px32 & 0xFF, a);
+                }
+            }
+        }
+
+        memcpy(vaddr + fby * OVERLAY_WIDTH + row_x0, row, (size_t)span * 4);
+    }
 }
+// 绘制arknights overlay的worker.
+// 不处理跳帧了。
+static void arknights_overlay_worker(void *userdata,int skipped_frames){
+    arknights_overlay_worker_data_t* data = (arknights_overlay_worker_data_t*)userdata;
 
-// arknights 通行证模板 = 元素引擎上的一个预设。
-// 坐标/帧数/字体逐项对应旧的专用实现（宏为物理像素，除回 UI_SCALE 得 360 基准）。
-int overlay_opinfo_build_arknights_elements(olopinfo_params_t* params){
-    olopinfo_element_t tmp[OPINFO_ELEMENTS_MAX];
-    int n = 0;
-    olopinfo_element_t* el;
+    // 是否要求我们退出
+    if(data->overlay->request_abort){
+        prts_timer_cancel(data->overlay->overlay_timer_handle);
+        data->overlay->overlay_timer_handle = 0;
+        log_debug("arknights overlay worker: request abort");
+        return;
+    }
 
-    const int btm_info_x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X / UI_SCALE;
+    // =============  状态转移  ==================
+    // == 文本 打字机效果 START
 
-    // ---- 静态模板（z 序最底）----
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_IMAGE;
-    el->cacheasset_id = CACHE_ASSETS_TOP_LEFT_RECT;
-    el->x = OVERLAY_ARKNIGHTS_RECT_OFFSET_X / UI_SCALE;
-    el->y = 0;
-
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_IMAGE;
-    el->cacheasset_id = CACHE_ASSETS_BTM_LEFT_BAR;
-    el->anchor = OPINFO_ANCHOR_BL;
-
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_IMAGE;
-    el->cacheasset_id = CACHE_ASSETS_TOP_RIGHT_BAR;
-    el->anchor = OPINFO_ANCHOR_TR;
-
-    // TOP_RIGHT_BAR 自定义文字：先黑块盖掉图片内嵌文字，再画旋转文字
-    if(params->top_right_bar_text[0] != '\0'){
-        int bar_w = cacheasset_base_w(CACHE_ASSETS_TOP_RIGHT_BAR);
-        if(bar_w > 0){
-            int bar_x = OVERLAY_WIDTH / UI_SCALE - bar_w;
-
-            el = &tmp[n++];
-            overlay_opinfo_element_init(el);
-            el->type = OPINFO_EL_RECT;
-            el->x = bar_x + 42;
-            el->y = 314;
-            el->w = 10;
-            el->h = 102;
-            el->color = 0xFF000000;
-
-            el = &tmp[n++];
-            overlay_opinfo_element_init(el);
-            el->type = OPINFO_EL_TEXT_ROT90;
-            el->x = bar_x + 42;
-            el->y = 314;
-            el->w = 10;
-            el->h = 102;
-            el->font_role = FONT_DISPLAY;
-            el->font_size = 10;
-            el->letter_space = 2;
-            el->bold_split = true;
-            safe_strcpy(el->text, sizeof(el->text), params->top_right_bar_text);
+    // name
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_NAME_START_FRAME && data->operator_name_cpidx != data->operator_name_cpcnt){
+        if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_NAME_FRAME_PER_CODEPOINT == 0){
+            data->operator_name_cpidx++;
+            data->update.operator_name = 1;
         }
     }
 
-    // TOP_LEFT_RHODES：自定义文字（旋转 90°, 72px）或默认缓存图
-    if(params->rhodes_text[0] != '\0'){
-        el = &tmp[n++];
-        overlay_opinfo_element_init(el);
-        el->type = OPINFO_EL_TEXT_ROT90;
-        el->x = 0;
-        el->y = 5;
-        el->w = 67;
-        el->h = OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y / UI_SCALE - 5;
-        el->font_role = FONT_DISPLAY;
-        el->font_size = 72;
-        safe_strcpy(el->text, sizeof(el->text), params->rhodes_text);
+    //code
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_CODE_START_FRAME && data->operator_code_cpidx != data->operator_code_cpcnt){
+        if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_CODE_FRAME_PER_CODEPOINT == 0){
+            data->operator_code_cpidx++;
+            data->update.operator_code = 1;
+        }
+    }
+
+    //stuff text
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_START_FRAME && data->stuff_text_cpidx != data->stuff_text_cpcnt){
+        if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_FRAME_PER_CODEPOINT == 0){
+            data->stuff_text_cpidx++;
+            data->update.staff_text = 1;
+        }
+    }
+
+    //aux text
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_AUX_TEXT_START_FRAME && data->aux_text_cpidx != data->aux_text_cpcnt){
+        if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_AUX_TEXT_FRAME_PER_CODEPOINT == 0){
+            data->aux_text_cpidx++;
+            data->update.aux_text = 1;
+        }
+    }
+
+    // == 文本 打字机效果 END
+
+    // == BARCODE 和 CLASSICON 的 Eink效果
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_CLASSICON_START_FRAME && data->class_icon_state != ANIMATION_EINK_CONTENT){
+        if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_CLASSICON_FRAME_PER_STATE == 0){
+            data->class_icon_state++;
+            data->update.class_icon = 1;
+        }
+    }
+
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_BARCODE_START_FRAME && data->barcode_state != ANIMATION_EINK_CONTENT){
+        if(data->curr_frame % OVERLAY_ANIMATION_OPINFO_BARCODE_FRAME_PER_STATE == 0){
+            data->barcode_state++;
+            data->update.barcode = 1;
+        }
+    }
+    // == BARCODE 和 CLASSICON 的 Eink效果 end ==
+
+    // == color fade 和 logo fade start ==
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_COLOR_FADE_START_FRAME && data->color_fade_value < OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE){
+        data->color_fade_value += OVERLAY_ANIMATION_OPINFO_COLOR_FADE_VALUE_PER_FRAME;
+        if(data->color_fade_value >= OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE){
+            data->color_fade_value = OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE;
+        }
+        data->update.fade_color = 1;
+    }
+    // == color fade 和 logo fade end ==
+
+    // == logo swipe start
+    if(data->curr_frame >= OVERLAY_ANIMATION_OPINFO_LOGO_FADE_START_FRAME && data->logo_fade_value < 255){
+        data->logo_fade_value += OVERLAY_ANIMATION_OPINFO_LOGO_FADE_VALUE_PER_FRAME;
+        if(data->logo_fade_value >= 255){
+            data->logo_fade_value = 255;
+        }
+        data->update.logo_fade = 1;
+        // logo 和 colorfade是冲突的
+        // colorfade 也需要重画
+        data->update.fade_color = 1;
+    }
+    // == logo swipe end ==
+
+    // == ak bar swipe start
+
+    int ak_bar_swipe_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_START_FRAME;
+    if (ak_bar_swipe_frame >= 0 && ak_bar_swipe_frame < OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_FRAME_COUNT){
+        data->update.ak_bar_swipe = 1;
+    }
+
+    // division line start
+
+    int div_line_upper_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_LINE_UPPER_START_FRAME;
+    if (div_line_upper_frame >= 0 && div_line_upper_frame < OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT){
+        data->update.div_line_upper = 1;
+    }
+
+    int div_line_lower_frame = data->curr_frame - OVERLAY_ANIMATION_OPINFO_LINE_LOWER_START_FRAME;
+    if (div_line_lower_frame >= 0 && div_line_lower_frame < OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT){
+        data->update.div_line_lower = 1;
+    }
+
+    // =========== 绘制 ================
+
+    int asset_w, asset_h;
+    uint8_t* asset_addr;
+    arknights_overlay_update_t * update = &data->update;
+
+    uint32_t* vaddr = (uint32_t*)data->overlay->overlay_buf.vaddr;
+
+    fbdraw_fb_t fbdst;
+    fbdraw_fb_t fbsrc;
+    fbdst.vaddr = vaddr;
+    fbdst.width = OVERLAY_WIDTH;
+    fbdst.height = OVERLAY_HEIGHT;
+
+
+    fbdraw_rect_t dst_rect;
+    fbdraw_rect_t src_rect;
+
+    olopinfo_params_t* params = data->params;
+
+    // == 文本 start ==
+    // name
+    if(update->operator_name){
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y;
+        dst_rect.w = OVERLAY_WIDTH;
+        dst_rect.h = OVERLAY_HEIGHT;
+
+        fbdraw_text_range(
+            &fbdst, &dst_rect,
+            params->operator_name,
+            font_get(FONT_DISPLAY, 40),
+            0xFFFFFFFF,0,
+            data->operator_name_cpidx, data->operator_name_cpidx + 1
+        );
+        update->operator_name = 0;
+    }
+    // code
+    if(update->operator_code){
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_OPCODE_OFFSET_Y;
+        dst_rect.w = OVERLAY_WIDTH;
+        dst_rect.h = OVERLAY_HEIGHT;
+
+        fbdraw_text_range(
+            &fbdst, &dst_rect,
+            params->operator_code,
+            font_get(FONT_BODY, 14),
+            0xFFFFFFFF,0,
+            data->operator_code_cpidx, data->operator_code_cpidx + 1
+        );
+        update->operator_code = 0;
+    }
+    //stuff text
+    if(update->staff_text){
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_STAFF_TEXT_OFFSET_Y;
+        dst_rect.w = OVERLAY_WIDTH;
+        dst_rect.h = OVERLAY_HEIGHT;
+
+        fbdraw_text_range(
+            &fbdst, &dst_rect,
+            params->staff_text,
+            font_get(FONT_BODY, 14),
+            0xFFFFFFFF,0,
+            data->stuff_text_cpidx, data->stuff_text_cpidx + 1
+        );
+        update->staff_text = 0;
+    }
+    //aux text
+    if(update->aux_text){
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_AUX_TEXT_OFFSET_Y;
+        dst_rect.w = OVERLAY_WIDTH;
+        dst_rect.h = OVERLAY_HEIGHT;
+
+        fbdraw_text_range(
+            &fbdst, &dst_rect,
+            params->aux_text,
+            font_get(FONT_BODY, 14),
+            0xFFFFFFFF,S(14),
+            data->aux_text_cpidx, data->aux_text_cpidx + 1
+        );
+        update->aux_text = 0;
+    }
+    // == 文本 end ==
+
+    // == BARCODE 和 CLASSICON 的 Eink效果 start ==
+    if(update->barcode){
+        dst_rect.x = S(1);
+        dst_rect.y = OVERLAY_ARKNIGHTS_BARCODE_OFFSET_Y;
+        dst_rect.w = OVERLAY_ARKNIGHTS_BARCODE_WIDTH;
+        dst_rect.h = OVERLAY_ARKNIGHTS_BARCODE_HEIGHT;
+
+        if (data->barcode_state == ANIMATION_EINK_FIRST_BLACK){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFF000000);
+        }
+        else if (data->barcode_state == ANIMATION_EINK_FIRST_WHITE){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
+        }
+        else if (data->barcode_state == ANIMATION_EINK_SECOND_BLACK){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFF000000);
+        }
+        else if (data->barcode_state == ANIMATION_EINK_SECOND_WHITE){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
+        }
+        else if (data->barcode_state == ANIMATION_EINK_IDLE){
+            //does nothing
+        }
+        else{
+            fbdraw_barcode_rot90(&fbdst, &dst_rect, params->barcode_text, font_get(FONT_BODY, 14));
+        }
+
+        update->barcode = 0;
+    }
+
+    if(update->class_icon){
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_CLASS_ICON_OFFSET_Y;
+        dst_rect.w = params->class_w;
+        dst_rect.h = params->class_h;
+
+        if (data->class_icon_state == ANIMATION_EINK_FIRST_BLACK){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFF000000);
+        }
+        else if (data->class_icon_state == ANIMATION_EINK_FIRST_WHITE){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
+        }
+        else if (data->class_icon_state == ANIMATION_EINK_SECOND_BLACK){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFF000000);
+        }
+        else if (data->class_icon_state == ANIMATION_EINK_SECOND_WHITE){
+            fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
+        }
+        else if (data->class_icon_state == ANIMATION_EINK_IDLE){
+            //does nothing
+        }
+        else{
+            fbsrc.vaddr = (uint32_t*) params->class_addr;
+            fbsrc.width = params->class_w;
+            fbsrc.height = params->class_h;
+
+            src_rect.x = 0;
+            src_rect.y = 0;
+            src_rect.w = params->class_w;
+            src_rect.h = params->class_h;
+
+            fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+        }
+
+        update->class_icon = 0;
+    }
+    // == BARCODE 和 CLASSICON 的 Eink效果 end ==
+
+    // == color fade + logo：右下角同一片区域，合成后单次落盘，避免竞争闪烁
+    if(update->fade_color || update->logo_fade){
+        draw_color_fade_and_logo(
+            vaddr, data->color_fade_value, params->color,
+            params->logo_addr, params->logo_w, params->logo_h,
+            data->logo_fade_value
+        );
+        update->fade_color = 0;
+        update->logo_fade = 0;
+    }
+
+    if (update->ak_bar_swipe){
+        cacheassets_get_asset_from_global(CACHE_ASSETS_AK_BAR, &asset_w, &asset_h, &asset_addr);
+        fbsrc.vaddr = (uint32_t*)asset_addr;
+        fbsrc.width = asset_w;
+        fbsrc.height = asset_h;
+
+        src_rect.x = 0;
+        src_rect.y = 0;
+        src_rect.w = data->ak_bar_swipe_bezeir_values[ak_bar_swipe_frame];
+        src_rect.h = asset_h;
+
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_AK_BAR_OFFSET_Y;
+        dst_rect.w = data->ak_bar_swipe_bezeir_values[ak_bar_swipe_frame];
+        dst_rect.h = OVERLAY_HEIGHT;
+
+        fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+
+        update->ak_bar_swipe = 0;
+    }
+
+    if(update->div_line_upper){
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_UPPERLINE_OFFSET_Y;
+        dst_rect.w = data->div_line_bezeir_values[div_line_upper_frame];
+        dst_rect.h = S(1);
+        fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
+
+        update->div_line_upper = 0;
+    }
+
+    if(update->div_line_lower){
+        dst_rect.x = OVERLAY_ARKNIGHTS_BTM_INFO_OFFSET_X;
+        dst_rect.y = OVERLAY_ARKNIGHTS_LOWERLINE_OFFSET_Y;
+        dst_rect.w = data->div_line_bezeir_values[div_line_lower_frame];
+        dst_rect.h = S(1);
+        fbdraw_fill_rect(&fbdst, &dst_rect, 0xFFFFFFFF);
+
+        update->div_line_lower = 0;
+    }
+
+    // ARROWS. it always redraw
+
+    cacheassets_get_asset_from_global(CACHE_ASSETS_TOP_RIGHT_ARROW, &asset_w, &asset_h, &asset_addr);
+    fbsrc.vaddr = (uint32_t*)asset_addr;
+    fbsrc.width = asset_w;
+    fbsrc.height = asset_h;
+
+    src_rect.x = 0;
+    src_rect.y = 0;
+    src_rect.w = asset_w;
+    src_rect.h = data->arrow_y_value;
+
+    dst_rect.x = OVERLAY_WIDTH - asset_w;
+    dst_rect.y = OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y + (asset_h - data->arrow_y_value);
+    dst_rect.w = asset_w;
+    dst_rect.h = data->arrow_y_value;
+
+    fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+
+    src_rect.x = 0;
+    src_rect.y = data->arrow_y_value;
+    src_rect.w = asset_w;
+    src_rect.h = asset_h - data->arrow_y_value;
+
+    dst_rect.x = OVERLAY_WIDTH - asset_w;
+    dst_rect.y = OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y;
+    dst_rect.w = asset_w;
+    dst_rect.h = asset_h - data->arrow_y_value;
+
+    fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+
+    data->arrow_y_value -= OVERLAY_ANIMATION_OPINFO_ARROW_Y_INCR_PER_FRAME;
+    if(data->arrow_y_value <= 0){
+        data->arrow_y_value = asset_h;
+    }
+
+    data->curr_frame++;
+}
+
+// 定时器回调。来自普瑞塞斯 的 rt 启动的 sigev_thread 线程。
+static void arknights_overlay_worker_timer_cb(void *userdata,bool is_last){
+    arknights_overlay_worker_data_t* data = (arknights_overlay_worker_data_t*)userdata;
+    overlay_worker_schedule(data->overlay,arknights_overlay_worker,data);
+}
+
+static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* params){
+    log_info("init_template_arknights: rhodes_text=[%s]", params->rhodes_text);
+
+    fbdraw_fb_t fbsrc,fbdst;
+    fbdraw_rect_t src_rect,dst_rect;
+
+    memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
+
+
+    fbdst.vaddr = vaddr;
+    fbdst.width = OVERLAY_WIDTH;
+    fbdst.height = OVERLAY_HEIGHT;
+
+
+    int asset_w,asset_h;
+    uint8_t* asset_addr;
+
+    // TOP_LEFT_RECT
+    cacheassets_get_asset_from_global(CACHE_ASSETS_TOP_LEFT_RECT, &asset_w, &asset_h, &asset_addr);
+
+    fbsrc.vaddr = (uint32_t*)asset_addr;
+    fbsrc.width = asset_w;
+    fbsrc.height = asset_h;
+
+    src_rect.x = 0;
+    src_rect.y = 0;
+    src_rect.w = asset_w;
+    src_rect.h = asset_h;
+
+    dst_rect.x = OVERLAY_ARKNIGHTS_RECT_OFFSET_X;
+    dst_rect.y = 0;
+    dst_rect.w = asset_w;
+    dst_rect.h = asset_h;
+
+    fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+
+    // BTM_LEFT_BAR
+    cacheassets_get_asset_from_global(CACHE_ASSETS_BTM_LEFT_BAR, &asset_w, &asset_h, &asset_addr);
+
+    fbsrc.vaddr = (uint32_t*)asset_addr;
+    fbsrc.width = asset_w;
+    fbsrc.height = asset_h;
+
+    src_rect.x = 0;
+    src_rect.y = 0;
+    src_rect.w = asset_w;
+    src_rect.h = asset_h;
+
+    dst_rect.x = 0;
+    dst_rect.y = OVERLAY_HEIGHT - asset_h;
+    dst_rect.w = asset_w;
+    dst_rect.h = asset_h;
+    fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+
+    // TOP_RIGHT_BAR
+    cacheassets_get_asset_from_global(CACHE_ASSETS_TOP_RIGHT_BAR, &asset_w, &asset_h, &asset_addr);
+    fbsrc.vaddr = (uint32_t*)asset_addr;
+    fbsrc.width = asset_w;
+    fbsrc.height = asset_h;
+
+    src_rect.x = 0;
+    src_rect.y = 0;
+    src_rect.w = asset_w;
+    src_rect.h = asset_h;
+
+    dst_rect.x = OVERLAY_WIDTH - asset_w;
+    dst_rect.y = 0;
+    dst_rect.w = asset_w;
+    dst_rect.h = asset_h;
+    fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
+
+    // TOP_RIGHT_BAR 自定义文字（空格前 faux bold，空格后常规）
+    if (params->top_right_bar_text[0] != '\0') {
+        // 用黑色覆盖图片内嵌文字（图片内基准坐标 42,314 ~ 52,416，随分辨率 S()）
+        int bar_screen_x = OVERLAY_WIDTH - asset_w;
+        dst_rect.x = bar_screen_x + S(42);
+        dst_rect.y = S(314);
+        dst_rect.w = S(10);
+        dst_rect.h = S(102);
+        fbdraw_fill_rect(&fbdst, &dst_rect, 0xFF000000);
+
+        const char *space = strchr(params->top_right_bar_text, ' ');
+        if (space) {
+            char bold_part[40];
+            int bold_len = space - params->top_right_bar_text;
+            memcpy(bold_part, params->top_right_bar_text, bold_len);
+            bold_part[bold_len] = '\0';
+            const char *reg_part = space + 1;
+
+            int32_t bold_px = fbdraw_text_width(bold_part, font_get(FONT_DISPLAY, 10), S(2));
+            int32_t space_gap = S(6);
+
+            // Faux bold: 渲染两次，第二次 x+S(1) 偏移加粗笔画
+            fbdraw_rect_t r = { dst_rect.x, dst_rect.y, S(10), bold_px };
+            fbdraw_text_rot90(&fbdst, &r, bold_part, font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
+            fbdraw_rect_t r_fb = { dst_rect.x + S(1), dst_rect.y, S(10), bold_px };
+            fbdraw_text_rot90(&fbdst, &r_fb, bold_part, font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
+
+            // Regular: 渲染一次（无 faux bold）
+            int32_t reg_y = dst_rect.y + bold_px + space_gap;
+            int32_t reg_h = dst_rect.y + dst_rect.h - reg_y;
+            if (reg_h > 0 && reg_part[0] != '\0') {
+                fbdraw_rect_t r2 = { dst_rect.x, reg_y, S(10), reg_h };
+                fbdraw_text_rot90(&fbdst, &r2, reg_part, font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
+            }
+        } else {
+            // 无空格，全部 faux bold
+            fbdraw_text_rot90(&fbdst, &dst_rect, params->top_right_bar_text,
+                              font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
+            fbdraw_rect_t r_fb = { dst_rect.x + S(1), dst_rect.y, dst_rect.w, dst_rect.h };
+            fbdraw_text_rot90(&fbdst, &r_fb, params->top_right_bar_text,
+                              font_get(FONT_DISPLAY, 10), 0xFFFFFFFF, S(2));
+        }
+    }
+
+    // TOP_LEFT_RHODES
+    if (params->rhodes_text[0] != '\0') {
+        // 用户自定义文字替代 logo（顺时针旋转 +90° 显示，72px Bold）
+        dst_rect.x = 0;
+        dst_rect.y = S(5);
+        dst_rect.w = S(67);
+        dst_rect.h = OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y - S(5);
+        fbdraw_text_rot90(&fbdst, &dst_rect, params->rhodes_text, font_get(FONT_DISPLAY, 72), 0xFFFFFFFF, 0);
     } else {
-        el = &tmp[n++];
-        overlay_opinfo_element_init(el);
-        el->type = OPINFO_EL_IMAGE;
-        el->cacheasset_id = CACHE_ASSETS_TOP_LEFT_RHODES;
+        // 默认缓存图
+        cacheassets_get_asset_from_global(CACHE_ASSETS_TOP_LEFT_RHODES, &asset_w, &asset_h, &asset_addr);
+        fbsrc.vaddr = (uint32_t*)asset_addr;
+        fbsrc.width = asset_w;
+        fbsrc.height = asset_h;
+
+        src_rect.x = 0;
+        src_rect.y = 0;
+        src_rect.w = asset_w;
+        src_rect.h = asset_h;
+
+        dst_rect.x = 0;
+        dst_rect.y = 0;
+        dst_rect.w = asset_w;
+        dst_rect.h = asset_h;
+
+        fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
     }
 
-    // ---- 右下角渐变三角 + logo（同组，由重组机制合成）----
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_CORNER_FADE;
-    el->anim = OPINFO_ANIM_GROW;
-    el->w = OVERLAY_ANIMATION_OPINFO_COLOR_FADE_END_VALUE;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_COLOR_FADE_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_COLOR_FADE_VALUE_PER_FRAME;
-    el->color = params->color;
+}
 
-    if(params->logo_path[0] != '\0'){
-        el = &tmp[n++];
-        overlay_opinfo_element_init(el);
-        el->type = OPINFO_EL_IMAGE;
-        el->anim = OPINFO_ANIM_FADE;
-        el->anchor = OPINFO_ANCHOR_BR;
-        el->x = 10;
-        el->y = 10;
-        el->start_frame = OVERLAY_ANIMATION_OPINFO_LOGO_FADE_START_FRAME;
-        el->speed = OVERLAY_ANIMATION_OPINFO_LOGO_FADE_VALUE_PER_FRAME;
-        safe_strcpy(el->image_path, sizeof(el->image_path), params->logo_path);
+void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params){
+    log_info("overlay_opinfo_show_arknights");
+
+    // 先把图层挪到屏外再直绘单 buffer，绘制过程不可见
+    drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
+    drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
+
+    init_template_arknights_overlay((uint32_t*)overlay->overlay_buf.vaddr, params);
+
+    static arknights_overlay_worker_data_t data;
+    memset(&data, 0, sizeof(arknights_overlay_worker_data_t));
+    data.overlay = overlay;
+    data.params = params;
+    data.operator_name_cpcnt = lv_text_get_encoded_length(params->operator_name);
+    data.operator_code_cpcnt = lv_text_get_encoded_length(params->operator_code);
+    data.stuff_text_cpcnt = lv_text_get_encoded_length(params->staff_text);
+    data.aux_text_cpcnt = lv_text_get_encoded_length(params->aux_text);
+
+    int h,w;
+    uint8_t* addr;
+    cacheassets_get_asset_from_global(CACHE_ASSETS_AK_BAR, &w, &h, &addr);
+
+    int32_t ctlx1 = LV_BEZIER_VAL_FLOAT(0.42);
+    int32_t ctly1 = LV_BEZIER_VAL_FLOAT(0);
+    int32_t ctx2 = LV_BEZIER_VAL_FLOAT(0.58);
+    int32_t cty2 = LV_BEZIER_VAL_FLOAT(1);
+
+    for(int i = 0; i < OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_FRAME_COUNT; i++){
+        uint32_t t = lv_map(i, 0, OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_FRAME_COUNT, 0, LV_BEZIER_VAL_MAX);
+        int32_t step = lv_cubic_bezier(t, ctlx1, ctly1, ctx2, cty2);
+        int32_t new_value;
+        new_value = step * w;
+        new_value = new_value >> LV_BEZIER_VAL_SHIFT;
+        data.ak_bar_swipe_bezeir_values[i] = new_value;
     }
 
-    // ---- 打字机文本 ----
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_TEXT;
-    el->anim = OPINFO_ANIM_TYPEWRITER;
-    el->x = btm_info_x;
-    el->y = OVERLAY_ARKNIGHTS_OPNAME_OFFSET_Y / UI_SCALE;
-    el->font_role = FONT_DISPLAY;
-    el->font_size = 40;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_NAME_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_NAME_FRAME_PER_CODEPOINT;
-    safe_strcpy(el->text, sizeof(el->text), params->operator_name);
-
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_TEXT;
-    el->anim = OPINFO_ANIM_TYPEWRITER;
-    el->x = btm_info_x;
-    el->y = OVERLAY_ARKNIGHTS_OPCODE_OFFSET_Y / UI_SCALE;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_CODE_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_CODE_FRAME_PER_CODEPOINT;
-    safe_strcpy(el->text, sizeof(el->text), params->operator_code);
-
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_TEXT;
-    el->anim = OPINFO_ANIM_TYPEWRITER;
-    el->x = btm_info_x;
-    el->y = OVERLAY_ARKNIGHTS_STAFF_TEXT_OFFSET_Y / UI_SCALE;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_STAFF_TEXT_FRAME_PER_CODEPOINT;
-    safe_strcpy(el->text, sizeof(el->text), params->staff_text);
-
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_TEXT;
-    el->anim = OPINFO_ANIM_TYPEWRITER;
-    el->x = btm_info_x;
-    el->y = OVERLAY_ARKNIGHTS_AUX_TEXT_OFFSET_Y / UI_SCALE;
-    el->line_height = 14;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_AUX_TEXT_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_AUX_TEXT_FRAME_PER_CODEPOINT;
-    safe_strcpy(el->text, sizeof(el->text), params->aux_text);
-
-    // ---- 条形码 / 职业图标（Eink 闪烁）----
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_BARCODE;
-    el->anim = OPINFO_ANIM_EINK;
-    el->x = 1;
-    el->y = OVERLAY_ARKNIGHTS_BARCODE_OFFSET_Y / UI_SCALE;
-    el->w = OVERLAY_ARKNIGHTS_BARCODE_WIDTH / UI_SCALE;
-    el->h = OVERLAY_ARKNIGHTS_BARCODE_HEIGHT / UI_SCALE;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_BARCODE_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_BARCODE_FRAME_PER_STATE;
-    safe_strcpy(el->text, sizeof(el->text), params->barcode_text);
-
-    if(params->class_path[0] != '\0'){
-        el = &tmp[n++];
-        overlay_opinfo_element_init(el);
-        el->type = OPINFO_EL_IMAGE;
-        el->anim = OPINFO_ANIM_EINK;
-        el->x = btm_info_x;
-        el->y = OVERLAY_ARKNIGHTS_CLASS_ICON_OFFSET_Y / UI_SCALE;
-        el->start_frame = OVERLAY_ANIMATION_OPINFO_CLASSICON_START_FRAME;
-        el->speed = OVERLAY_ANIMATION_OPINFO_CLASSICON_FRAME_PER_STATE;
-        safe_strcpy(el->image_path, sizeof(el->image_path), params->class_path);
+    for(int i = 0; i < OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT; i++){
+        uint32_t t = lv_map(i, 0, OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT, 0, LV_BEZIER_VAL_MAX);
+        int32_t step = lv_cubic_bezier(t, ctlx1, ctly1, ctx2, cty2);
+        int32_t new_value;
+        new_value = step * OVERLAY_ARKNIGHTS_LINE_WIDTH;
+        new_value = new_value >> LV_BEZIER_VAL_SHIFT;
+        data.div_line_bezeir_values[i] = new_value;
     }
 
-    // ---- AK bar / 分割线（贝塞尔划入）----
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_IMAGE;
-    el->cacheasset_id = CACHE_ASSETS_AK_BAR;
-    el->anim = OPINFO_ANIM_WIPE;
-    el->x = btm_info_x;
-    el->y = OVERLAY_ARKNIGHTS_AK_BAR_OFFSET_Y / UI_SCALE;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_AK_BAR_SWIPE_FRAME_COUNT;
+    overlay->request_abort = 0;
+    overlay->overlay_used = 1;
 
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_RECT;
-    el->anim = OPINFO_ANIM_WIPE;
-    el->x = btm_info_x;
-    el->y = OVERLAY_ARKNIGHTS_UPPERLINE_OFFSET_Y / UI_SCALE;
-    el->w = OVERLAY_ARKNIGHTS_LINE_WIDTH / UI_SCALE;
-    el->h = 1;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_LINE_UPPER_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT;
+    prts_timer_create(
+        &overlay->overlay_timer_handle  ,
+        0,
+        OVERLAY_ANIMATION_STEP_TIME,
+        -1,
+        arknights_overlay_worker_timer_cb,
+        &data
+    );
 
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_RECT;
-    el->anim = OPINFO_ANIM_WIPE;
-    el->x = btm_info_x;
-    el->y = OVERLAY_ARKNIGHTS_LOWERLINE_OFFSET_Y / UI_SCALE;
-    el->w = OVERLAY_ARKNIGHTS_LINE_WIDTH / UI_SCALE;
-    el->h = 1;
-    el->start_frame = OVERLAY_ANIMATION_OPINFO_LINE_LOWER_START_FRAME;
-    el->speed = OVERLAY_ANIMATION_OPINFO_LINE_FRAME_COUNT;
 
-    // ---- 右上角循环滚动箭头（z 序最顶）----
-    el = &tmp[n++];
-    overlay_opinfo_element_init(el);
-    el->type = OPINFO_EL_IMAGE;
-    el->cacheasset_id = CACHE_ASSETS_TOP_RIGHT_ARROW;
-    el->anim = OPINFO_ANIM_SCROLL;
-    el->anchor = OPINFO_ANCHOR_TR;
-    el->y = OVERLAY_ARKNIGHTS_TOP_RIGHT_ARROW_OFFSET_Y / UI_SCALE;
-    el->speed = OVERLAY_ANIMATION_OPINFO_ARROW_Y_INCR_PER_FRAME;
-
-    params->elements = malloc((size_t)n * sizeof(olopinfo_element_t));
-    if(!params->elements){
-        log_error("build_arknights_elements: malloc failed");
-        params->element_count = 0;
-        return -1;
-    }
-    memcpy(params->elements, tmp, (size_t)n * sizeof(olopinfo_element_t));
-    params->element_count = n;
-    return 0;
+    layer_animation_ease_in_out_move(
+        overlay->layer_animation,
+        DRM_WARPPER_LAYER_OVERLAY,
+        0, OVERLAY_HEIGHT,
+        0, 0,
+        1 * 1000 * 1000, 0
+    );
 }
 
 // ============================================================================
@@ -1210,6 +1662,20 @@ int overlay_opinfo_build_arknights_elements(olopinfo_params_t* params){
 // ============================================================================
 
 void overlay_opinfo_load_image(olopinfo_params_t* params){
+    if(params->type == OPINFO_TYPE_ARKNIGHTS){
+        load_img_assets(params->class_path, &params->class_addr, &params->class_w, &params->class_h);
+        load_img_assets(params->logo_path, &params->logo_addr, &params->logo_w, &params->logo_h);
+        // class/logo 也是用户图，旧素材同样按基准放大
+        if(params->class_addr){
+            imgscale_upscale_nn_rgba(&params->class_addr, &params->class_w, &params->class_h, params->src_upscale);
+        }
+        if(params->logo_addr){
+            imgscale_upscale_nn_rgba(&params->logo_addr, &params->logo_w, &params->logo_h, params->src_upscale);
+        }
+        log_debug("loaded class: %s, w: %d, h: %d", params->class_path, params->class_w, params->class_h);
+        log_debug("loaded logo: %s, w: %d, h: %d", params->logo_path, params->logo_w, params->logo_h);
+        return;
+    }
     for(int i = 0; i < params->element_count; i++){
         olopinfo_element_t* el = &params->elements[i];
         if(el->type != OPINFO_EL_IMAGE || el->cacheasset_id >= 0){
@@ -1224,6 +1690,19 @@ void overlay_opinfo_load_image(olopinfo_params_t* params){
 }
 
 void overlay_opinfo_free_image(olopinfo_params_t* params){
+    if(params->type == OPINFO_TYPE_ARKNIGHTS){
+        if(params->class_addr){
+            free(params->class_addr);
+            params->class_addr = NULL;
+            log_debug("freed class: %s", params->class_path);
+        }
+        if(params->logo_addr){
+            free(params->logo_addr);
+            params->logo_addr = NULL;
+            log_debug("freed logo: %s", params->logo_path);
+        }
+        return;
+    }
     for(int i = 0; i < params->element_count; i++){
         olopinfo_element_t* el = &params->elements[i];
         if(el->image_addr){

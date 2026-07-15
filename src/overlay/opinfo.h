@@ -13,13 +13,12 @@ typedef enum {
 } opinfo_type_t;
 
 // ============================================================================
-// 元素引擎 —— opinfo 的统一绘制后端
+// 元素引擎 —— image / custom 类型的绘制后端
 //
-// 三种 overlay.type（image / arknights / custom）都在解析阶段被翻译成一张
-// "元素列表"，由同一个 worker 状态机驱动：
-//   - image     -> 1 个静态 image 元素
-//   - arknights -> overlay_opinfo_build_arknights_elements() 生成的预设列表
-//   - custom    -> epconfig.json 里 overlay.options.elements 的直接映射
+// 两种 overlay.type 在解析阶段被翻译成一张"元素列表"，由同一个 worker 状态机驱动：
+//   - image  -> 1 个静态 image 元素
+//   - custom -> epconfig.json 里 overlay.options.elements 的直接映射
+// arknights 类型不走引擎，用 overlay_opinfo_show_arknights() 的专用实现。
 // ============================================================================
 
 typedef enum {
@@ -118,20 +117,29 @@ typedef struct {
     // image 类型：图片路径（build 后转入元素）
     char image_path[128];
 
-    // arknights 类型的 options 原始字段（预设 builder 的输入，也用于日志）
+    // arknights 带有简单动态效果的明日方舟通行证模板（专用实现，不走元素引擎）
     char operator_name[20];
     char operator_code[40];
     char barcode_text[40];
     char staff_text[40];
     char aux_text[256];
+
     char class_path[128];
+    int class_w;
+    int class_h;
+    uint32_t* class_addr;
+
     char logo_path[128];
+    int logo_w;
+    int logo_h;
+    uint32_t* logo_addr;
+
     char rhodes_text[40];        // 非空时替代默认 rhodes logo 图片
     char top_right_bar_text[40]; // 非空时覆盖 top_right_bar 内嵌文字
     uint32_t color;
 
-    // 统一元素列表：三种 type 解析后都落到这里（堆分配、精确大小，归 operator entry 所有，
-    // 用 overlay_opinfo_free_elements 释放）
+    // 统一元素列表：image / custom 解析后落到这里（堆分配、精确大小，归 operator entry 所有，
+    // 用 overlay_opinfo_free_elements 释放）；arknights 类型不用
     int element_count;
     olopinfo_element_t* elements;
 
@@ -140,17 +148,20 @@ typedef struct {
 // 元素字段默认值（cacheasset_id=-1、白色、body 14 等），解析/builder 共用
 void overlay_opinfo_element_init(olopinfo_element_t* el);
 
-// 把 image / arknights 类型的 options 翻译成元素列表（分配 params->elements）。
+// 把 image 类型的 options 翻译成元素列表（分配 params->elements）。
 // 成功返回 0；失败返回 -1（此时 elements 为 NULL）。
 int overlay_opinfo_build_image_elements(olopinfo_params_t* params);
-int overlay_opinfo_build_arknights_elements(olopinfo_params_t* params);
 
-// 加载/释放元素里用户图片的像素数据（cacheasset 来源不经过这里）
+// 加载/释放用户图片的像素数据：arknights 走 class/logo 字段，
+// 其余类型遍历元素列表（cacheasset 来源不经过这里）
 void overlay_opinfo_load_image(olopinfo_params_t* params);
 void overlay_opinfo_free_image(olopinfo_params_t* params);
 
 // 释放整张元素列表（先 free 图片再 free 数组）
 void overlay_opinfo_free_elements(olopinfo_params_t* params);
 
-// 统一显示入口：驱动 params->elements
+// image / custom 显示入口：驱动 params->elements
 void overlay_opinfo_show_elements(overlay_t* overlay, olopinfo_params_t* params);
+
+// arknights 显示入口：专用实现
+void overlay_opinfo_show_arknights(overlay_t* overlay, olopinfo_params_t* params);
