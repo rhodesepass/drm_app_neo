@@ -103,7 +103,8 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
 
     lvgl_drm_warp->key_enc_evdev.input_cb = screen_key_event_cb;
-    snprintf(lvgl_drm_warp->key_enc_evdev.dev_path, sizeof(lvgl_drm_warp->key_enc_evdev.dev_path), "/dev/input/event%d", 0);
+    /* dev_path 置空：扫描所有 /dev/input/event* 中带导航键的设备 */
+    lvgl_drm_warp->key_enc_evdev.dev_path[0] = '\0';
     key_enc_evdev_init(&lvgl_drm_warp->key_enc_evdev);
     lvgl_drm_warp->keypad_indev = lvgl_drm_warp->key_enc_evdev.indev;
 
