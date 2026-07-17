@@ -131,6 +131,7 @@ static int drm_warpper_discover_plane_props(drm_warpper_t *drm_warpper, int laye
         else if (!strcmp(prop->name, "CRTC_W"))  p->crtc_w  = prop->prop_id;
         else if (!strcmp(prop->name, "CRTC_H"))  p->crtc_h  = prop->prop_id;
         else if (!strcmp(prop->name, "alpha"))   p->alpha   = prop->prop_id;
+        else if (!strcmp(prop->name, "zpos"))    p->zpos    = prop->prop_id;
         drmModeFreeProperty(prop);
     }
     drmModeFreeObjectProperties(props);
@@ -230,6 +231,11 @@ static void* drm_warpper_display_thread(void *arg){
                     drmModeAtomicAddProperty(req, pl, p->crtc_y, (uint64_t)(int64_t)layer->geo_y);
                     drmModeAtomicAddProperty(req, pl, p->crtc_w, layer->geo_dst_w);
                     drmModeAtomicAddProperty(req, pl, p->crtc_h, layer->geo_dst_h);
+                    // z-order = layer_id (UI 2 > overlay 1 > video 0)。不设的话
+                    // 全靠驱动 reset 默认值，overlay(唯一带 alpha 层)一旦归一化后
+                    // zpos 抬到 UI 之上，就会独占高 pipe 盖住 UI。见 mount_layer_rect。
+                    if(p->zpos)
+                        drmModeAtomicAddProperty(req, pl, p->zpos, (uint64_t)i);
                 }
             }
         }
@@ -602,10 +608,12 @@ int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int
         log_error("failed to initialize display queue");
         return -1;
     }
-    // 必须 ≥ 全部在飞帧 item 数(video 层 VDEC_CAPTURE_BUF_MAX_SMALL=16
-    // 加跨会话残留的 curr)：push 是阻塞语义，容量不足会让显示线程
-    // 卡在 drain 中途
-    ret = spsc_bq_init(&layer->free_queue, 20);
+    // 必须 ≥ 全部在飞帧 item 数：push 是阻塞语义，容量不足会让显示线程卡在
+    // drain 中途(而解码侧正等它回收槽位 = 死锁)。video 层上限 = capture 预算
+    // 最宽的一档 + 平滑储备 + 跨会话残留的 curr，跟着 config.h 的宏走，
+    // 免得预算调大后这里对不上账
+    ret = spsc_bq_init(&layer->free_queue,
+                       VDEC_CAPTURE_BUF_MAX_SMALL + MP_SMOOTH_BUFS_MAX + 4);
     if(ret < 0){
         log_error("failed to initialize free queue");
         return -1;
@@ -776,6 +784,15 @@ int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,i
     drmModeAtomicAddProperty(req, plane_id, p->crtc_y, (uint64_t)(int64_t)y);
     drmModeAtomicAddProperty(req, plane_id, p->crtc_w, dst_w);
     drmModeAtomicAddProperty(req, plane_id, p->crtc_h, dst_h);
+
+    // 显式钉死 z-order = layer_id：UI(2) 在最上，overlay(1) 居中，video(0) 最底。
+    // sun4i DEBE 两级合成——先按 alpha 把各层分到 2 个 pipe(遇带 alpha 的层就抬
+    // 到高 pipe)，再做 pipe 间混合。三层里只有 overlay 是 ARGB 带 alpha。zpos 正确
+    // (video<overlay<UI)时 pipe0={video},pipe1={overlay,UI},UI 盖 overlay；若 UI 的
+    // 归一化 zpos 掉到 overlay 之下，overlay 会独占高 pipe 反盖 UI。不设 zpos 就全
+    // 靠驱动 reset 默认值，是这次 overlay 盖 UI 的根因。
+    if(p->zpos)
+        drmModeAtomicAddProperty(req, plane_id, p->zpos, (uint64_t)layer_id);
 
     pthread_mutex_lock(&drm_warpper->commit_mutex);
     ret = drmModeAtomicCommit(drm_warpper->fd, req, 0, NULL);

@@ -69,7 +69,7 @@ lv_indev_t * key_enc_evdev_init(key_enc_evdev_t * key_enc_evdev){
     lv_indev_set_type(indev, LV_INDEV_TYPE_ENCODER);
     lv_indev_set_read_cb(indev, key_sdl_read_cb);
     key_enc_evdev->indev = indev;
-    key_enc_evdev->evdev_fd = -1; // PC 无 evdev，dev_path 忽略
+    key_enc_evdev->evdev_fd_count = 0; // PC 无 evdev，dev_path 忽略
     lv_indev_set_driver_data(indev, key_enc_evdev);
     log_info("==> [sdl] key backend initialized (arrows/enter/esc/end)");
     return indev;

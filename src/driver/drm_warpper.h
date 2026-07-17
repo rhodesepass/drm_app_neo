@@ -83,6 +83,7 @@ typedef struct {
     uint32_t src_x, src_y, src_w, src_h;
     uint32_t crtc_x, crtc_y, crtc_w, crtc_h;
     uint32_t alpha;
+    uint32_t zpos;
 } plane_prop_ids_t;
 
 typedef struct {

@@ -2,7 +2,13 @@
  * Mediaplayer：src/vdec 自制解码栈（MP4 demux + H264 parser/DPB + cedrus
  * V4L2 request API）→ dmabuf FB → drm_warpper atomic 翻页。
  *
- * 单解码线程：demux 是内存 sample 表、request 是同步等待，无重叠收益。
+ * 两个线程：解码线程全速解码(demux 是内存 sample 表、request 是同步等待，
+ * 无再拆的收益)，帧进 smooth_q；pacer 线程按档期从 smooth_q 取出上屏。分开
+ * 是为了让 VE spike 只堵解码侧——pacer 期间照吃储备帧出帧。smooth_q 满即
+ * 反压解码线程，定速因此仍由 pacer 独家掌握。
+ *
+ * DPB 只由解码线程碰(标记/回收都在它那侧)，pacer 只搬 item，故无需加锁。
+ *
  * capture slot == DPB slot；帧经 FLIP_FB item 上屏，显示线程换帧后旧 item
  * 从 free_queue 回流，此时才解除该 slot 的 on_screen 占用。
  */
@@ -19,6 +25,7 @@
 #include "utils/log.h"
 #include "config.h"
 #include "utils/misc.h"
+#include "utils/spsc_queue.h"
 
 #include "vdec/nalu.h"
 #include "vdec/mp4_demux.h"
@@ -36,6 +43,13 @@ typedef struct {
     struct vdec_ctx    vdec;
     uint32_t           fb_ids[VDEC_MAX_CAP_BUFS];
     uint32_t           gem_handles[VDEC_MAX_CAP_BUFS];
+
+    /* 解码线程 → pacer 的待上屏帧；容量 = smooth_bufs + 1(在手的那格) */
+    spsc_bq_t          smooth_q;
+    bool               smooth_q_ready;
+    pthread_t          pacer_thread;
+    bool               pacer_started;
+    unsigned int       smooth_bufs;
 } mp_dev_priv_t;
 
 // main.c 提供，按解码尺寸记录 video 层挂载几何(720 档旧素材走 DEFE 放大)
@@ -54,6 +68,43 @@ static bool mp_size_supported(int w, int h)
         return true;
 #endif
     return false;
+}
+
+/*
+ * 平滑 buffer 档位：按 MemTotal 分。32M 机 CMA 预算已排满 → 0 格(退化成
+ * "解出即等档期上屏"，与拆 pacer 前等价)；64M 机吃得下储备。见 config.h。
+ * 读不到 meminfo 时按小内存兜底：多押 buffer 撑爆 CMA 比丢帧严重。
+ */
+static unsigned int mp_smooth_bufs(void)
+{
+    static int cached = -1;
+    unsigned long total_kb = 0;
+    char line[128];
+    FILE *f;
+
+    if (cached >= 0)
+        return (unsigned int)cached;
+
+    f = fopen(SYSINFO_MEMINFO_PATH, "r");
+    if (f) {
+        while (fgets(line, sizeof(line), f)) {
+            if (sscanf(line, "MemTotal: %lu kB", &total_kb) == 1)
+                break;
+        }
+        fclose(f);
+    }
+    if (!total_kb) {
+        log_warn("MemTotal unreadable, smooth bufs -> %d", MP_SMOOTH_BUFS_SMALL_MEM);
+        cached = MP_SMOOTH_BUFS_SMALL_MEM;
+        return (unsigned int)cached;
+    }
+
+    cached = total_kb >= MP_MEM_LARGE_THRESHOLD_KB ? MP_SMOOTH_BUFS_LARGE_MEM
+                                                   : MP_SMOOTH_BUFS_SMALL_MEM;
+    if (cached > MP_SMOOTH_BUFS_MAX)
+        cached = MP_SMOOTH_BUFS_MAX;
+    log_info("MemTotal %lukB -> smooth bufs %d", total_kb, cached);
+    return (unsigned int)cached;
 }
 
 /*
@@ -97,15 +148,37 @@ static void mp_reclaim_free_items(mediaplayer_t *mp)
     }
 }
 
-/* 把 slot 的帧入队显示。返回 0 成功。 */
-static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
+/*
+ * 睡到下一个档期，并把 *next 推到再下一个。*next==0 = 首帧：不睡，
+ * 档期从当下起算。smooth_bufs=0 的解码线程与 pacer 线程共用。
+ */
+static void mp_pace_wait(mediaplayer_t *mp, long long *next)
+{
+    long long now = mp_get_now_us();
+
+    if (!*next)
+        *next = now;
+    else if (now < *next)
+        usleep(*next - now);
+    else if (now > *next + 2 * 1000 * 1000) {
+        log_warn("can't keep up, delay: %lld us", now - *next);
+        *next = now;
+    }
+    *next += mp->frame_duration_us;
+}
+
+/*
+ * 帧 item 工厂：占住 slot + in_flight 记账。只在解码线程调用(碰 dpb)。
+ */
+static drm_warpper_queue_item_t *mp_make_frame_item(mediaplayer_t *mp,
+                                                    uint32_t fb_id, int slot)
 {
     mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     drm_warpper_queue_item_t *item = malloc(sizeof(*item));
 
     if (!item) {
         log_error("malloc err");
-        return -1;
+        return NULL;
     }
     memset(item, 0, sizeof(*item));
     item->type = DRM_WARPPER_ITEM_FLIP_FB;
@@ -113,6 +186,7 @@ static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
     item->userdata = slot_to_userdata(mp, slot);
     item->on_heap = false; /* 帧类 item 由本模块经 free_queue 回收 */
 
+    /* 交出去就算占住 slot：内容要保到上屏后离屏为止 */
     if (slot >= 0) {
         h264_dpb_set_on_screen(&p->dpb, slot, true);
         h264_dpb_mark_displayed(&p->dpb, slot);
@@ -120,8 +194,59 @@ static int mp_enqueue_frame(mediaplayer_t *mp, uint32_t fb_id, int slot)
     if (mp_trace_on())
         log_info("T E%d", slot);
     mp->items_in_flight++;
-    return drm_warpper_enqueue_display_item(mp->drm_warpper,
-                                            DRM_WARPPER_LAYER_VIDEO, item);
+    return item;
+}
+
+/*
+ * pacer 线程(仅 smooth_bufs>0 时存在)：smooth_q → drm 显示队列，定速。
+ *
+ * 必须先睡档期再取帧：pacer 手上不留货，待发的 capture 格才恰好等于 ring
+ * 深度，cap_count += smooth_bufs 的账才平。反过来(先取后睡)会白攥一帧过
+ * 一个档期，等于凭空多吃一格。
+ *
+ * 不碰 dpb / items_in_flight，item 照旧经 free_queue 回解码线程回收。
+ */
+static void *mp_pacer_thread(void *param)
+{
+    mediaplayer_t *mp = (mediaplayer_t *)param;
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
+    long long next_frame_time = 0;
+    unsigned int outputs = 0;
+    bool draining = false;
+
+    log_info("==> mp_pacer Thread Started! dur=%uus smooth=%u",
+             mp->frame_duration_us, p->smooth_bufs);
+
+    while (1) {
+        drm_warpper_queue_item_t *item;
+
+        if (!draining)
+            mp_pace_wait(mp, &next_frame_time);
+
+        /* close 后仍会把队里剩的取完才 EPIPE，残帧不会漏成 in_flight */
+        if (spsc_bq_pop(&p->smooth_q, (void **)&item) != 0)
+            break;
+
+        if (!draining) {
+            /* 收摊：残帧不再定速，冲进显示队列让显示线程当跳帧回收，
+             * stop 的 in_flight 等待才能及时收敛 */
+            pthread_rwlock_rdlock(&mp->thread.rwlock);
+            draining = mp->thread.requested_stop;
+            pthread_rwlock_unlock(&mp->thread.rwlock);
+        }
+
+        drm_warpper_enqueue_display_item(mp->drm_warpper,
+                                         DRM_WARPPER_LAYER_VIDEO, item);
+        // 节拍诊断：定速落后量(正=落后) + ring 存量。存量长期见底 = VE 吞吐
+        // 追不上素材帧率，储备只当了通道用，加深 buffer 也救不了(得降帧率)
+        if (!draining && ++outputs % 300 == 0)
+            log_info("mp pace: out=%u lag=%lldms ring=%u/%u", outputs,
+                     (long long)(mp_get_now_us() - next_frame_time) / 1000,
+                     (unsigned int)spsc_bq_count(&p->smooth_q), p->smooth_bufs);
+    }
+
+    log_info("==> mp_pacer Thread Ended!");
+    return NULL;
 }
 
 /*
@@ -213,24 +338,23 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
     return 0;
 }
 
-/* 解码线程：每 tick 出一帧（POC 序），按 frame_duration_us 定速 */
+/*
+ * 解码线程：出帧(POC 序)交给 pacer，限速靠 smooth_q 满时的反压。
+ * smooth_bufs=0 时没有 pacer，自己睡档期后直接上屏(原路径)。
+ */
 static void *mp_decode_thread(void *param)
 {
     mediaplayer_t *mp = (mediaplayer_t *)param;
     mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
-    unsigned int sample_idx = 0, outputs = 0;
+    unsigned int sample_idx = 0;
     bool pending_flush = false;
-    long long next_frame_time;
+    long long next_frame_time = 0;
     int out;
 
     log_info("==> mp_decode Thread Started! dur=%uus samples=%u",
              mp->frame_duration_us, p->demux.samples_count);
 
-    next_frame_time = mp_get_now_us() + mp->frame_duration_us;
-
     while (1) {
-        long long now;
-
         pthread_rwlock_rdlock(&mp->thread.rwlock);
         int requested_stop = mp->thread.requested_stop;
         pthread_rwlock_unlock(&mp->thread.rwlock);
@@ -240,10 +364,10 @@ static void *mp_decode_thread(void *param)
         mp_reclaim_free_items(mp);
 
         /*
-         * 先备货再睡档期：把"喂 AU 直到吐出一帧"放在睡眠窗口之前，
-         * GOP 边界的重排回填(IDR 后要连喂 reorder 个 AU 才有输出)就
-         * 消化在本来空转的等待里，不再把 IDR 帧拖过档期 ~2 个 VE 周期
-         * (曾表现为每 GOP 一次 ~100ms 定格)。
+         * 先备货再等收货：本轮的"喂 AU 直到吐出一帧"跑在下面出帧的阻塞点
+         * (睡档期 / ring 满)之前，GOP 边界的重排回填(IDR 后要连喂 reorder
+         * 个 AU 才有输出)因此消化在本来就要空等的窗口里，不把 IDR 帧拖过
+         * 档期 ~2 个 VE 周期(曾表现为每 GOP 一次 ~100ms 定格)。
          */
 
         /* GOP 边界(素材回绕)先按 flush 逐帧排空 DPB */
@@ -298,21 +422,27 @@ static void *mp_decode_thread(void *param)
         if (out < 0)
             continue;
 
-        now = mp_get_now_us();
-        if (now < next_frame_time)
-            usleep(next_frame_time - now);
-        else if (now > next_frame_time + 2 * 1000 * 1000) {
-            log_warn("can't keep up, delay: %lld us", now - next_frame_time);
-            next_frame_time = now;
-        }
+        drm_warpper_queue_item_t *item =
+            mp_make_frame_item(mp, p->fb_ids[out], out);
+        if (!item)
+            goto decode_error;
 
-        mp_reclaim_free_items(mp);
-        mp_enqueue_frame(mp, p->fb_ids[out], out);
-        next_frame_time += mp->frame_duration_us;
-        // 节拍诊断：定速落后量(正=落后)。落后持续增长 = 吞吐不足
-        if (++outputs % 300 == 0)
-            log_info("mp pace: out=%u lag=%lldms", outputs,
-                     (long long)(int64_t)(mp_get_now_us() - next_frame_time) / 1000);
+        if (p->smooth_bufs) {
+            /* 交 pacer 定速。ring 满则在此阻塞 = 解码限速阀；
+             * 非 0 返回 = 队列已关，stop 中 */
+            if (spsc_bq_push(&p->smooth_q, item) != 0) {
+                mp->items_in_flight--;
+                free(item);
+                break;
+            }
+        } else {
+            /* 无储备档：自己睡档期再上屏，与拆出 pacer 前逐字等价，
+             * 一格 capture 都不多占 */
+            mp_pace_wait(mp, &next_frame_time);
+            mp_reclaim_free_items(mp);
+            drm_warpper_enqueue_display_item(mp->drm_warpper,
+                                             DRM_WARPPER_LAYER_VIDEO, item);
+        }
     }
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);
@@ -348,6 +478,10 @@ static void mp_close_session(mediaplayer_t *mp)
     }
     vdec_close(&p->vdec);
     mp4_close(&p->demux);
+    if (p->smooth_q_ready) {
+        spsc_bq_destroy(&p->smooth_q);
+        p->smooth_q_ready = false;
+    }
     mp->session_open = false;
 }
 
@@ -475,6 +609,22 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
                      cap_count, cap_max, mp->frame_width, mp->frame_height);
             cap_count = cap_max;
         }
+        /* 平滑储备是解码正确性预算之外的额外格，钳制之后再叠 —— 否则大内存
+         * 机型的储备会被 720 档的 cap_max 吃掉，等于白配 */
+        p->smooth_bufs = mp_smooth_bufs();
+        if (cap_count + p->smooth_bufs > VDEC_MAX_CAP_BUFS)
+            p->smooth_bufs = VDEC_MAX_CAP_BUFS - cap_count;
+        cap_count += p->smooth_bufs;
+    }
+
+    /* ring 深度 == smooth_bufs：待发格数 = ring + 解码线程手里那格，比原路径
+     * (只有手里那格)恰好多 smooth_bufs 格，与上面 cap_count 的加法对上 */
+    if (p->smooth_bufs) {
+        if (spsc_bq_init(&p->smooth_q, p->smooth_bufs) != 0) {
+            log_error("smooth queue init err");
+            goto error;
+        }
+        p->smooth_q_ready = true;
     }
 
     if (vdec_find_device(video_path, sizeof(video_path),
@@ -500,9 +650,9 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
 
     h264_dpb_init(&p->dpb, cap_count, max_ref, max_frame_num, reorder);
 
-    log_info("vdec: %ux%u max_ref=%u cap_bufs=%u dur=%uus",
+    log_info("vdec: %ux%u max_ref=%u cap_bufs=%u(smooth %u) dur=%uus",
              mp->frame_width, mp->frame_height, max_ref, cap_count,
-             mp->frame_duration_us);
+             p->smooth_bufs, mp->frame_duration_us);
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);
     mp->thread.state = 0;
@@ -510,6 +660,16 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     pthread_rwlock_unlock(&mp->thread.rwlock);
 
     atomic_store(&mp->running, 1);
+
+    /* pacer 先起：它阻塞等首帧，解码线程一出帧就有人接 */
+    if (p->smooth_bufs) {
+        if (pthread_create(&p->pacer_thread, NULL, mp_pacer_thread, mp) != 0) {
+            log_error("pacer thread create err");
+            atomic_store(&mp->running, 0);
+            goto error;
+        }
+        p->pacer_started = true;
+    }
 
     if (pthread_create(&mp->decode_thread, NULL, mp_decode_thread, mp) != 0) {
         log_error("decode thread create err");
@@ -520,6 +680,13 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     return 0;
 
 error:
+    /* pacer 可能已阻塞在 pop：先关队列放它走，再拆会话 */
+    if (p->pacer_started) {
+        spsc_bq_close(&p->smooth_q);
+        pthread_join(p->pacer_thread, NULL);
+        p->pacer_started = false;
+    }
+    p->smooth_bufs = 0;
     mp_close_session(mp);
     return -1;
 }
@@ -543,6 +710,7 @@ int mediaplayer_play_video(mediaplayer_t *mp, const char *file)
 
 int mediaplayer_stop(mediaplayer_t *mp)
 {
+    mp_dev_priv_t *p;
     int wait;
 
     if (!mp) {
@@ -552,12 +720,23 @@ int mediaplayer_stop(mediaplayer_t *mp)
     if (!atomic_load(&mp->running)) {
         return 0;
     }
+    p = (mp_dev_priv_t *)mp->priv;
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);
     mp->thread.requested_stop = 1;
     pthread_rwlock_unlock(&mp->thread.rwlock);
 
+    /* 解码线程可能正阻塞在 smooth_q push 上，光置 requested_stop 叫不醒它；
+     * 关队列同时放走两边。pacer 会把队里残帧取完(不再定速)才收工，
+     * 这些 item 照常经 free_queue 回流，下面的 in_flight 等待才收敛 */
+    if (p->smooth_q_ready)
+        spsc_bq_close(&p->smooth_q);
+
     pthread_join(mp->decode_thread, NULL);
+    if (p->pacer_started) {
+        pthread_join(p->pacer_thread, NULL);
+        p->pacer_started = false;
+    }
     atomic_store(&mp->running, 0);
 
     // 等积压的 FLIP 回流，只剩屏上帧(curr)

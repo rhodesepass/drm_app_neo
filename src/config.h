@@ -220,6 +220,26 @@
 #define VDEC_CAPTURE_BUF_MAX_SMALL 16
 #define VDEC_CAPTURE_LARGE_AREA (600 * 1000) /* 编码像素数阈值(720 档 942k) */
 
+// ---------- 平滑上屏 buffer(VE spike 吸收) ----------
+// 解码与定速解耦：解码线程出帧进 ring，pacer 线程按档期取出上屏。VE 一次
+// spike(启动期 mv_col 懒分配撞 CMA 迁移可达 50-100ms，而正常 20-26ms 已贴
+// 40Hz 档期的边)期间，pacer 照吃储备出帧，不再跟着一起停摆；ring 满即反压
+// 解码线程，定速仍由 pacer 独家掌握。
+// 每押一帧就多占一个 capture slot(360 档 0.37MB / 720 档 1.41MB)，直接叠加
+// 在上面 VDEC_CAPTURE_BUF_MAX_* 之上(mediaplayer 的 cap_count += smooth)，
+// 故按 MemTotal 分档：
+//   32M(F1C100s, cma=16M) 预算已排满 → 0 = 不建 ring 不起 pacer，解码线程
+//     自己睡档期上屏，与拆出 pacer 前逐字等价，一格都不多占
+//   64M(F1C200s, cma=32M) 720 档 8+3 格 ≈15.5MB，留给 UI/overlay 仍宽裕
+// 注意 ring 见底(pacer 日志的 ring=0/N)说明 VE 吞吐追不上素材帧率，那是素材
+// 该降帧率，调大这里没用——储备只能吸收尖刺，填不平长期赤字。
+#define MP_SMOOTH_BUFS_SMALL_MEM 0
+#define MP_SMOOTH_BUFS_LARGE_MEM 8
+// MemTotal 阈值(kB)：内核已扣掉自身保留，32M 机实报 ~26M、64M 机 ~58M
+#define MP_MEM_LARGE_THRESHOLD_KB (40 * 1024)
+// 上限兜底：ring + 解码账本不得撑爆 VDEC_MAX_CAP_BUFS(32)
+#define MP_SMOOTH_BUFS_MAX 8
+
 
 // ========== Animation Configuration ==========
 #define LAYER_ANIMATION_STEP_TIME 20000 // 20ms, 1000ms / 50fps
@@ -288,13 +308,13 @@
 #define UI_COLOR_OK 0xff0d6802
 
 // ========== Battery Configuration ==========
-#define UI_BATTERY_ADC_PATH "/sys/bus/iio/devices/iio:device0/in_voltage0_raw"
-#define UI_BATTERY_EMPTY_VALUE 2140
-#define UI_BATTERY_1_4_VALUE 2230
-#define UI_BATTERY_1_2_VALUE 2320
-#define UI_BATTERY_3_4_VALUE 2410
-#define UI_BATTERY_FULL_VALUE 2500
-#define UI_BATTERY_CHARGING_VALUE 2600
+// 数据来自 power_supply class(capacity 0-100 / status)，电压→电量的换算在
+// dts 的 OCV 表里做，app 只看百分比。见 buildroot/board/rhodesisland/epass/BATTERY.md
+#define UI_BATTERY_PSY_ROOT "/sys/class/power_supply"
+#define UI_BATTERY_EMPTY_PERCENT 5
+#define UI_BATTERY_1_4_PERCENT 25
+#define UI_BATTERY_1_2_PERCENT 50
+#define UI_BATTERY_3_4_PERCENT 75
 #define UI_BATTERY_PADDING 10
 #define UI_BATTERY_SIZE 30
 #define UI_BATTERY_EMPTY_CHAR UI_ICON_BATTERY_EMPTY

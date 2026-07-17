@@ -114,6 +114,29 @@ static void load_now(screen_id_t id)
     lv_screen_load(screen->obj);
 }
 
+// ---- 停靠态 ----
+// spinner 停在 SCREEN_HEIGHT = 整层滑出屏幕，DEBE 对屏幕外的图层本就不取数，
+// 关不关层都一样(而且关层要重挂、慢且会引发图层重排)。唯一还在白花的是
+// spinner 的 lv_anim：每 33ms invalidate 一次 -> LVGL 渲染 + flush memcpy 进扫描
+// FB。屏幕外没人看，这就是纯 CPU 浪费。落到隐藏态时把动画停掉即可，图层不动。
+static bool s_parked;
+
+static void plane_park(void)
+{
+    if (s_parked) return;
+    s_parked = true;
+
+    screen_spinner_stop_anim();
+    screens_rebuild(SCREEN_SPINNER);   // 动画停了回不来，下次显示这屏时重建
+    log_debug("ui anim parked");
+}
+
+static void plane_unpark(void)
+{
+    if (!s_parked) return;
+    s_parked = false;
+}
+
 // ---- 过渡幕帘 ----
 // partial 单 buffer 下全屏重绘有肉眼可见的自上而下刷新波前。遮盖办法：所有切屏
 // 统一走"下潜到只露幕帘条 → 藏着 lv_refr_now 同步画完 → 回升"(原 spinner intro
@@ -168,6 +191,13 @@ static void curtain_retract_done_cb(lv_anim_t *a)
     (void)a;
     lv_obj_add_flag(s_curtain, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_y(s_curtain, 0);
+
+    // 收帘完成 = 这次过渡彻底落地(rise 早在 150ms 前就到位了)，FB 内容已定格。
+    // 落到 spinner 就是落到隐藏态，此刻才进停靠。过渡途中被打断时 curtain_show
+    // 会 lv_anim_delete 掉本动画，本 cb 不会触发，不会误停靠。
+    if (s_current == SCREEN_SPINNER) {
+        plane_park();
+    }
 }
 
 // 回升到位后把幕帘往上滑出画面再隐藏，避免顶条内容瞬间跳变。
@@ -209,6 +239,9 @@ void screens_init(void)
         s_screens[SCREEN_SPINNER].obj = s_screens[SCREEN_SPINNER].create();
     }
     load_now(SCREEN_SPINNER);
+
+    // 开机即隐藏态：直接停掉 spinner 动画，第一次按键前不必空转重画。
+    plane_park();
 }
 
 void screen_show(screen_id_t id)
@@ -237,6 +270,8 @@ void screen_show(screen_id_t id)
     if (!s_screens[id].obj) {
         s_screens[id].obj = s_screens[id].create();
     }
+
+    plane_unpark();   // 离开隐藏态：清停靠标志，下次落回 spinner 会重新停动画
 
     // 统一两段式：下潜到只露幕帘 → swap_cb 藏着换内容 → 回升到目标停靠 Y。
     // from==spinner 时 from_y=SCREEN_HEIGHT，第一段就是原 intro 的上浮，同一段代码。

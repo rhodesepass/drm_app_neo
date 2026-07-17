@@ -91,8 +91,15 @@ int spsc_bq_try_push(spsc_bq_t *q, void *item);
 int spsc_bq_try_pop(spsc_bq_t *q, void **out);
 
 /**
+ * @brief 当前元素个数
+ *
+ * 取样即过时，只可用于诊断/统计，不能拿来做同步判断。
+ */
+size_t spsc_bq_count(spsc_bq_t *q);
+
+/**
  * @brief 关闭队列
- * 
+ *
  * - 之后的 push / try_push 将返回 EPIPE；
  * - 如果有线程阻塞在 push/pop 上，将被唤醒，返回 EPIPE。
  * 

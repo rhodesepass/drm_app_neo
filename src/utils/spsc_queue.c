@@ -187,6 +187,16 @@ int spsc_bq_try_pop(spsc_bq_t *q, void **out)
     return ret;
 }
 
+size_t spsc_bq_count(spsc_bq_t *q)
+{
+    if (!q) return 0;
+
+    pthread_mutex_lock(&q->mtx);
+    size_t n = q->count;
+    pthread_mutex_unlock(&q->mtx);
+    return n;
+}
+
 void spsc_bq_close(spsc_bq_t *q)
 {
     if (!q) return;
