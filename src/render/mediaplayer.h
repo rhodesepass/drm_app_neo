@@ -42,9 +42,11 @@ typedef struct {
     /* 会话代号，进 item userdata 高位；跨会话回流的 item 不碰新 DPB */
     uint32_t             session_gen;
 
-    /* 当前视频的编码帧尺寸(SPS 报告，MB 对齐)，决定 video 层挂载方式 */
+    /* 编码帧尺寸决定解码 buffer；可见尺寸扣除 SPS/codec crop，决定显示裁窗。 */
     int                  frame_width;
     int                  frame_height;
+    int                  display_width;
+    int                  display_height;
 
     drm_warpper_t       *drm_warpper;
 } mediaplayer_t;

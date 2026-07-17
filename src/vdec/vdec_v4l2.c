@@ -613,7 +613,8 @@ int vdec_decode(struct vdec_ctx *v, int cap_slot, uint64_t ts,
 	}
 
 	t4 = vdec_now_us();
-	if (t4 - t0 > 50000)
+	if (t4 - t0 > (v->slow_threshold_us ?
+		       v->slow_threshold_us : 50000))
 		fprintf(stderr, "vdec: slow breakdown ctrl=%lld qbuf=%lld reqq=%lld wait=%lld us\n",
 			(long long)(t1 - t0), (long long)(t2 - t1),
 			(long long)(t3 - t2), (long long)(t4 - t3));

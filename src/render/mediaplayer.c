@@ -55,19 +55,44 @@ typedef struct {
 // main.c 提供，按解码尺寸记录 video 层挂载几何(720 档旧素材走 DEFE 放大)
 extern int video_layer_ensure_mount(int src_w, int src_h);
 
-static bool mp_size_supported(int w, int h)
+static int mp_set_display_size(mediaplayer_t *mp, const struct h264_sps *sps)
 {
-    if (w == VIDEO_WIDTH && h == VIDEO_HEIGHT)
-        return true;
-#ifdef VIDEO_LEGACY_WIDTH
-    if (w == VIDEO_LEGACY_WIDTH && h == VIDEO_LEGACY_HEIGHT)
-        return true;
-#endif
-#ifdef VIDEO_HIRES_WIDTH
-    if (w == VIDEO_HIRES_WIDTH && h == VIDEO_HIRES_HEIGHT)
-        return true;
-#endif
-    return false;
+    unsigned int crop_unit_x = 1;
+    unsigned int crop_unit_y = 1;
+    unsigned int crop_x, crop_y;
+
+    mp->display_width = mp->frame_width;
+    mp->display_height = mp->frame_height;
+    if (!sps->frame_cropping_flag)
+        return 0;
+
+    /* H.264 7.4.2.1.1 crop units；隔行流已在调用前拒绝。 */
+    if (!sps->separate_colour_plane_flag) {
+        if (sps->chroma_format_idc == 1 || sps->chroma_format_idc == 2)
+            crop_unit_x = 2;
+        if (sps->chroma_format_idc == 1)
+            crop_unit_y = 2;
+    }
+
+    crop_x = (sps->frame_crop_left_offset + sps->frame_crop_right_offset) *
+             crop_unit_x;
+    crop_y = (sps->frame_crop_top_offset + sps->frame_crop_bottom_offset) *
+             crop_unit_y;
+    if (crop_x >= (unsigned int)mp->frame_width ||
+        crop_y >= (unsigned int)mp->frame_height) {
+        log_error("invalid SPS crop %ux%u for coded size %dx%d",
+                  crop_x, crop_y, mp->frame_width, mp->frame_height);
+        return -1;
+    }
+
+    mp->display_width -= (int)crop_x;
+    mp->display_height -= (int)crop_y;
+    return 0;
+}
+
+static inline unsigned int mp_slow_threshold_us(const mediaplayer_t *mp)
+{
+    return mp->frame_duration_us + mp->frame_duration_us / 2;
 }
 
 /*
@@ -332,7 +357,7 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
 
     h264_dpb_end_frame(&p->dpb, hdr_out);
     t2 = mp_get_now_us();
-    if (t2 - t0 > 50000)
+    if (t2 - t0 > mp_slow_threshold_us(mp))
         log_warn("slow @%u: slot_wait=%lldus ve=%lldus size=%u",
                  sample_idx, t1 - t0, t2 - t1, vcl.size);
     return 0;
@@ -406,9 +431,10 @@ static void *mp_decode_thread(void *param)
 
             long long d0 = mp_get_now_us();
             rc = mp_decode_au(mp, sample_idx, &hdr);
-            if (mp_get_now_us() - d0 > 50000)
+            long long decode_us = mp_get_now_us() - d0;
+            if (decode_us > mp_slow_threshold_us(mp))
                 log_warn("slow decode_au %lldus @%u",
-                         mp_get_now_us() - d0, sample_idx);
+                         decode_us, sample_idx);
             if (rc < 0)
                 goto decode_error;
             sample_idx++;
@@ -521,8 +547,8 @@ int mediaplayer_remount_video_layer(mediaplayer_t *mp)
     if (!mp) {
         return -1;
     }
-    int w = mp->frame_width  ? mp->frame_width  : VIDEO_WIDTH;
-    int h = mp->frame_height ? mp->frame_height : VIDEO_HEIGHT;
+    int w = mp->display_width  ? mp->display_width  : VIDEO_WIDTH;
+    int h = mp->display_height ? mp->display_height : VIDEO_HEIGHT;
     // 只是刷新几何记录，幂等；plane 实际状态由下一个 FLIP 决定
     return video_layer_ensure_mount(w, h);
 }
@@ -572,14 +598,13 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     /* 编码尺寸(MB 对齐)与 CedarX 时代 parser 报告值一致(384x640/736x1280) */
     mp->frame_width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
     mp->frame_height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
-
-    // 解码前先按尺寸把关并记录挂载几何(惰性：plane 由显示线程随首帧启用)。
-    // 此时旧线程已 join、plane 已 disable，几何更新无并发帧提交
-    if (!mp_size_supported(mp->frame_width, mp->frame_height)) {
-        log_error("unsupported video size %dx%d", mp->frame_width, mp->frame_height);
+    if (mp_set_display_size(mp, sps) < 0)
         goto error;
-    }
-    video_layer_ensure_mount(mp->frame_width, mp->frame_height);
+
+    // 解码前记录挂载几何(惰性：plane 由显示线程随首帧启用)。
+    // 此时旧线程已 join、plane 已 disable，几何更新无并发帧提交
+    if (video_layer_ensure_mount(mp->display_width, mp->display_height) < 0)
+        goto error;
 
     mp->frame_duration_us = p->demux.frame_duration_us ?
                             p->demux.frame_duration_us : 33333;
@@ -635,6 +660,7 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
                   mp->frame_width, mp->frame_height,
                   cap_count, VDEC_OUTPUT_BUF_COUNT, VDEC_OUTPUT_BUF_SIZE) < 0)
         goto error;
+    p->vdec.slow_threshold_us = mp_slow_threshold_us(mp);
 
     for (i = 0; i < p->vdec.cap_count; i++) {
         if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
@@ -650,8 +676,9 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
 
     h264_dpb_init(&p->dpb, cap_count, max_ref, max_frame_num, reorder);
 
-    log_info("vdec: %ux%u max_ref=%u cap_bufs=%u(smooth %u) dur=%uus",
-             mp->frame_width, mp->frame_height, max_ref, cap_count,
+    log_info("vdec: coded=%ux%u display=%dx%d max_ref=%u cap_bufs=%u(smooth %u) dur=%uus",
+             mp->frame_width, mp->frame_height,
+             mp->display_width, mp->display_height, max_ref, cap_count,
              p->smooth_bufs, mp->frame_duration_us);
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);

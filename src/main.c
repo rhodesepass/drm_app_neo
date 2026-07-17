@@ -52,15 +52,21 @@ void signal_handler(int sig)
 
 // video 层按解码尺寸记录挂载几何(惰性：plane 由显示线程随首帧启用，
 // 不占黑 buffer；stop 后 plane disable，露出 DEBE 黑背景)。
-// 返回 -1 表示不支持的尺寸
+// 任意有效解码尺寸均可挂载；已知旧素材仍按约定裁掉编码 padding。
 //
 // vdec fb 宽为 VE 输出宽(32 对齐)，通常 > 屏幕真实宽度。统一走 src 裁窗 +
 // dst=屏幕真实尺寸:
 //   当代素材:crop 左 SCREEN_WIDTH×SCREEN_HEIGHT，1:1 不缩放(裁掉右侧 padding)。
 //   旧素材(384x640,真实 360x640)@720 档:crop 左 360×640，DEFE 放大到 720×1280(等比 2x)。
 //   高清素材(736x1280,真实 720x1280)@360 档:crop 左 720×1280，DEFE 缩小到 360×640(等比 1/2)。
-//   padding 均被裁窗排除不参与缩放采样。
+//   其他尺寸:取完整编码画面，由 DEFE 直接拉伸到全屏。
+//   已知素材的 padding 均被裁窗排除，不参与缩放采样。
 int video_layer_ensure_mount(int src_w, int src_h){
+    if (src_w <= 0 || src_h <= 0) {
+        log_error("invalid video size %dx%d", src_w, src_h);
+        return -1;
+    }
+
     if (src_w == VIDEO_WIDTH && src_h == VIDEO_HEIGHT) {
         drm_warpper_set_layer_geometry(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
                                        SCREEN_WIDTH, SCREEN_HEIGHT,
@@ -78,8 +84,11 @@ int video_layer_ensure_mount(int src_w, int src_h){
                                        SCREEN_WIDTH, SCREEN_HEIGHT);
 #endif
     } else {
-        log_error("unsupported video size %dx%d", src_w, src_h);
-        return -1;
+        drm_warpper_set_layer_geometry(&g_drm_warpper, DRM_WARPPER_LAYER_VIDEO, 0, 0,
+                                       src_w, src_h,
+                                       SCREEN_WIDTH, SCREEN_HEIGHT);
+        log_info("video %dx%d stretched to screen %dx%d",
+                 src_w, src_h, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
     return 0;
 }

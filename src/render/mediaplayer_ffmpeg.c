@@ -51,21 +51,6 @@ typedef struct {
     bool             slot_busy[MP_FF_POOL_COUNT]; // 已入队未从 free_queue 回流
 } mp_ff_priv_t;
 
-static bool mp_size_supported(int w, int h)
-{
-    if (w == VIDEO_WIDTH && h == VIDEO_HEIGHT)
-        return true;
-#ifdef VIDEO_LEGACY_WIDTH
-    if (w == VIDEO_LEGACY_WIDTH && h == VIDEO_LEGACY_HEIGHT)
-        return true;
-#endif
-#ifdef VIDEO_HIRES_WIDTH
-    if (w == VIDEO_HIRES_WIDTH && h == VIDEO_HIRES_HEIGHT)
-        return true;
-#endif
-    return false;
-}
-
 /* userdata 编码同设备：低 8 位 = slot+1，高位 = 会话代号 */
 static inline void *slot_to_userdata(mediaplayer_t *mp, int slot)
 {
@@ -321,8 +306,8 @@ int mediaplayer_remount_video_layer(mediaplayer_t *mp)
     if (!mp) {
         return -1;
     }
-    int w = mp->frame_width  ? mp->frame_width  : VIDEO_WIDTH;
-    int h = mp->frame_height ? mp->frame_height : VIDEO_HEIGHT;
+    int w = mp->display_width  ? mp->display_width  : VIDEO_WIDTH;
+    int h = mp->display_height ? mp->display_height : VIDEO_HEIGHT;
     return video_layer_ensure_mount(w, h);
 }
 
@@ -364,12 +349,11 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
      * 打开后 coded_* 才可信，缺省回退 display 尺寸 */
     mp->frame_width = p->dec->coded_width > 0 ? p->dec->coded_width : p->dec->width;
     mp->frame_height = p->dec->coded_height > 0 ? p->dec->coded_height : p->dec->height;
+    mp->display_width = p->dec->width;
+    mp->display_height = p->dec->height;
 
-    if (!mp_size_supported(mp->frame_width, mp->frame_height)) {
-        log_error("unsupported video size %dx%d", mp->frame_width, mp->frame_height);
+    if (video_layer_ensure_mount(mp->display_width, mp->display_height) < 0)
         goto error;
-    }
-    video_layer_ensure_mount(mp->frame_width, mp->frame_height);
 
     fr = av_guess_frame_rate(p->fmt, st, NULL);
     if (fr.num > 0 && fr.den > 0)
@@ -395,8 +379,9 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
         p->slot_busy[i] = false;
     }
 
-    log_info("ffmpeg: %s %dx%d dur=%uus codec=%s",
+    log_info("ffmpeg: %s coded=%dx%d display=%dx%d dur=%uus codec=%s",
              mp->input_path, mp->frame_width, mp->frame_height,
+             mp->display_width, mp->display_height,
              mp->frame_duration_us, codec->name);
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);

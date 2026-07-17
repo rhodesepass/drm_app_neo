@@ -44,6 +44,7 @@ struct vdec_ctx {
 	unsigned int cap_bytesperline;
 	unsigned int cap_sizeimage;
 	unsigned int cap_uv_offset;	/* luma plane size */
+	unsigned int slow_threshold_us;	/* 0 = legacy 50ms diagnostic threshold */
 
 	unsigned int cap_count;
 	struct vdec_cap_buf cap[VDEC_MAX_CAP_BUFS];
