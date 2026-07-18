@@ -6,6 +6,7 @@
 #include <prts/operators.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/time.h>
 #include <ui_screens/ui_services.h>
 #include <utils/timer.h>
@@ -454,6 +455,124 @@ static void switch_operator(prts_t* prts,int target_index){
 }
 
 
+void prts_order_save(prts_t* prts){
+    FILE *f = fopen(PRTS_ORDER_FILE, "w");
+    if(!f){
+        log_error("failed to open order file for write: %s", PRTS_ORDER_FILE);
+        return;
+    }
+    char buf[37];
+    for(int i = 0; i < prts->operator_count; i++){
+        uuid_format(&prts->operators[i].uuid, buf);
+        fprintf(f, "%s\n", buf);
+    }
+    fclose(f);
+    log_info("operator order saved (%d entries)", prts->operator_count);
+}
+
+// 按 PRTS_ORDER_FILE 的 UUID 清单重排 operators[]。清单里没有的干员(新增)排到末尾，
+// 清单里有但已不存在的 UUID 自然被丢弃。用 placed[] 保证重复 UUID 也各只消费一个条目。
+// 调用点在 operator_count 定稿之后、uuid 找回选中之前。
+static void prts_order_apply(prts_t* prts){
+    FILE *f = fopen(PRTS_ORDER_FILE, "r");
+    if(!f){
+        return; // 无清单，保持 dirent 顺序
+    }
+
+    int n = prts->operator_count;
+    int perm[PRTS_OPERATORS_MAX];   // perm[新槽] = 旧下标
+    bool placed[PRTS_OPERATORS_MAX];
+    for(int i = 0; i < n; i++) placed[i] = false;
+    int m = 0;
+
+    char line[64];
+    while(m < n && fgets(line, sizeof(line), f)){
+        size_t len = strlen(line);
+        while(len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
+        if(len == 0) continue;
+        uuid_t u;
+        if(uuid_parse(line, &u) != 0) continue;
+        for(int i = 0; i < n; i++){
+            if(!placed[i] && uuid_compare(&u, &prts->operators[i].uuid)){
+                perm[m++] = i;
+                placed[i] = true;
+                break;
+            }
+        }
+    }
+    fclose(f);
+
+    for(int i = 0; i < n && m < n; i++){
+        if(!placed[i]) perm[m++] = i;
+    }
+
+    bool changed = false;
+    for(int i = 0; i < n; i++){
+        if(perm[i] != i){ changed = true; break; }
+    }
+    if(changed){
+        bool done[PRTS_OPERATORS_MAX];
+        for(int i = 0; i < n; i++) done[i] = false;
+        prts_operator_entry_t *tmp = malloc(sizeof(prts_operator_entry_t));
+        if(!tmp){
+            log_error("order apply: out of memory");
+            return;
+        }
+        // 循环内应用置换 result[j]=old[perm[j]]，只用一个临时条目，不做整表拷贝
+        for(int i = 0; i < n; i++){
+            if(done[i]) continue;
+            *tmp = prts->operators[i];
+            int j = i;
+            for(;;){
+                done[j] = true;
+                int k = perm[j];
+                if(k == i){ prts->operators[j] = *tmp; break; }
+                prts->operators[j] = prts->operators[k];
+                j = k;
+            }
+        }
+        free(tmp);
+        for(int i = 0; i < n; i++) prts->operators[i].index = i;
+    }
+
+    // 回写：把清单里已死的 UUID 落盘剔除，重复也收敛到当前实际条目
+    prts_order_save(prts);
+}
+
+// 把 from 处的干员移动到 to 处(列表拖动)。仅改内存，不落盘(逐格移动，落盘留到排序退出)。
+void prts_move_operator(prts_t* prts, int from, int to){
+    if(from < 0 || from >= prts->operator_count) return;
+    if(to < 0 || to >= prts->operator_count) return;
+    if(from == to) return;
+
+    atomic_store(&prts->is_auto_switch_blocked, 1);
+
+    prts_operator_entry_t moved = prts->operators[from];
+    if(from < to){
+        memmove(&prts->operators[from], &prts->operators[from+1],
+                (size_t)(to - from) * sizeof(prts_operator_entry_t));
+    } else {
+        memmove(&prts->operators[to+1], &prts->operators[to],
+                (size_t)(from - to) * sizeof(prts_operator_entry_t));
+    }
+    prts->operators[to] = moved;
+
+    int lo = from < to ? from : to;
+    int hi = from < to ? to : from;
+    for(int i = lo; i <= hi; i++) prts->operators[i].index = i;
+
+    // operator_index 跟随原来那个正在播放的干员一起搬
+    if(prts->operator_index == from){
+        prts->operator_index = to;
+    } else if(from < to){
+        if(prts->operator_index > from && prts->operator_index <= to) prts->operator_index--;
+    } else {
+        if(prts->operator_index >= to && prts->operator_index < from) prts->operator_index++;
+    }
+
+    atomic_store(&prts->is_auto_switch_blocked, 0);
+}
+
 static void prts_reload_assets(prts_t* prts,bool is_first_load) {
 
     uuid_t operator_uuid_before;
@@ -501,6 +620,10 @@ static void prts_reload_assets(prts_t* prts,bool is_first_load) {
         prts_operator_try_load(prts, &prts->operators[0], (char *)respath(PRTS_FALLBACK_ASSET_SUBDIR), PRTS_SOURCE_NAND, 0);
         prts->operator_count = 1;
     }
+
+    // 按持久化清单重排(含剔除已删/收敛重复 UUID)。放在 uuid 找回选中之前，
+    // 让下面的 operator_index 恢复作用在重排后的数组上。
+    prts_order_apply(prts);
 
 #ifndef APP_RELEASE
     for(int i = 0; i < prts->operator_count; i++){

@@ -31,7 +31,13 @@ static struct {
     bool          scroll_guard; // 防焦点->滚动->焦点 递归
 } self;
 
+// 排序模式：长按确定"拎起"当前干员，左右键在列表里上下移动，短按确定/ESC 落位。
+// 被拎起的项靠 group editing 态下聚焦项自动进入的 LV_STATE_EDITED 高亮，随移动自动跟随。
+static bool s_reorder_active = false;
+static int  s_reorder_op     = -1;
+
 static void update_visible_range(int new_start);
+static void refocus_op(int op_index);
 
 static void on_menu(lv_event_t *e)    { (void)e; screen_show(SCREEN_MAINMENU); }
 static void on_refresh(lv_event_t *e)
@@ -41,19 +47,98 @@ static void on_refresh(lv_event_t *e)
     screen_show(SCREEN_SPINNER);
 }
 
+static void refocus_op(int op_index)
+{
+    for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++)
+        if (self.slots[i].op_index == op_index) { lv_group_focus_obj(self.slots[i].btn); return; }
+}
+
+static void build_group(int focus_op);
+
+// 排序模式下：让导航 group 只留"当前显示 s_reorder_op 的槽"，LVGL 焦点无处可移
+// (方向键交给 screens_handle_key 做移动)；被拎项打 USER_1 高亮。
+static void reorder_focus_picked(void)
+{
+    lv_group_t *g = screens_group();
+    if (!g) return;
+    lv_group_remove_all_objs(g);
+    for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++)
+        lv_obj_remove_state(self.slots[i].btn, LV_STATE_USER_1);
+    for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++) {
+        if (self.slots[i].op_index == s_reorder_op) {
+            lv_group_add_obj(g, self.slots[i].btn);
+            lv_group_focus_obj(self.slots[i].btn);
+            lv_obj_add_state(self.slots[i].btn, LV_STATE_USER_1);
+            lv_obj_scroll_to_view_recursive(self.slots[i].btn, LV_ANIM_OFF);
+            break;
+        }
+    }
+}
+
+static void reorder_enter(int op_index)
+{
+    s_reorder_active = true;
+    s_reorder_op = op_index;
+    reorder_focus_picked();
+}
+
+static void reorder_exit(bool save)
+{
+    for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++)
+        lv_obj_remove_state(self.slots[i].btn, LV_STATE_USER_1);
+    int op = s_reorder_op;
+    s_reorder_active = false;
+    s_reorder_op = -1;
+    build_group(op);              // 恢复完整导航 group，焦点停在落位的干员
+    if (save) ui_backend_oplist_save_order();
+}
+
+bool screen_oplist_is_reordering(void) { return s_reorder_active; }
+void screen_oplist_exit_reorder(bool save) { if (s_reorder_active) reorder_exit(save); }
+
+// 排序模式下方向键：把被拎干员上移(LEFT)/下移(RIGHT)一格。由 screen_manager 调用。
+void screen_oplist_reorder_move(uint32_t key)
+{
+    if (!s_reorder_active) return;
+    int from = s_reorder_op;
+    int to;
+    if (key == LV_KEY_LEFT)       to = from - 1;
+    else if (key == LV_KEY_RIGHT) to = from + 1;
+    else return;
+    if (to < 0 || to >= self.total) return;
+
+    ui_backend_oplist_move(from, to);
+    s_reorder_op = to;
+
+    self.scroll_guard = true;
+    if (to < self.visible_start)
+        update_visible_range(to);
+    else if (to >= self.visible_start + UI_OPLIST_VISIBLE_SLOTS)
+        update_visible_range(to - UI_OPLIST_VISIBLE_SLOTS + 1);
+    else
+        update_visible_range(self.visible_start); // 窗口不变但数组顺序变了，仍需重刷内容
+    reorder_focus_picked();
+    self.scroll_guard = false;
+}
+
 static void slot_click_cb(lv_event_t *e)
 {
     oplist_slot_t *s = (oplist_slot_t *)lv_event_get_user_data(e);
     if (s->op_index < 0) return;
+    if (s_reorder_active) {           // 排序模式下短按确定 = 落位提交
+        reorder_exit(true);
+        return;
+    }
     lv_obj_remove_state(s->btn, LV_STATE_PRESSED);
     ui_backend_oplist_select(s->op_index);
     screen_show(SCREEN_SPINNER);
 }
 
-static void refocus_op(int op_index)
+static void slot_longpress_cb(lv_event_t *e)
 {
-    for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++)
-        if (self.slots[i].op_index == op_index) { lv_group_focus_obj(self.slots[i].btn); return; }
+    oplist_slot_t *s = (oplist_slot_t *)lv_event_get_user_data(e);
+    if (s->op_index < 0 || s_reorder_active) return;
+    reorder_enter(s->op_index);
 }
 
 static void slot_focus_cb(lv_event_t *e)
@@ -98,9 +183,16 @@ static void make_slot(int i)
     s->btn = lv_button_create(s->cont);
     lv_obj_set_size(s->btn, lv_pct(100), lv_pct(100));
     add_style_op_btn(s->btn);
-    lv_obj_add_event_cb(s->btn, slot_click_cb, LV_EVENT_PRESSED, s);
+    // 选中改到 SHORT_CLICKED(松开触发)，给长按让路：长按=进排序模式，短按=选中/落位
+    lv_obj_add_event_cb(s->btn, slot_click_cb, LV_EVENT_SHORT_CLICKED, s);
+    lv_obj_add_event_cb(s->btn, slot_longpress_cb, LV_EVENT_LONG_PRESSED, s);
     lv_obj_add_event_cb(s->btn, slot_focus_cb, LV_EVENT_FOCUSED, s);
     lv_obj_remove_flag(s->btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS); // 关默认动画滚动，改由 focus cb 无动画滚
+
+    // 排序模式"拎起"高亮：被拎的槽打 USER_1 —— 整块换醒目橙底，
+    // 与普通(灰底)/焦点(青底)明显拉开，一眼看出该项正处于"可上下移动"状态。
+    lv_obj_set_style_bg_color(s->btn, lv_color_hex(0xF07000), LV_PART_MAIN | LV_STATE_USER_1);
+    lv_obj_set_style_bg_opa(s->btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_USER_1);
 
     s->logo = lv_image_create(s->btn);
     lv_obj_set_pos(s->logo, 0, 0);
@@ -170,19 +262,18 @@ static void update_visible_range(int new_start)
     }
 }
 
-// 进屏时重建导航 group：仅可见槽 + 底部按钮，关 wrap，聚焦当前干员。
-static void on_load_start(lv_event_t *e)
+// 重建导航 group：仅可见槽 + 底部按钮，关 wrap，聚焦 focus_op 对应干员。
+static void build_group(int focus_op)
 {
-    if (lv_event_get_code(e) != LV_EVENT_SCREEN_LOAD_START) return;
     lv_group_t *g = screens_group();
     if (!g) return;
     lv_group_remove_all_objs(g);
     lv_group_set_wrap(g, false);
+    lv_group_set_editing(g, false);
 
-    int cur = ui_backend_oplist_current();
     if (self.total > 0 &&
-        (cur < self.visible_start || cur >= self.visible_start + UI_OPLIST_VISIBLE_SLOTS)) {
-        update_visible_range(cur);
+        (focus_op < self.visible_start || focus_op >= self.visible_start + UI_OPLIST_VISIBLE_SLOTS)) {
+        update_visible_range(focus_op);
     }
 
     for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++)
@@ -192,7 +283,17 @@ static void on_load_start(lv_event_t *e)
     add_style_focus(self.refresh_btn);
     add_style_focus(self.menu_btn);
 
-    refocus_op(cur);
+    refocus_op(focus_op);
+}
+
+// 进屏时重建导航 group，聚焦当前干员。
+static void on_load_start(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_SCREEN_LOAD_START) return;
+    if (!screens_group()) return;
+    s_reorder_active = false;  // 进屏一律非排序态
+    s_reorder_op = -1;
+    build_group(ui_backend_oplist_current());
 }
 
 lv_obj_t *screen_oplist_create(void)

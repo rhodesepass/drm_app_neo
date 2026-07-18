@@ -387,6 +387,14 @@ void ui_backend_oplist_refresh(void)
 {
     if (s_prts) prts_request_reload_assets(s_prts);
 }
+void ui_backend_oplist_move(int from, int to)
+{
+    if (s_prts) prts_move_operator(s_prts, from, to);
+}
+void ui_backend_oplist_save_order(void)
+{
+    if (s_prts) prts_order_save(s_prts);
+}
 
 // ================= 应用列表 (原 actions_apps.c) =================
 int ui_backend_applist_count(void) { return s_apps ? s_apps->app_count : 0; }

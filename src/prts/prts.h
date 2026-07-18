@@ -104,3 +104,8 @@ int prts_operators_reserve(prts_t* prts, int need);
 
 void prts_request_set_operator(prts_t* prts,int operator_index);
 void prts_request_reload_assets(prts_t* prts);
+
+// 把 from 处干员移动到 to 处(仅改内存)。由 UI 线程在干员列表排序时直接调用。
+void prts_move_operator(prts_t* prts, int from, int to);
+// 把当前 operators[] 顺序按 UUID 写入 PRTS_ORDER_FILE。排序退出时调用一次落盘。
+void prts_order_save(prts_t* prts);

@@ -66,6 +66,10 @@ int  ui_backend_oplist_current(void);
 void ui_backend_oplist_select(int idx);
 // 重新加载干员素材 (设备=prts_request_reload_assets)。调用方随后切到 spinner。
 void ui_backend_oplist_refresh(void);
+// 排序：把 from 处干员移动到 to 处 (设备=prts_move_operator，仅改内存，即时生效)。
+void ui_backend_oplist_move(int from, int to);
+// 排序结束时把当前顺序落盘 (设备=prts_order_save)。
+void ui_backend_oplist_save_order(void);
 
 // ---- 应用列表 ----
 typedef enum { UI_APP_FG, UI_APP_BG, UI_APP_STOPPED } ui_app_state_t;
