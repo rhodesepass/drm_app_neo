@@ -25,6 +25,7 @@ typedef enum {
     UI_C_INFO,            // SD 靛蓝角标
     UI_C_ON_ACCENT,       // 强调色底上的文字 (通常白)
     UI_C_BG,              // 屏幕背景
+    UI_C_TEXT,            // 文字
     UI_C_COUNT
 } ui_color_role_t;
 

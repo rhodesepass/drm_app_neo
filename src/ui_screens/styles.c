@@ -85,12 +85,17 @@ static void init_flag_base(lv_style_t *s)
 {
     lv_style_init(s);
     lv_style_set_bg_opa(s, 255);
-    lv_style_set_pad_top(s, 0);
-    lv_style_set_pad_bottom(s, 0);
+    // 上下留白，让彩色圆角底完整包住整行文字 (含中文字形的上下伸展)，
+    // 否则贴字太紧会露出字的顶/底。调整时注意 oplist/applist 里两个竖直堆叠的
+    // 角标间距 (见各屏 make_slot 的 y 坐标)，别让加高后的角标互相重叠。
+    lv_style_set_pad_top(s, S(2));
+    lv_style_set_pad_bottom(s, S(2));
     lv_style_set_pad_left(s, S(2));
     lv_style_set_pad_right(s, S(2));
     lv_style_set_radius(s, S(15));
     lv_style_set_text_font(s, font_get(FONT_BODY, 14));
+    // 角标一律彩色饱和底，配白字保证可读 (不随主题继承按钮文字色)。
+    lv_style_set_text_color(s, lv_color_white());
 }
 
 static void init_fill(lv_style_t *s)
@@ -155,6 +160,11 @@ void styles_apply_palette(void)
     lv_style_set_bg_color(&s_main_small_foc, ui_color(UI_C_DANGER_FOCUS));
     lv_style_set_bg_color(&s_op_btn_def,     ui_color(UI_C_NEUTRAL));
     lv_style_set_bg_color(&s_op_btn_foc,     ui_color(UI_C_ACCENT));
+    // 列表条目里的 name/desc 标签不自带文字色，会继承按钮的文字色。LVGL 主题给按钮的
+    // 默认文字是白色，在浅色方案的浅灰中性底上几乎看不清 —— 显式按方案正文色着色。
+    // 聚焦态底是明亮的 accent 青，改用深色字保证对比度 (accent 各方案都偏亮)。
+    lv_style_set_text_color(&s_op_btn_def, ui_color(UI_C_TEXT));
+    lv_style_set_text_color(&s_op_btn_foc, lv_color_hex(0x14232b));
 
     lv_style_set_bg_color(&s_flag_sd,     ui_color(UI_C_INFO));
     lv_style_set_bg_color(&s_flag_run,    ui_color(UI_C_SUCCESS));

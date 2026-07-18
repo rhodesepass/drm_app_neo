@@ -36,6 +36,24 @@ static void on_brightness(lv_event_t *e)
     ui_backend_brightness_set(lv_slider_get_value(lv_event_get_target(e)));
 }
 
+// 设备上按键 1 在上、2 在下，但 1->LV_KEY_LEFT(减)、2->LV_KEY_RIGHT(加)，
+// 用起来反手。这里在 slider 处理前拦截并翻转方向：上键(1)加、下键(2)减。
+// slider 自带的 LV_EVENT_KEY 处理不理会 bar 的 reversed 标志，所以只能自己接管。
+static void on_brightness_key(lv_event_t *e)
+{
+    lv_obj_t *s   = lv_event_get_target(e);
+    uint32_t  key = lv_event_get_key(e);
+    int32_t   v   = lv_slider_get_value(s);
+
+    if (key == LV_KEY_LEFT || key == LV_KEY_DOWN)       v += 1;
+    else if (key == LV_KEY_RIGHT || key == LV_KEY_UP)   v -= 1;
+    else return;
+
+    lv_slider_set_value(s, v, LV_ANIM_ON);
+    lv_obj_send_event(s, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_event_stop_processing(e); // 阻止 slider 默认(未翻转)的按键处理
+}
+
 static void grid_btn(lv_obj_t *parent, int x, int y,
                      const char *icon, const char *text, lv_event_cb_t cb)
 {
@@ -93,6 +111,8 @@ lv_obj_t *screen_mainmenu_create(void)
     lv_obj_set_size(self.brightness, S(270), S(10));
     lv_slider_set_range(self.brightness, 1, 9);
     lv_obj_add_event_cb(self.brightness, on_brightness, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(self.brightness, on_brightness_key,
+                        LV_EVENT_KEY | LV_EVENT_PREPROCESS, NULL);
 
     // 重启 / 关机 (各 150x50，左右 margin 25 对称，间距 10)
     {

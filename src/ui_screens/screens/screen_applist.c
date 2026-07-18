@@ -111,11 +111,12 @@ static void make_slot(int i)
     lv_label_set_long_mode(s->desc, LV_LABEL_LONG_DOT);
     add_style_label_small(s->desc);
 
+    // sd 在上、state(前/后台) 在下，竖直堆叠。角标加了上下 padding 变高，拉开间距避免重叠。
     s->state = lv_label_create(s->btn);
-    lv_obj_set_pos(s->state, S(303), S(47));
+    lv_obj_set_pos(s->state, S(303), S(52));
 
     s->sd = lv_label_create(s->btn);
-    lv_obj_set_pos(s->sd, S(313), S(30));
+    lv_obj_set_pos(s->sd, S(313), S(26));
     add_style_sd_flag(s->sd);
     lv_label_set_text(s->sd, "数据");
 
