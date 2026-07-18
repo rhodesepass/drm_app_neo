@@ -95,5 +95,9 @@ void ui_autofocus_cb(lv_event_t *e)
     lv_group_t *g = screens_group();
     if (!g) return;
     lv_group_remove_all_objs(g);
+    // 复位导航模式：group 是全屏共享的，若上一屏 (如文件管理器) 把它设成 editing,
+    // 编码器会把 1/2(LEFT/RIGHT) 当成"编辑当前控件"而非按钮间导航，导致本屏翻页失效。
+    // 通用屏 (主菜单/设置等) 均以导航态进入，需要编辑时按 3(ENTER) 进入。
+    lv_group_set_editing(g, false);
     add_focusables(lv_event_get_target(e), g);
 }
