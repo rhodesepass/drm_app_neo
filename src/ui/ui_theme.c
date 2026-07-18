@@ -19,8 +19,7 @@ static const ui_theme_preset_t s_presets[] = {
         [UI_C_SUCCESS]=0x149b5b,
         [UI_C_ACCENT]=0x67d9ec,
         [UI_C_NEUTRAL]=0x494947, [UI_C_MUTED]=0x919197, [UI_C_SURFACE]=0x3a3a3a,
-        [UI_C_INFO]=0x2c3cbd,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x1a1a1a,
-        [UI_C_TEXT]=0xececec } },
+        [UI_C_INFO]=0x2c3cbd,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x1a1a1a } },
 
     { .name = "浅色", .dark = false, .pal = {
         [UI_C_PRIMARY]=0x2f7dbf, [UI_C_PRIMARY_FOCUS]=0x4a9ad8,
@@ -29,8 +28,7 @@ static const ui_theme_preset_t s_presets[] = {
         [UI_C_SUCCESS]=0x1a9e63,
         [UI_C_ACCENT]=0x2f9fb5,
         [UI_C_NEUTRAL]=0xc8c8c6, [UI_C_MUTED]=0x9a9aa0, [UI_C_SURFACE]=0xf2f1f6,
-        [UI_C_INFO]=0x3a4bd0,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0xeceef2,
-        [UI_C_TEXT]=0x1e1e20 } },
+        [UI_C_INFO]=0x3a4bd0,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0xeceef2 } },
 
     { .name = "Nord", .dark = true, .pal = {
         [UI_C_PRIMARY]=0x5e81ac, [UI_C_PRIMARY_FOCUS]=0x81a1c1,
@@ -39,8 +37,7 @@ static const ui_theme_preset_t s_presets[] = {
         [UI_C_SUCCESS]=0x8aa872,
         [UI_C_ACCENT]=0x88c0d0,
         [UI_C_NEUTRAL]=0x434c5e, [UI_C_MUTED]=0x4c566a, [UI_C_SURFACE]=0x3b4252,
-        [UI_C_INFO]=0xb48ead,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x2e3440,
-        [UI_C_TEXT]=0xeceff4 } },
+        [UI_C_INFO]=0xb48ead,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x2e3440 } },
 
     { .name = "Gruvbox", .dark = true, .pal = {
         [UI_C_PRIMARY]=0x458588, [UI_C_PRIMARY_FOCUS]=0x83a598,
@@ -49,8 +46,7 @@ static const ui_theme_preset_t s_presets[] = {
         [UI_C_SUCCESS]=0x98971a,
         [UI_C_ACCENT]=0x8ec07c,
         [UI_C_NEUTRAL]=0x3c3836, [UI_C_MUTED]=0x665c54, [UI_C_SURFACE]=0x32302f,
-        [UI_C_INFO]=0xb16286,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x282828,
-        [UI_C_TEXT]=0xebdbb2 } },
+        [UI_C_INFO]=0xb16286,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x282828 } },
 
     { .name = "Solarized 深", .dark = true, .pal = {
         [UI_C_PRIMARY]=0x268bd2, [UI_C_PRIMARY_FOCUS]=0x3a9fe6,
@@ -59,8 +55,7 @@ static const ui_theme_preset_t s_presets[] = {
         [UI_C_SUCCESS]=0x859900,
         [UI_C_ACCENT]=0x2aa198,
         [UI_C_NEUTRAL]=0x073642, [UI_C_MUTED]=0x586e75, [UI_C_SURFACE]=0x073642,
-        [UI_C_INFO]=0x6c71c4,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x002b36,
-        [UI_C_TEXT]=0x93a1a1 } },
+        [UI_C_INFO]=0x6c71c4,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0x002b36 } },
 
     { .name = "Solarized 浅", .dark = false, .pal = {
         [UI_C_PRIMARY]=0x268bd2, [UI_C_PRIMARY_FOCUS]=0x1a6fb0,
@@ -69,8 +64,7 @@ static const ui_theme_preset_t s_presets[] = {
         [UI_C_SUCCESS]=0x859900,
         [UI_C_ACCENT]=0x2aa198,
         [UI_C_NEUTRAL]=0xeee8d5, [UI_C_MUTED]=0x93a1a1, [UI_C_SURFACE]=0xeee8d5,
-        [UI_C_INFO]=0x6c71c4,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0xfdf6e3,
-        [UI_C_TEXT]=0x073642 } },
+        [UI_C_INFO]=0x6c71c4,    [UI_C_ON_ACCENT]=0xffffff, [UI_C_BG]=0xfdf6e3 } },
 };
 #define UI_THEME_COUNT ((int)(sizeof(s_presets) / sizeof(s_presets[0])))
 
