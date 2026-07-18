@@ -30,6 +30,7 @@ typedef enum {
     DRM_WARPPER_LAYER_MODE_RGB565,
     DRM_WARPPER_LAYER_MODE_ARGB8888,
     DRM_WARPPER_LAYER_MODE_MB32_NV12, //allwinner specific format
+    DRM_WARPPER_LAYER_MODE_C8,        // 256 色调色板(DEBE palette 模式, 内核 patch 0029)
 } drm_warpper_layer_mode_t;
 
 typedef enum {
@@ -138,3 +139,7 @@ int drm_warpper_try_dequeue_free_item(drm_warpper_t *drm_warpper,int layer_id,dr
 
 int drm_warpper_set_layer_coord(drm_warpper_t *drm_warpper,int layer_id,int x,int y);
 int drm_warpper_set_layer_alpha(drm_warpper_t *drm_warpper,int layer_id,int alpha);
+
+// C8 调色板上传:256 项小端 ARGB8888。设备侧写 sysfs(立即锁存,不等 vsync,
+// 在屏内容会当场换色——调用方自行保证时机);SDL 侧存软副本供合成线程展开。
+int drm_warpper_set_palette(drm_warpper_t *drm_warpper,const uint32_t pal[256]);

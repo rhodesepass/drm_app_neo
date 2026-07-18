@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "config.h"
 #include "overlay/overlay.h"
 #include "utils/cacheassets.h"
 
@@ -142,6 +143,12 @@ typedef struct {
     // 用 overlay_opinfo_free_elements 释放）；arknights 类型不用
     int element_count;
     olopinfo_element_t* elements;
+
+    // C8: load 阶段攒好的动态段颜色池(theme ramp/元素色/用户图量化结果)。
+    // show 入口在层离屏时整段写表+commit;落盘走 LUT 反查只认颜色不认位置,
+    // 池内顺序无所谓。image 模式独占 1..254,其余写 96..254。
+    uint32_t c8_pool[C8PAL_IMAGE_QUOTA];
+    int c8_pool_n;
 
 } olopinfo_params_t;
 

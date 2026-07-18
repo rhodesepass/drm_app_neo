@@ -69,6 +69,9 @@ typedef struct {
 
     SDL_Texture* tex;
     int tex_w, tex_h;
+
+    // C8 层：索引→8888 展开的 staging（纹理本身是 ARGB8888）
+    uint32_t* c8_staging;
 } sdl_layer_t;
 
 typedef struct {
@@ -92,6 +95,19 @@ static atomic_int s_ready; // 0=初始化中 1=就绪 -1=失败
 
 static autokey_t s_autokeys[16];
 static int s_autokey_count;
+
+// C8 软调色板副本。合成线程逐帧整读、API 线程 memcpy 覆盖,不加锁——
+// 撕裂语义等同硬件"写入立即锁存不等 vsync",sim 恰好能目测换表时序 bug
+static uint32_t s_soft_pal[256];
+static bool s_soft_pal_inited;
+
+static void soft_pal_ensure_default(void){
+    if(s_soft_pal_inited) return;
+    // 与内核 patch 0029 一致:开机默认不透明灰阶 ramp
+    for(int i = 0; i < 256; i++)
+        s_soft_pal[i] = 0xFF000000u | ((uint32_t)i << 16) | ((uint32_t)i << 8) | (uint32_t)i;
+    s_soft_pal_inited = true;
+}
 
 // ---------------------------------------------------------------------------
 // fb 注册表
@@ -133,8 +149,26 @@ static uint32_t layer_sdl_format(drm_warpper_layer_mode_t mode){
     switch(mode){
         case DRM_WARPPER_LAYER_MODE_RGB565:    return SDL_PIXELFORMAT_RGB565;
         case DRM_WARPPER_LAYER_MODE_MB32_NV12: return SDL_PIXELFORMAT_NV12;
+        // C8: SDL streaming 纹理不吃 INDEX8,上传前软件展开
         default:                               return SDL_PIXELFORMAT_ARGB8888;
     }
+}
+
+// C8 索引 buffer 按当前软表展开进 staging 后上传。每帧重展开——
+// 换表立即作用于在屏内容,与硬件行为一致
+static void layer_upload_c8(sdl_layer_t* l, const uint8_t* src, int pitch){
+    soft_pal_ensure_default();
+    if(!l->c8_staging){
+        l->c8_staging = malloc((size_t)l->tex_w * l->tex_h * 4);
+        if(!l->c8_staging) return;
+    }
+    for(int y = 0; y < l->tex_h; y++){
+        const uint8_t* srow = src + (size_t)y * pitch;
+        uint32_t* drow = l->c8_staging + (size_t)y * l->tex_w;
+        for(int x = 0; x < l->tex_w; x++)
+            drow[x] = s_soft_pal[srow[x]];
+    }
+    SDL_UpdateTexture(l->tex, NULL, l->c8_staging, l->tex_w * 4);
 }
 
 static void layer_ensure_texture(sdl_layer_t* l, int w, int h){
@@ -145,8 +179,9 @@ static void layer_ensure_texture(sdl_layer_t* l, int w, int h){
     l->tex_w = w;
     l->tex_h = h;
     SDL_SetTextureBlendMode(l->tex,
-        l->mode == DRM_WARPPER_LAYER_MODE_ARGB8888 ? SDL_BLENDMODE_BLEND
-                                                   : SDL_BLENDMODE_NONE);
+        (l->mode == DRM_WARPPER_LAYER_MODE_ARGB8888 ||
+         l->mode == DRM_WARPPER_LAYER_MODE_C8) ? SDL_BLENDMODE_BLEND
+                                               : SDL_BLENDMODE_NONE);
 }
 
 // FLIP：帧内容立即拷进纹理（此后源 buffer 自由，item 可即刻归还）
@@ -164,6 +199,8 @@ static void layer_flip_upload(int layer_id, uint32_t fb_id){
         SDL_UpdateNVTexture(l->tex, NULL,
                             fb->vaddr, fb->pitch,
                             fb->vaddr + fb->uv_offset, fb->pitch);
+    } else if(fb->mode == DRM_WARPPER_LAYER_MODE_C8){
+        layer_upload_c8(l, fb->vaddr, fb->pitch);
     } else {
         SDL_UpdateTexture(l->tex, NULL, fb->vaddr, fb->pitch);
     }
@@ -205,7 +242,10 @@ static void compose_frame(drm_warpper_t* drm_warpper){
         if(!l->inited || !l->mounted_vaddr) continue;
         layer_ensure_texture(l, l->width, l->height);
         if(!l->tex) continue;
-        SDL_UpdateTexture(l->tex, NULL, l->mounted_vaddr, l->mounted_pitch);
+        if(l->mode == DRM_WARPPER_LAYER_MODE_C8)
+            layer_upload_c8(l, l->mounted_vaddr, l->mounted_pitch);
+        else
+            SDL_UpdateTexture(l->tex, NULL, l->mounted_vaddr, l->mounted_pitch);
     }
     pthread_mutex_unlock(&s_mount_mtx);
 
@@ -349,6 +389,8 @@ static void* sdl_display_thread(void* arg){
     for(int i = 0; i < SDL_LAYER_MAX; i++){
         if(s_layers[i].tex) SDL_DestroyTexture(s_layers[i].tex);
         s_layers[i].tex = NULL;
+        free(s_layers[i].c8_staging);
+        s_layers[i].c8_staging = NULL;
     }
     SDL_DestroyRenderer(s_ren);
     SDL_DestroyWindow(s_win);
@@ -434,6 +476,7 @@ static int mode_bpp(drm_warpper_layer_mode_t mode){
     switch(mode){
         case DRM_WARPPER_LAYER_MODE_RGB565: return 2;
         case DRM_WARPPER_LAYER_MODE_ARGB8888: return 4;
+        case DRM_WARPPER_LAYER_MODE_C8: return 1;
         default: return 1; // NV12：按 1bpp 的 pitch，高度另乘 3/2
     }
 }
@@ -591,4 +634,11 @@ int drm_warpper_set_layer_alpha(drm_warpper_t *drm_warpper,int layer_id,int alph
     item->alpha = (uint8_t)alpha;
     item->on_heap = true;
     return drm_warpper_enqueue_display_item(drm_warpper, layer_id, item);
+}
+
+int drm_warpper_set_palette(drm_warpper_t *drm_warpper,const uint32_t pal[256]){
+    (void)drm_warpper;
+    soft_pal_ensure_default();
+    memcpy(s_soft_pal, pal, 256 * sizeof(uint32_t));
+    return 0;
 }

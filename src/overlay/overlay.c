@@ -111,7 +111,14 @@ int overlay_init(overlay_t* overlay,drm_warpper_t* drm_warpper,layer_animation_t
 
     drm_warpper_allocate_buffer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, &overlay->overlay_buf);
 
-    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
+    // fbdraw 全家假设 stride == width。C8 下 pitch=360B,若内核把 dumb buffer
+    // pitch 对齐到别的值会整屏错位,显式核对(8888 的 1440B 天然对齐,老路径不受影响)
+    if(overlay->overlay_buf.pitch != OVERLAY_WIDTH * OVERLAY_BPP){
+        log_error("overlay pitch mismatch: got %u, expect %d",
+                  overlay->overlay_buf.pitch, OVERLAY_WIDTH * OVERLAY_BPP);
+    }
+
+    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_BUF_BYTES);
 
     drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, OVERLAY_WIDTH, 0, &overlay->overlay_buf);
 

@@ -58,6 +58,7 @@ typedef struct {
     // image 元素的像素来源（用户图或 cacheasset，show 时解析）
     uint32_t* src_addr;
     int src_w, src_h;
+    fbdraw_fmt_t src_fmt;  // cacheasset 与显存同格式；用户图恒 8888（量化后仍是展开像素）
 
     unsigned int visible : 1;  // 首次绘制后置位，组重画时参与；end_frame 退场后清零
     unsigned int dirty : 1;
@@ -358,6 +359,7 @@ static void el_draw(opinfo_engine_t* d, int i){
         src.vaddr = st->src_addr;
         src.width = st->src_w;
         src.height = st->src_h;
+        src.fmt = st->src_fmt;
         sr.x = 0; sr.y = 0; sr.w = st->src_w; sr.h = st->src_h;
 
         if(el->anim == OPINFO_ANIM_FADE){
@@ -634,10 +636,12 @@ static void el_resolve(opinfo_engine_t* d, int i){
             st->src_addr = (uint32_t*)aa;
             st->src_w = aw;
             st->src_h = ah;
+            st->src_fmt = FBDRAW_OVERLAY_FMT;
         } else {
             st->src_addr = el->image_addr;
             st->src_w = el->image_w;
             st->src_h = el->image_h;
+            st->src_fmt = FBDRAW_FMT_ARGB8888;
         }
         if(!st->src_addr){
             st->src_w = 0;
@@ -761,6 +765,7 @@ static bool engine_compose(opinfo_engine_t* d){
     vram_fb.vaddr = (uint32_t*)d->overlay->overlay_buf.vaddr;
     vram_fb.width = OVERLAY_WIDTH;
     vram_fb.height = OVERLAY_HEIGHT;
+    vram_fb.fmt = FBDRAW_OVERLAY_FMT; // shadow 恒 8888,落盘 copy_rect 自动量化
 
     for(int i = 0; i < d->count; i++){
         el_advance(d, i);
@@ -899,6 +904,7 @@ void overlay_opinfo_show_elements(overlay_t* overlay, olopinfo_params_t* params)
     d->shadow_fb.vaddr = d->shadow;
     d->shadow_fb.width = OVERLAY_WIDTH;
     d->shadow_fb.height = OVERLAY_HEIGHT;
+    d->shadow_fb.fmt = FBDRAW_FMT_ARGB8888;
 
     for(int i = 0; i < d->count; i++){
         el_resolve(d, i);
@@ -915,7 +921,17 @@ void overlay_opinfo_show_elements(overlay_t* overlay, olopinfo_params_t* params)
     // 先把图层挪到屏外再直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
-    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
+
+#if OVERLAY_USE_C8
+    // 层已离屏:恢复烘焙段(上一个 owner 可能整表覆盖过) + 写本次颜色池 + 上传。
+    // image 模式独占 1..254,其余从动态段基址写起
+    c8pal_restore_baked();
+    c8pal_write_range(params->type == OPINFO_TYPE_IMAGE ? C8PAL_IMAGE_BASE : C8PAL_DYN_BASE,
+                      params->c8_pool, params->c8_pool_n);
+    c8pal_commit();
+#endif
+
+    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_BUF_BYTES);
 
     overlay->request_abort = 0;
     overlay->overlay_used = 1;
@@ -1056,6 +1072,21 @@ static void draw_color_fade_and_logo(uint32_t* vaddr,int radius,uint32_t color,
     const int logo_y0 = OVERLAY_HEIGHT - logo_h - S(10);
     const uint32_t rgb = color & 0x00FFFFFF;
 
+#if OVERLAY_USE_C8
+    // fade 渐变的专用量化:通用 LUT 的 alpha 只有 16 桶,32 级 theme ramp 会被
+    // 折半出台阶。这里按 ramp 公式(与 c8pal_pool_add_ramp 一致)精确定位每级的
+    // 表项,量化时在相邻两级间做 Bayer 抖动。ramp 项是 load 时入池的精确色,
+    // find_exact 必中;万一没中(池被挤爆)退回通用反查
+    uint8_t ramp_idx[C8PAL_THEME_RAMP_LEVELS + 1];
+    for(int i = 0; i < C8PAL_THEME_RAMP_LEVELS; i++){
+        uint32_t a = 255u * (uint32_t)(C8PAL_THEME_RAMP_LEVELS - i) / C8PAL_THEME_RAMP_LEVELS;
+        uint32_t c = (a << 24) | rgb;
+        int idx = c8pal_find_exact(c);
+        ramp_idx[i] = idx >= 0 ? (uint8_t)idx : c8pal_index(c);
+    }
+    ramp_idx[C8PAL_THEME_RAMP_LEVELS] = C8PAL_IDX_TRANSPARENT;
+#endif
+
     uint32_t row[S(radius - 1)];
 
     for(int py = 0; py < S(radius - 1); py++){
@@ -1069,12 +1100,16 @@ static void draw_color_fade_and_logo(uint32_t* vaddr,int radius,uint32_t color,
             row[i] = rgb | ((uint32_t)alpha_lut[px / UI_SCALE + ly] << 24);
         }
 
+        // logo 覆盖的列范围(混合结果不再是纯 ramp 色,量化走通用反查)
+        int logo_l = span, logo_r = -1;
         if(logo_addr && logo_opacity > 0){
             int lrow = fby - logo_y0;
             if(lrow >= 0 && lrow < logo_h){
                 for(int lcol = 0; lcol < logo_w; lcol++){
                     int i = logo_x0 + lcol - row_x0;
                     if(i < 0 || i >= span) continue;
+                    if(i < logo_l) logo_l = i;
+                    if(i > logo_r) logo_r = i;
                     uint32_t px32 = logo_addr[lrow * logo_w + lcol];
                     uint8_t a = (px32 >> 24) & 0xFF;
                     if(logo_opacity != 255) a = (uint8_t)(((uint32_t)a * logo_opacity + 127u) / 255u);
@@ -1083,7 +1118,28 @@ static void draw_color_fade_and_logo(uint32_t* vaddr,int radius,uint32_t color,
             }
         }
 
+#if OVERLAY_USE_C8
+        // 行内合成仍是 8888(fade+logo 的 8bit alpha 语义保留),落盘时量化。
+        // 纯 fade 像素按 alpha 直接定位 ramp 层级,层间 Bayer 抖动(64 阶,
+        // 断层化成 stipple 密度渐变);logo 混过的像素走通用反查
+        uint8_t crow[span];
+        for(int i = 0; i < span; i++){
+            if(i >= logo_l && i <= logo_r){
+                crow[i] = c8pal_index(row[i]);
+                continue;
+            }
+            uint32_t a = row[i] >> 24;
+            int num = (int)(255u - a) * C8PAL_THEME_RAMP_LEVELS;
+            int li = num / 255;
+            int rem = num % 255;
+            if((int)fbdraw_bayer8[fby & 7][(row_x0 + i) & 7] * 4 < rem) li++;
+            if(li > C8PAL_THEME_RAMP_LEVELS) li = C8PAL_THEME_RAMP_LEVELS;
+            crow[i] = ramp_idx[li];
+        }
+        memcpy((uint8_t*)vaddr + (size_t)fby * OVERLAY_WIDTH + row_x0, crow, (size_t)span);
+#else
         memcpy(vaddr + fby * OVERLAY_WIDTH + row_x0, row, (size_t)span * 4);
+#endif
     }
 }
 // 绘制arknights overlay的worker.
@@ -1207,6 +1263,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     fbdst.vaddr = vaddr;
     fbdst.width = OVERLAY_WIDTH;
     fbdst.height = OVERLAY_HEIGHT;
+    fbdst.fmt = FBDRAW_OVERLAY_FMT;
 
 
     fbdraw_rect_t dst_rect;
@@ -1335,6 +1392,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
             fbsrc.vaddr = (uint32_t*) params->class_addr;
             fbsrc.width = params->class_w;
             fbsrc.height = params->class_h;
+            fbsrc.fmt = FBDRAW_FMT_ARGB8888;
 
             src_rect.x = 0;
             src_rect.y = 0;
@@ -1364,6 +1422,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         fbsrc.vaddr = (uint32_t*)asset_addr;
         fbsrc.width = asset_w;
         fbsrc.height = asset_h;
+        fbsrc.fmt = FBDRAW_OVERLAY_FMT;
 
         src_rect.x = 0;
         src_rect.y = 0;
@@ -1406,6 +1465,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
     fbsrc.vaddr = (uint32_t*)asset_addr;
     fbsrc.width = asset_w;
     fbsrc.height = asset_h;
+    fbsrc.fmt = FBDRAW_OVERLAY_FMT;
 
     src_rect.x = 0;
     src_rect.y = 0;
@@ -1451,13 +1511,16 @@ static void init_template_arknights_overlay(uint32_t* vaddr, olopinfo_params_t* 
     fbdraw_fb_t fbsrc,fbdst;
     fbdraw_rect_t src_rect,dst_rect;
 
-    memset(vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
+    memset(vaddr, 0, OVERLAY_BUF_BYTES);
 
 
     fbdst.vaddr = vaddr;
     fbdst.width = OVERLAY_WIDTH;
     fbdst.height = OVERLAY_HEIGHT;
+    fbdst.fmt = FBDRAW_OVERLAY_FMT;
 
+    // 本函数的 fbsrc 全部来自 cacheasset(与显存同格式)
+    fbsrc.fmt = FBDRAW_OVERLAY_FMT;
 
     int asset_w,asset_h;
     uint8_t* asset_addr;
@@ -1597,6 +1660,13 @@ void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params)
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, OVERLAY_HEIGHT);
 
+#if OVERLAY_USE_C8
+    // 层已离屏:恢复烘焙段 + 写本次颜色池(theme ramp/class/logo) + 上传
+    c8pal_restore_baked();
+    c8pal_write_range(C8PAL_DYN_BASE, params->c8_pool, params->c8_pool_n);
+    c8pal_commit();
+#endif
+
     init_template_arknights_overlay((uint32_t*)overlay->overlay_buf.vaddr, params);
 
     static arknights_overlay_worker_data_t data;
@@ -1661,7 +1731,29 @@ void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params)
 // 用户图片加载/释放
 // ============================================================================
 
+#if OVERLAY_USE_C8
+// 用户图量化进颜色池(就地改写像素为量化展开,绘制路径不感知)。
+// 只在 load 阶段调用,绝不上传——旧 overlay 可能还在播退场动画,
+// 上传统一推迟到 show 入口(层已离屏)。
+static void pool_quantize_image(olopinfo_params_t* params, int pool_cap,
+                                const char* path, uint32_t* px, int w, int h, int quota)
+{
+    if(!px) return;
+    int remain = pool_cap - params->c8_pool_n;
+    if(quota > remain) quota = remain;
+    if(quota < 2){
+        log_warn("opinfo c8 pool exhausted, %s falls back to LUT nearest", path);
+        return;
+    }
+    uint32_t tmp[254];
+    int n = c8pal_load_or_quantize(path, px, w, h, quota, tmp);
+    if(n > 0)
+        c8pal_pool_add(params->c8_pool, &params->c8_pool_n, pool_cap, tmp, n);
+}
+#endif
+
 void overlay_opinfo_load_image(olopinfo_params_t* params){
+    params->c8_pool_n = 0;
     if(params->type == OPINFO_TYPE_ARKNIGHTS){
         load_img_assets(params->class_path, &params->class_addr, &params->class_w, &params->class_h);
         load_img_assets(params->logo_path, &params->logo_addr, &params->logo_w, &params->logo_h);
@@ -1672,10 +1764,48 @@ void overlay_opinfo_load_image(olopinfo_params_t* params){
         if(params->logo_addr){
             imgscale_upscale_nn_rgba(&params->logo_addr, &params->logo_w, &params->logo_h, params->src_upscale);
         }
+#if OVERLAY_USE_C8
+        // theme ramp 先入池(corner fade 的半透明落点),再量化两张用户图
+        c8pal_pool_add_ramp(params->c8_pool, &params->c8_pool_n, C8PAL_DYN_QUOTA,
+                            params->color | 0xFF000000, C8PAL_THEME_RAMP_LEVELS);
+        pool_quantize_image(params, C8PAL_DYN_QUOTA, params->class_path,
+                            params->class_addr, params->class_w, params->class_h,
+                            C8PAL_QUOTA_CLASS);
+        pool_quantize_image(params, C8PAL_DYN_QUOTA, params->logo_path,
+                            params->logo_addr, params->logo_w, params->logo_h,
+                            C8PAL_QUOTA_AKLOGO);
+#endif
         log_debug("loaded class: %s, w: %d, h: %d", params->class_path, params->class_w, params->class_h);
         log_debug("loaded logo: %s, w: %d, h: %d", params->logo_path, params->logo_w, params->logo_h);
         return;
     }
+
+#if OVERLAY_USE_C8
+    const int pool_cap = (params->type == OPINFO_TYPE_IMAGE) ? C8PAL_IMAGE_QUOTA
+                                                             : C8PAL_DYN_QUOTA;
+    // custom: 元素色先入池(数量小,保色相优先)。前几个唯一色带 alpha ramp
+    // (文字 AA/FADE 的半透明落点),其余只写 opaque;黑/白烘焙段已有,跳过
+    if(params->type == OPINFO_TYPE_CUSTOM){
+        int ramps = 0;
+        for(int i = 0; i < params->element_count; i++){
+            uint32_t c = params->elements[i].color | 0xFF000000;
+            if(c == 0xFFFFFFFF || c == 0xFF000000) continue;
+            int known = 0;
+            for(int j = 0; j < params->c8_pool_n; j++){
+                if(params->c8_pool[j] == c){ known = 1; break; }
+            }
+            if(known) continue;
+            if(ramps < C8PAL_COLOR_RAMPS_MAX){
+                c8pal_pool_add_ramp(params->c8_pool, &params->c8_pool_n, pool_cap,
+                                    c, C8PAL_COLOR_RAMP_LEVELS);
+                ramps++;
+            } else {
+                c8pal_pool_add(params->c8_pool, &params->c8_pool_n, pool_cap, &c, 1);
+            }
+        }
+    }
+#endif
+
     for(int i = 0; i < params->element_count; i++){
         olopinfo_element_t* el = &params->elements[i];
         if(el->type != OPINFO_EL_IMAGE || el->cacheasset_id >= 0){
@@ -1685,6 +1815,12 @@ void overlay_opinfo_load_image(olopinfo_params_t* params){
         if(el->image_addr){
             imgscale_upscale_nn_rgba(&el->image_addr, &el->image_w, &el->image_h, params->src_upscale);
         }
+#if OVERLAY_USE_C8
+        pool_quantize_image(params, pool_cap, el->image_path,
+                            el->image_addr, el->image_w, el->image_h,
+                            (params->type == OPINFO_TYPE_IMAGE) ? C8PAL_IMAGE_QUOTA
+                                                                : C8PAL_QUOTA_CUSTOM_IMG);
+#endif
         log_debug("loaded opinfo image: %s, w: %d, h: %d", el->image_path, el->image_w, el->image_h);
     }
 }

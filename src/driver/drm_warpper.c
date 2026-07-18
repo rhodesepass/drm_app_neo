@@ -522,6 +522,11 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
         creq.height = height;
         creq.bpp = 32;
     }
+    else if(mode == DRM_WARPPER_LAYER_MODE_C8){
+        creq.width = width;
+        creq.height = height;
+        creq.bpp = 8;
+    }
     else{
         log_error("invalid layer mode");
         return -1;
@@ -567,6 +572,9 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
     }
     else if(mode == DRM_WARPPER_LAYER_MODE_ARGB8888){
         ret = drmModeAddFB2(fd, width, height, DRM_FORMAT_ARGB8888, handles, pitches, offsets,&bo->fb_id, 0);
+    }
+    else if(mode == DRM_WARPPER_LAYER_MODE_C8){
+        ret = drmModeAddFB2(fd, width, height, DRM_FORMAT_C8, handles, pitches, offsets,&bo->fb_id, 0);
     }
 
     if (ret) {
@@ -806,4 +814,20 @@ int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,i
 
 int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf){
     return drm_warpper_mount_layer_rect(drm_warpper, layer_id, x, y, buf, buf->width, buf->height, buf->width, buf->height);
+}
+
+int drm_warpper_set_palette(drm_warpper_t *drm_warpper,const uint32_t pal[256]){
+    (void)drm_warpper; // sysfs 接口与 DRM master 无关
+    int fd = open(DEBE_PALETTE_SYSFS_PATH, O_WRONLY);
+    if(fd < 0){
+        log_error("open %s failed: %m", DEBE_PALETTE_SYSFS_PATH);
+        return -1;
+    }
+    ssize_t n = write(fd, pal, 256 * sizeof(uint32_t));
+    close(fd);
+    if(n != 256 * sizeof(uint32_t)){
+        log_error("palette write %zd/1024: %m", n);
+        return -1;
+    }
+    return 0;
 }

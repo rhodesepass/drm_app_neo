@@ -18,6 +18,7 @@
 #include "render/mediaplayer.h"
 #include "render/lvgl_drm_warp.h"
 #include "overlay/overlay.h"
+#include "render/c8pal.h"
 #include "utils/timer.h"
 #include "render/layer_animation.h"
 #include "utils/settings.h"
@@ -202,11 +203,20 @@ int main(int argc, char *argv[]){
 
     // ============ OVERLAY 初始化 ===============
     drm_warpper_init_layer(
-        &g_drm_warpper, 
-        DRM_WARPPER_LAYER_OVERLAY, 
-        UI_WIDTH, UI_HEIGHT, 
+        &g_drm_warpper,
+        DRM_WARPPER_LAYER_OVERLAY,
+        UI_WIDTH, UI_HEIGHT,
+#if OVERLAY_USE_C8
+        DRM_WARPPER_LAYER_MODE_C8
+#else
         DRM_WARPPER_LAYER_MODE_ARGB8888
+#endif
     );
+
+#if OVERLAY_USE_C8
+    // 烘焙段上表(此时 overlay 空,换表不可见)
+    c8pal_init(&g_drm_warpper);
+#endif
 
     overlay_init(&g_overlay, &g_drm_warpper, &g_layer_animation);
 

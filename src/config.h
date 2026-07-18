@@ -203,6 +203,54 @@
 #define DRM_WARPPER_LAYER_OVERLAY 1
 #define DRM_WARPPER_LAYER_VIDEO 0
 
+// overlay 层像素格式。1 = C8(256 色调色板, DEBE 片上 SRAM 查表出色,
+// 每帧扫描 fetch 降为 8888 的 1/4, 省 DDR 带宽给 VE; 每个调色板项自带 8bit alpha),
+// 0 = 回退 ARGB8888(A/B 对比与硬件翻车回滚用)。
+// 需要内核 patch 0029(DRM_FORMAT_C8 + /sys/kernel/debe_palette/palette)。
+// 硬件约束: 调色板全局唯一(四层共享一块 SRAM); C8 不能缩放(overlay 本不缩放);
+// C8 恒占 alpha plane 名额(NV12+C8+RGB565 组合够用)。
+#define OVERLAY_USE_C8 1
+
+#if OVERLAY_USE_C8
+#define OVERLAY_BPP 1
+#else
+#define OVERLAY_BPP 4
+#endif
+#define OVERLAY_BUF_BYTES (OVERLAY_WIDTH * OVERLAY_HEIGHT * OVERLAY_BPP)
+
+#define DEBE_PALETTE_SYSFS_PATH "/sys/kernel/debe_palette/palette"
+
+// ---------- C8 调色板分段(见 src/render/c8pal.h) ----------
+// 烘焙段 0..95 编译期固定(c8pal_baked.h, tools/gen_c8.sh 生成):
+//   0 透明 | 1 黑 | 2 白 | 3..10 白 alpha ramp | 11..18 黑 alpha ramp |
+//   19..32 灰阶 14 级 | 33..95 装饰素材聚类 63 项
+// 动态段 96..254:每个 owner(opinfo/transition)在 load 阶段把自己需要的
+// 全部颜色攒进 params 的"颜色池",show 入口在层离屏时恢复烘焙段+写池+commit。
+// 落盘走 LUT 最近反查,只认颜色不认位置,池内顺序无所谓。
+// 255 = 反查 LUT sentinel, 永不分配。
+#define C8PAL_BAKED_COUNT        96
+#define C8PAL_IDX_TRANSPARENT    0
+#define C8PAL_IDX_BLACK          1
+#define C8PAL_IDX_WHITE          2
+
+#define C8PAL_DYN_BASE           96
+#define C8PAL_DYN_QUOTA          159
+// image 模式全屏只有单图, 颜色池独占 1..254(连烘焙段一起覆盖也无妨,
+// 下一个 owner 的 show 入口会先恢复烘焙段)
+#define C8PAL_IMAGE_BASE         1
+#define C8PAL_IMAGE_QUOTA        254
+
+// 各类运行时量化的单图配额(写进 .c8pal 缓存头,改了会触发重算)
+#define C8PAL_QUOTA_CLASS        16  // arknights 职业图标
+#define C8PAL_QUOTA_AKLOGO       24  // arknights 右下 logo
+#define C8PAL_QUOTA_TRIMG        32  // transition 图片
+#define C8PAL_QUOTA_CUSTOM_IMG   32  // custom 元素图片(上限;池余量不足时取余量)
+// theme color 的 alpha ramp(arknights corner fade)。通用反查 LUT 的 alpha 只有
+// 16 桶,分不清 32 级——fade 走专用路径(c8pal_find_exact 定位 + Bayer 层间抖动)
+#define C8PAL_THEME_RAMP_LEVELS  32
+#define C8PAL_COLOR_RAMP_LEVELS  8   // custom 元素色的迷你 ramp(1 opaque + 8 alpha)
+#define C8PAL_COLOR_RAMPS_MAX    4   // 池里最多几个元素色带 ramp,超出只写 opaque
+
 // ========== Media Player (V4L2 stateless / cedrus) ==========
 // OUTPUT(码流)buffer 大小：一帧一个 NAL，打开时按 mp4 最大 sample 校验
 #define VDEC_OUTPUT_BUF_SIZE (512 * 1024)
@@ -338,6 +386,21 @@
 
 // ========== Cached Assets Configuration ==========
 #define CACHED_ASSETS_MAX_SIZE (VIDEO_HEIGHT * VIDEO_WIDTH * 3 / 2)
+#if OVERLAY_USE_C8
+// .c8 = tools/gen_c8.sh 离线产物(烘焙段索引位图, F-S 抖动)。抖动必须在目标
+// 分辨率上做(先缩后抖), 所以按档各出一份, 编译期直接选文件。
+#if UI_SCALE == 1
+#define CACHEASSET_C8(name) name "_1x.c8"
+#else
+#define CACHEASSET_C8(name) name "_2x.c8"
+#endif
+#define CACHED_ASSETS_FILE_AK_BAR CACHEASSET_C8("ak_bar")
+#define CACHED_ASSETS_FILE_BTM_LEFT_BAR CACHEASSET_C8("btm_left_bar")
+#define CACHED_ASSETS_FILE_TOP_LEFT_RECT CACHEASSET_C8("top_left_rect")
+#define CACHED_ASSETS_FILE_TOP_LEFT_RHODES CACHEASSET_C8("top_left_rhodes")
+#define CACHED_ASSETS_FILE_TOP_RIGHT_BAR CACHEASSET_C8("top_right_bar")
+#define CACHED_ASSETS_FILE_TOP_RIGHT_ARROW CACHEASSET_C8("top_right_arrow")
+#else
 // overlay 装饰图只存一份 2x(720 基准)素材, 走 stbi_load 直读 (无 lv_fs 盘符), 文件名
 // 相对 res/, 运行时经 respath() 解析。1x 档由 cacheassets 加载时最近邻下采样到一半。
 #define CACHED_ASSETS_FILE_AK_BAR "ak_bar.png"
@@ -346,6 +409,7 @@
 #define CACHED_ASSETS_FILE_TOP_LEFT_RHODES "top_left_rhodes.png"
 #define CACHED_ASSETS_FILE_TOP_RIGHT_BAR "top_right_bar.png"
 #define CACHED_ASSETS_FILE_TOP_RIGHT_ARROW "top_right_arrow.png"
+#endif
 
 
 // ========== Exitcode Definition ==========

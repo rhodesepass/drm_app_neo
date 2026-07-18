@@ -1,4 +1,5 @@
-#pragma once 
+#pragma once
+#include "config.h"
 #include "overlay/overlay.h"
 
 
@@ -23,6 +24,11 @@ typedef struct {
     int src_upscale;
 
     uint32_t background_color;
+
+    // C8: load 阶段攒好的动态段颜色池(bg color + 图片量化结果),
+    // 各 transition 入口在层不可见时写表+commit
+    uint32_t c8_pool[C8PAL_QUOTA_TRIMG + 4];
+    int c8_pool_n;
 } oltr_params_t;
 
 typedef struct {

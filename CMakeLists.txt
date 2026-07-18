@@ -150,6 +150,7 @@ set(EPASS_SOURCES
   src/render/layer_animation.c
   src/render/lvgl_drm_warp.c
   src/render/fbdraw.c
+  src/render/c8pal.c
 
   src/ui/font_registry.c
   src/ui/ui_theme.c
@@ -207,7 +208,7 @@ string(TIMESTAMP COMPILE_TIME "%Y-%m-%d %H:%M:%S")
 
 set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
 set(FONT_DIR   ${CMAKE_SOURCE_DIR}/font)
-file(GLOB RES_PNG  CONFIGURE_DEPENDS ${ASSETS_DIR}/*.png)
+file(GLOB RES_PNG  CONFIGURE_DEPENDS ${ASSETS_DIR}/*.png ${ASSETS_DIR}/*.c8)
 file(GLOB RES_FONT CONFIGURE_DEPENDS ${FONT_DIR}/*.otf)
 
 # ============================================================================
@@ -409,7 +410,7 @@ endif()
 if(NOT TARGET_PC)
   install(TARGETS app_360 app_720 DESTINATION bin)
   install(DIRECTORY ${ASSETS_DIR}/ DESTINATION bin/res
-          FILES_MATCHING PATTERN "*.png")
+          FILES_MATCHING PATTERN "*.png" PATTERN "*.c8")
   if(NOT EPASS_FONTS_FOUND)
     install(FILES ${RES_FONT} DESTINATION bin/res/fonts)
   endif()

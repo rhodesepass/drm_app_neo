@@ -13,6 +13,16 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "utils/stb_image.h"
 
+#if OVERLAY_USE_C8
+// 层不可见(离屏/alpha 0/已清成透明)时把本次颜色池写进动态段并上传。
+// 三个 transition 入口都在 overlay_abort 之后被调,旧内容已离屏,立即换表安全
+static void oltr_apply_palette(oltr_params_t* params){
+    c8pal_restore_baked();
+    c8pal_write_range(C8PAL_DYN_BASE, params->c8_pool, params->c8_pool_n);
+    c8pal_commit();
+}
+#endif
+
 static void oltr_callback_cleanup(void* userdata,bool is_last){
     oltr_callback_t* callback = (oltr_callback_t*)userdata;
     log_trace("oltr_callback_cleanup");
@@ -33,11 +43,16 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
 
+#if OVERLAY_USE_C8
+    oltr_apply_palette(params);
+#endif
+
     uint32_t* vaddr = (uint32_t*)overlay->overlay_buf.vaddr;
 
     fbdst.vaddr = vaddr;
     fbdst.width = OVERLAY_WIDTH;
     fbdst.height = OVERLAY_HEIGHT;
+    fbdst.fmt = FBDRAW_OVERLAY_FMT;
 
     dst_rect.x = 0;
     dst_rect.y = 0;
@@ -49,6 +64,7 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
         fbsrc.vaddr = params->image_addr;
         fbsrc.width = params->image_w;
         fbsrc.height = params->image_h;
+        fbsrc.fmt = FBDRAW_FMT_ARGB8888;
 
         src_rect.x = 0;
         src_rect.y = 0;
@@ -100,11 +116,16 @@ void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_p
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, SCREEN_WIDTH, 0);
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
 
+#if OVERLAY_USE_C8
+    oltr_apply_palette(params);
+#endif
+
     uint32_t* vaddr = (uint32_t*)overlay->overlay_buf.vaddr;
 
     fbdst.vaddr = vaddr;
     fbdst.width = OVERLAY_WIDTH;
     fbdst.height = OVERLAY_HEIGHT;
+    fbdst.fmt = FBDRAW_OVERLAY_FMT;
 
     dst_rect.x = 0;
     dst_rect.y = 0;
@@ -116,6 +137,7 @@ void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_p
         fbsrc.vaddr = params->image_addr;
         fbsrc.width = params->image_w;
         fbsrc.height = params->image_h;
+        fbsrc.fmt = FBDRAW_FMT_ARGB8888;
         src_rect.x = 0;
         src_rect.y = 0;
         src_rect.w = params->image_w;
@@ -293,6 +315,7 @@ static void swipe_worker(void *userdata,int skipped_frames){
     fbdst.vaddr = vaddr;
     fbdst.width = OVERLAY_WIDTH;
     fbdst.height = OVERLAY_HEIGHT;
+    fbdst.fmt = FBDRAW_OVERLAY_FMT;
 
     if(draw_state == SWIPE_DRAW_CONTENT){
         // 填充颜色
@@ -306,6 +329,7 @@ static void swipe_worker(void *userdata,int skipped_frames){
         fbsrc.vaddr = data->params->image_addr;
         fbsrc.width = data->params->image_w;
         fbsrc.height = data->params->image_h;
+        fbsrc.fmt = FBDRAW_FMT_ARGB8888;
 
         src_rect.x = draw_image_start_x - data->image_start_x;
         src_rect.y = 0;
@@ -349,8 +373,13 @@ static void swipe_timer_cb(void *userdata,bool is_last){
 // 类似drm_app的过渡效果，但是使用贝塞尔，需要使用worker。
 void overlay_transition_swipe(overlay_t* overlay,oltr_callback_t* callback,oltr_params_t* params){
 
+#if OVERLAY_USE_C8
+    // idx 0 在任何表里都是全透明,先换表再清 buffer 顺序无所谓
+    oltr_apply_palette(params);
+#endif
+
     // 先清空 buffer 再上坐标，摆到屏内时内容已是全透明
-    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_WIDTH * OVERLAY_HEIGHT * 4);
+    memset(overlay->overlay_buf.vaddr, 0, OVERLAY_BUF_BYTES);
 
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
@@ -408,6 +437,7 @@ void overlay_transition_swipe(overlay_t* overlay,oltr_callback_t* callback,oltr_
 }
 
 void overlay_transition_load_image(oltr_params_t* params){
+    params->c8_pool_n = 0;
     if(params->type == TRANSITION_TYPE_NONE){
         return;
     }
@@ -415,6 +445,21 @@ void overlay_transition_load_image(oltr_params_t* params){
     if(params->image_addr){
         imgscale_upscale_nn_rgba(&params->image_addr, &params->image_w, &params->image_h, params->src_upscale);
     }
+#if OVERLAY_USE_C8
+    // 只量化不上传(旧 overlay 可能还在退场),上传在各 transition 入口
+    uint32_t bg = params->background_color | 0xFF000000;
+    c8pal_pool_add(params->c8_pool, &params->c8_pool_n,
+                   (int)(sizeof(params->c8_pool) / sizeof(params->c8_pool[0])), &bg, 1);
+    if(params->image_addr){
+        uint32_t tmp[C8PAL_QUOTA_TRIMG];
+        int n = c8pal_load_or_quantize(params->image_path, params->image_addr,
+                                       params->image_w, params->image_h,
+                                       C8PAL_QUOTA_TRIMG, tmp);
+        if(n > 0)
+            c8pal_pool_add(params->c8_pool, &params->c8_pool_n,
+                           (int)(sizeof(params->c8_pool) / sizeof(params->c8_pool[0])), tmp, n);
+    }
+#endif
     log_debug("(transition) loaded image: %s, w: %d, h: %d", params->image_path, params->image_w, params->image_h);
 }
 
