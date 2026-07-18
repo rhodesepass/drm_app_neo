@@ -32,7 +32,8 @@
 #include <sys/stat.h>
 
 // key_sdl.c 提供：把 LVGL 键值注入 PC 按键队列
-extern void key_sdl_inject(uint32_t lv_key);
+extern void key_sdl_inject_press(uint32_t lv_key);
+extern void key_sdl_inject_release(uint32_t lv_key);
 // main.c 的运行标志：SDL_QUIT / EPASS_SHOT 走正常退出路径
 extern int g_running;
 
@@ -76,8 +77,10 @@ typedef struct {
 
 typedef struct {
     uint32_t at_ms;
+    uint32_t hold_ms;   // 按住时长；press 在 at_ms，release 在 at_ms+hold_ms
     uint32_t lv_key;
-    bool fired;
+    bool press_fired;
+    bool release_fired;
 } autokey_t;
 
 static sdl_fb_t s_fbs[SDL_FB_MAX + 1];
@@ -89,6 +92,7 @@ static pthread_mutex_t s_mount_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static SDL_Window* s_win;
 static SDL_Renderer* s_ren;
+static bool s_fullscreen; // 仅事件泵线程读写
 static pthread_t s_thread;
 static atomic_int s_thread_running;
 static atomic_int s_ready; // 0=初始化中 1=就绪 -1=失败
@@ -294,12 +298,21 @@ static void parse_autokeys(void){
     char* save = NULL;
     for(char* tok = strtok_r(buf, ",", &save); tok && s_autokey_count < 16;
         tok = strtok_r(NULL, ",", &save)){
+        // 格式 at_ms:key[:hold_ms]，hold_ms 省略则为短按(tap)
         char* colon = strchr(tok, ':');
         if(!colon) continue;
         *colon = '\0';
-        uint32_t key = parse_key_name(colon + 1);
+        char* keyname = colon + 1;
+        char* colon2 = strchr(keyname, ':');
+        uint32_t hold_ms = 40; // 默认短按
+        if(colon2){
+            *colon2 = '\0';
+            hold_ms = (uint32_t)atoi(colon2 + 1);
+        }
+        uint32_t key = parse_key_name(keyname);
         if(!key) continue;
         s_autokeys[s_autokey_count].at_ms = (uint32_t)atoi(tok);
+        s_autokeys[s_autokey_count].hold_ms = hold_ms;
         s_autokeys[s_autokey_count].lv_key = key;
         s_autokey_count++;
     }
@@ -319,6 +332,14 @@ static void save_shot(const char* path){
     if(surf) SDL_FreeSurface(surf);
 }
 
+// 切换「当前显示器」全屏。FULLSCREEN_DESKTOP 停在窗口当前所在的那块屏；
+// 配合 RenderSetLogicalSize，整页等比缩放填满、比例不符补黑边（letterbox）。
+static void toggle_fullscreen(void){
+    s_fullscreen = !s_fullscreen;
+    if(SDL_SetWindowFullscreen(s_win, s_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0)
+        log_error("[sdl] toggle fullscreen failed: %s", SDL_GetError());
+}
+
 static void* sdl_display_thread(void* arg){
     drm_warpper_t* drm_warpper = (drm_warpper_t*)arg;
 
@@ -334,7 +355,7 @@ static void* sdl_display_thread(void* arg){
     s_win = SDL_CreateWindow(title,
                              wx ? atoi(wx) : (int)SDL_WINDOWPOS_UNDEFINED,
                              wy ? atoi(wy) : (int)SDL_WINDOWPOS_UNDEFINED,
-                             SCREEN_WIDTH, SCREEN_HEIGHT, 0);
+                             SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_RESIZABLE);
     if(!s_win){
         log_error("[sdl] SDL_CreateWindow failed: %s", SDL_GetError());
         atomic_store(&s_ready, -1);
@@ -348,13 +369,19 @@ static void* sdl_display_thread(void* arg){
         return NULL;
     }
 
+    // 逻辑尺寸 = 固定画布。窗口 resize / 全屏时，SDL 把整帧等比缩放到实际
+    // 窗口，比例不符自动补黑边（letterbox）；画布本身尺寸不变。
+    // RenderClear 无视 viewport 清整个目标，黑边区即被填黑。
+    SDL_RenderSetLogicalSize(s_ren, SCREEN_WIDTH, SCREEN_HEIGHT);
+
     const char* shot_path = getenv("EPASS_SHOT");
     uint32_t shot_ms = 3000;
     if(getenv("EPASS_SHOT_MS")) shot_ms = (uint32_t)atoi(getenv("EPASS_SHOT_MS"));
     parse_autokeys();
 
     atomic_store(&s_ready, 1);
-    log_info("==> [sdl] display thread started (%dx%d)", SCREEN_WIDTH, SCREEN_HEIGHT);
+    log_info("==> [sdl] display thread started (%dx%d) [F12/Alt+Enter 全屏, 拖角缩放, 等比 letterbox]",
+             SCREEN_WIDTH, SCREEN_HEIGHT);
 
     while(atomic_load(&s_thread_running)){
         SDL_Event e;
@@ -362,16 +389,33 @@ static void* sdl_display_thread(void* arg){
             if(e.type == SDL_QUIT){
                 g_running = 0;
             } else if(e.type == SDL_KEYDOWN){
+                if(e.key.repeat) continue; // 忽略自动重复，靠"队列空维持 PRESSED"表达按住
+                // 全屏切换：F12 或 Alt+Enter（拦截，不当作 UI 按键注入）
+                SDL_Keycode sym = e.key.keysym.sym;
+                bool alt = (e.key.keysym.mod & KMOD_ALT) != 0;
+                if(sym == SDLK_F12 ||
+                   (alt && (sym == SDLK_RETURN || sym == SDLK_KP_ENTER))){
+                    toggle_fullscreen();
+                    continue;
+                }
+                uint32_t k = map_sdl_key(sym);
+                if(k) key_sdl_inject_press(k);
+            } else if(e.type == SDL_KEYUP){
                 uint32_t k = map_sdl_key(e.key.keysym.sym);
-                if(k) key_sdl_inject(k);
+                if(k) key_sdl_inject_release(k);
             }
         }
 
         uint32_t now = SDL_GetTicks();
         for(int i = 0; i < s_autokey_count; i++){
-            if(!s_autokeys[i].fired && now >= s_autokeys[i].at_ms){
-                s_autokeys[i].fired = true;
-                key_sdl_inject(s_autokeys[i].lv_key);
+            if(!s_autokeys[i].press_fired && now >= s_autokeys[i].at_ms){
+                s_autokeys[i].press_fired = true;
+                key_sdl_inject_press(s_autokeys[i].lv_key);
+            }
+            if(s_autokeys[i].press_fired && !s_autokeys[i].release_fired &&
+               now >= s_autokeys[i].at_ms + s_autokeys[i].hold_ms){
+                s_autokeys[i].release_fired = true;
+                key_sdl_inject_release(s_autokeys[i].lv_key);
             }
         }
 

@@ -1,11 +1,11 @@
 //
 // key_enc_evdev 的 PC/SDL 后端 —— 同一头文件，链接期与 key_enc_evdev.c 二选一。
 //
-// 键源：drm_warpper_sdl 的事件泵把 SDL 键映射成 LVGL 键后经 key_sdl_inject()
-// 投进本文件的环形队列（跨线程，互斥锁保护）；LVGL 线程按 indev 轮询节拍
-// read_cb 弹出，一次按下拆成 PRESSED + RELEASED 两次回报（同设备 evdev 语义），
-// 并在按下时调 input_cb（screens_handle_key）驱动手写屏导航——input_cb 因此
-// 恒在 LVGL 线程执行，与设备侧一致。
+// 键源：drm_warpper_sdl 的事件泵把 SDL 键映射成 LVGL 键，按 KEYDOWN/KEYUP 分别经
+// key_sdl_inject_press()/_release() 投进本文件的环形队列（跨线程，互斥锁保护）；
+// LVGL 线程按 indev 轮询节拍 read_cb 弹出。队列空时保持上一次 press/release 状态，
+// 因此按住键会持续回报 PRESSED（与设备 evdev 一致，长按/LV_EVENT_LONG_PRESSED 才成立）。
+// press 时调 input_cb（screens_handle_key）驱动手写屏导航——恒在 LVGL 线程执行。
 //
 #include <pthread.h>
 #include <string.h>
@@ -15,53 +15,61 @@
 
 #define KEYQ_MAX 32
 
-static uint32_t s_queue[KEYQ_MAX];
+typedef struct { uint32_t key; bool press; } keyev_t;
+static keyev_t s_queue[KEYQ_MAX];
 static int s_count;
 static pthread_mutex_t s_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-// drm_warpper_sdl 的事件泵线程调用
-void key_sdl_inject(uint32_t lv_key){
+static void keyq_push(uint32_t lv_key, bool press){
     pthread_mutex_lock(&s_mtx);
     if(s_count < KEYQ_MAX){
-        s_queue[s_count++] = lv_key;
+        s_queue[s_count].key = lv_key;
+        s_queue[s_count].press = press;
+        s_count++;
     }
     pthread_mutex_unlock(&s_mtx);
 }
 
+// drm_warpper_sdl 的事件泵线程调用
+void key_sdl_inject_press(uint32_t lv_key){ keyq_push(lv_key, true); }
+void key_sdl_inject_release(uint32_t lv_key){ keyq_push(lv_key, false); }
+
 static void key_sdl_read_cb(lv_indev_t * indev, lv_indev_data_t * data){
     static uint32_t last_key = 0;
-    static bool pending_release = false;
+    static bool last_pressed = false;
 
     key_enc_evdev_t * ctx = (key_enc_evdev_t *)lv_indev_get_driver_data(indev);
 
-    if(pending_release){
-        pending_release = false;
-        data->key = last_key;
-        data->state = LV_INDEV_STATE_RELEASED;
-        return;
-    }
-
-    uint32_t key = 0;
+    keyev_t ev = { 0, false };
+    bool have = false;
     pthread_mutex_lock(&s_mtx);
     if(s_count > 0){
-        key = s_queue[0];
-        memmove(s_queue, s_queue + 1, (size_t)(--s_count) * sizeof(uint32_t));
+        ev = s_queue[0];
+        memmove(s_queue, s_queue + 1, (size_t)(--s_count) * sizeof(keyev_t));
+        have = true;
     }
     pthread_mutex_unlock(&s_mtx);
 
-    if(key){
-        data->key = key;
-        data->state = LV_INDEV_STATE_PRESSED;
-        last_key = key;
-        pending_release = true;
-        if(ctx && ctx->input_cb){
-            ctx->input_cb(key); // 手写屏导航，恒在 LVGL 线程
+    if(have){
+        if(ev.press){
+            data->key = ev.key;
+            data->state = LV_INDEV_STATE_PRESSED;
+            last_key = ev.key;
+            last_pressed = true;
+            if(ctx && ctx->input_cb){
+                ctx->input_cb(ev.key); // 手写屏导航，恒在 LVGL 线程
+            }
+        } else {
+            data->key = ev.key ? ev.key : last_key;
+            data->state = LV_INDEV_STATE_RELEASED;
+            last_pressed = false;
         }
         return;
     }
 
+    // 队列空：维持上一次状态，按住键持续报 PRESSED
     data->key = last_key;
-    data->state = LV_INDEV_STATE_RELEASED;
+    data->state = last_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
 lv_indev_t * key_enc_evdev_init(key_enc_evdev_t * key_enc_evdev){
