@@ -2,6 +2,8 @@
 #include "ui_screens/screen_manager.h" // ui_hook_filemanager_*
 
 #include <ctype.h>
+#include <stdio.h>
+#include <string.h>
 #include <lvgl/lvgl.h>
 
 #include "config.h"
@@ -24,6 +26,47 @@ static const char *strip_lv_fs_prefix(const char *path)
     return path;
 }
 
+// lv_fs 路径 (带盘符) 目录能否打开：SD 拔了/目录被删时探测用
+static bool fm_dir_openable(const char *lvpath)
+{
+    lv_fs_dir_t d;
+    if (lv_fs_dir_open(&d, lvpath) != LV_FS_RES_OK) return false;
+    lv_fs_dir_close(&d);
+    return true;
+}
+
+// 把当前浏览目录存到普通文件 (posix 路径)，内容是 lv_fs 带盘符路径
+static void fm_save_last_dir(void)
+{
+    if (!s_fe) return;
+    const char *cur = lv_file_explorer_get_current_path(s_fe);
+    if (!cur || cur[0] == '\0') return;
+    FILE *f = fopen(FILEMANAGER_LAST_DIR_FILE, "w");
+    if (!f) { log_warn("filemanager: cannot write last dir"); return; }
+    fputs(cur, f);
+    fclose(f);
+}
+
+// 恢复上次目录；读不到/目录已不存在则退回根目录
+static void fm_open_last_or_root(void)
+{
+    char buf[256];
+    FILE *f = fopen(FILEMANAGER_LAST_DIR_FILE, "r");
+    if (f) {
+        char *ok = fgets(buf, sizeof(buf), f);
+        fclose(f);
+        if (ok) {
+            size_t n = strlen(buf);
+            while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = '\0';
+            if (n > 0 && fm_dir_openable(buf)) {
+                lv_file_explorer_open_dir(s_fe, buf);
+                return;
+            }
+        }
+    }
+    lv_file_explorer_open_dir(s_fe, FILEMANAGER_ROOT_DIR);
+}
+
 static void file_explorer_event_handler(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
@@ -32,6 +75,7 @@ static void file_explorer_event_handler(lv_event_t *e)
     const char *sel_fn   = lv_file_explorer_get_selected_file_name(fe);
     if (!cur_path || !sel_fn || sel_fn[0] == '\0') return;
     if (!s_apps) { log_error("filemanager: apps is NULL"); return; }
+    fm_save_last_dir(); // 选中文件即将启动 app 离开，先记住所在目录
     apps_try_launch_by_file(s_apps, strip_lv_fs_prefix(cur_path), sel_fn);
 }
 
@@ -46,7 +90,7 @@ void ui_hook_filemanager_mount(lv_obj_t *container)
     lv_obj_set_style_bg_color(s_fe, ui_color(UI_C_SURFACE), 0);
     lv_obj_set_size(s_fe, LV_PCT(100), LV_PCT(100));
     lv_obj_center(s_fe);
-    lv_file_explorer_open_dir(s_fe, "A:/root/");
+    fm_open_last_or_root();
     lv_obj_add_event_cb(s_fe, file_explorer_event_handler, LV_EVENT_VALUE_CHANGED, NULL);
 
     // 文件不多时表体下方留白画的是 table MAIN 底色(默认白)，跟 surface 统一
@@ -69,4 +113,10 @@ void ui_hook_filemanager_enter(lv_group_t *group)
         // 得先按一次 ENTER 才能用旋转翻行。这里直接进编辑态省掉那一下。
         lv_group_set_editing(group, true);
     }
+}
+
+// 设备实现 ui_hook_filemanager_leave: 离屏时把当前浏览目录存盘。
+void ui_hook_filemanager_leave(void)
+{
+    fm_save_last_dir();
 }

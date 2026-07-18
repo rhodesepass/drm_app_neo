@@ -42,6 +42,10 @@
 #define SETTINGS_VERSION 4
 #define SETTINGS_BRIGHTNESS_PATH "/sys/class/backlight/backlight/brightness"
 
+// 文件管理器上次浏览目录 (lv_fs 带盘符路径, 如 "A:/root/xxx/")。跨重启恢复。
+#define FILEMANAGER_ROOT_DIR "A:/root/"
+#define FILEMANAGER_LAST_DIR_FILE "/root/epass_fm_lastdir.txt"
+
 // ========== Storage Configuration ==========
 #define NAND_MOUNT_POINT "/"
 #define SD_MOUNT_POINT "/sd"
@@ -56,6 +60,7 @@
 #define PRTS_OPERATORS_MAX 256
 #define PRTS_TIMER_MAX 1024
 #define PRTS_OPERATOR_PARSE_LOG "/root/asset.log"
+#define PRTS_ORDER_FILE "/root/epass_oporder.txt"
 #define PRTS_ASSET_VERSION_NUMBER 1
 #define PRTS_ASSET_CONFIG_FILENAME "epconfig.json"
 #define PRTS_ASSET_DIR "/assets/"
@@ -437,8 +442,12 @@
 #endif
 #undef SETTINGS_FILE_PATH
 #define SETTINGS_FILE_PATH EPASS_PC_DATA_DIR "/epass_cfg.bin"
+#undef FILEMANAGER_LAST_DIR_FILE
+#define FILEMANAGER_LAST_DIR_FILE EPASS_PC_DATA_DIR "/epass_fm_lastdir.txt"
 #undef PRTS_OPERATOR_PARSE_LOG
 #define PRTS_OPERATOR_PARSE_LOG EPASS_PC_DATA_DIR "/asset.log"
+#undef PRTS_ORDER_FILE
+#define PRTS_ORDER_FILE EPASS_PC_DATA_DIR "/epass_oporder.txt"
 #undef PRTS_ASSET_DIR
 #define PRTS_ASSET_DIR EPASS_PC_DATA_DIR "/assets/"
 #undef APPS_PARSE_LOG

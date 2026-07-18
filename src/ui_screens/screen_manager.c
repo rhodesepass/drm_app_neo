@@ -63,6 +63,9 @@ __attribute__((weak)) void ui_hook_filemanager_enter(lv_group_t *group)
 {
     (void)group;
 }
+__attribute__((weak)) void ui_hook_filemanager_leave(void)
+{
+}
 
 lv_group_t *screens_group(void) { return s_group; }
 screen_id_t screens_current(void) { return s_current; }
@@ -337,6 +340,16 @@ void screens_handle_key(uint32_t key)
         return;
     }
 
+    // 干员列表排序模式：方向键移动被拎干员，ESC 退出排序(落盘)，均吞掉按键留在列表屏
+    if (s_current == SCREEN_OPLIST && screen_oplist_is_reordering()) {
+        if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT) {
+            screen_oplist_reorder_move(key);
+        } else if (key == LV_KEY_ESC) {
+            screen_oplist_exit_reorder(true);
+        }
+        return;
+    }
+
     // 主菜单 / 干员列表：ESC 回 spinner
     if (s_current == SCREEN_MAINMENU || s_current == SCREEN_OPLIST) {
         if (key == LV_KEY_ESC) {
@@ -348,6 +361,7 @@ void screens_handle_key(uint32_t key)
     // 文件管理器：进屏即编辑态浏览文件表，ESC 一下直接回主菜单(不退编辑态)
     if (s_current == SCREEN_FILEMANAGER) {
         if (key == LV_KEY_ESC) {
+            ui_hook_filemanager_leave(); // 存当前浏览目录，下次恢复
             screen_show(SCREEN_MAINMENU);
         }
         return;

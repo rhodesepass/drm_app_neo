@@ -64,6 +64,8 @@ void ui_hook_srgn_config(void);
 void ui_hook_filemanager_mount(lv_obj_t *container);
 // 进入文件管理器屏时把文件表加入导航 group 并聚焦 (设备)，sim 弱默认空。
 void ui_hook_filemanager_enter(lv_group_t *group);
+// 离开文件管理器屏时把当前浏览目录存盘 (设备)，sim 弱默认空。
+void ui_hook_filemanager_leave(void);
 
 #ifdef __cplusplus
 }
