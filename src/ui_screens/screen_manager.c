@@ -345,6 +345,14 @@ void screens_handle_key(uint32_t key)
         return;
     }
 
+    // 文件管理器：进屏即编辑态浏览文件表，ESC 一下直接回主菜单(不退编辑态)
+    if (s_current == SCREEN_FILEMANAGER) {
+        if (key == LV_KEY_ESC) {
+            screen_show(SCREEN_MAINMENU);
+        }
+        return;
+    }
+
     // 其他屏(非 spinner)：非编辑态下 ESC 回主菜单，否则退出编辑态
     if (s_current != SCREEN_SPINNER) {
         bool is_editing = lv_group_get_editing(s_group);

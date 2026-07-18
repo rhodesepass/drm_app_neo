@@ -9,7 +9,7 @@ static int ext_lower_with_check(char* dest,char* src,int max_len){
         if(dest[i] >= 'A' && dest[i] <= 'Z'){
             dest[i] += 'a' - 'A';
         }
-        else if((dest[i] >= 'a' && dest[i] <= 'z') || dest[i] == '.'){
+        else if((dest[i] >= 'a' && dest[i] <= 'z') || (dest[i] >= '0' && dest[i] <= '9') || dest[i] == '.'){
             continue;
         }
         else if(dest[i] == '\0'){

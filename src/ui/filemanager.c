@@ -48,6 +48,13 @@ void ui_hook_filemanager_mount(lv_obj_t *container)
     lv_obj_center(s_fe);
     lv_file_explorer_open_dir(s_fe, "A:/root/");
     lv_obj_add_event_cb(s_fe, file_explorer_event_handler, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // 文件不多时表体下方留白画的是 table MAIN 底色(默认白)，跟 surface 统一
+    lv_obj_t *ft = lv_file_explorer_get_file_table(s_fe);
+    if (ft) {
+        lv_obj_set_style_bg_color(ft, ui_color(UI_C_SURFACE), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(ft, LV_OPA_COVER, LV_PART_MAIN);
+    }
 }
 
 // 设备实现 ui_hook_filemanager_enter: 文件表加入导航 group 并聚焦。
@@ -58,5 +65,8 @@ void ui_hook_filemanager_enter(lv_group_t *group)
     if (file_table) {
         lv_group_add_obj(group, file_table);
         lv_group_focus_obj(file_table);
+        // encoder indev 下 lv_table 是可编辑控件，默认聚焦≠进编辑态，
+        // 得先按一次 ENTER 才能用旋转翻行。这里直接进编辑态省掉那一下。
+        lv_group_set_editing(group, true);
     }
 }
