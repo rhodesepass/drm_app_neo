@@ -4,6 +4,7 @@
 #include "lvgl.h"
 #include <stdlib.h>
 #include "ui_screens/ui_services.h"
+#include "ui_screens/ui_backend.h"
 #include "ui_screens/screen_manager.h"
 #include "ui_screens/screens/screen_confirm.h"
 #include "ui_screens/screens/screen_usbselect.h"
@@ -72,6 +73,12 @@ static void ui_ipc_helper_timer_cb(lv_timer_t *timer){
                 // 同一次素材刷新 (usb_aio_handler 拔盘后触发) 也可能带来新的
                 // 扩列图文件，联动重扫 /dispimg；扩列图屏自身按 tick diff 刷新，无需 rebuild。
                 ui_displayimg_rescan();
+                break;
+            case UI_IPC_HELPER_REQ_TYPE_RELOAD_APPS:
+                // 在 LVGL 线程内重扫应用列表(该列表由本线程读取,避免与 IPC 线程竞争),
+                // 再丢弃缓存的应用列表屏,下次进入按新数据重建。
+                ui_backend_reload_applist();
+                screens_rebuild(SCREEN_APPLIST);
                 break;
             case UI_IPC_HELPER_REQ_TYPE_UIX_SHOW:
                 uix_show();

@@ -9,6 +9,8 @@ typedef enum {
     // UIX 会话：弹出交互屏（参数从 uix_session 读）/ 撤回交互屏
     UI_IPC_HELPER_REQ_TYPE_UIX_SHOW = 3,
     UI_IPC_HELPER_REQ_TYPE_UIX_DISMISS = 4,
+    // 重新从磁盘扫描应用列表并重建应用列表屏。
+    UI_IPC_HELPER_REQ_TYPE_RELOAD_APPS = 5,
 } ui_ipc_helper_req_type_t;
 
 typedef struct {

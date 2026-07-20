@@ -84,6 +84,8 @@ int  ui_backend_applist_count(void);
 bool ui_backend_applist_get(int idx, ui_app_entry_t *out);
 // 选中应用 (设备=按 type 启动/切后台/告警)。调用方随后切到 spinner。
 void ui_backend_applist_select(int idx);
+// 从磁盘重扫应用列表。必须在 LVGL 线程调用(列表由本线程读取)。
+void ui_backend_reload_applist(void);
 
 // ---- 扩列图按键导航 (←/→ 翻页) ----
 void ui_backend_displayimg_key(uint32_t key);

@@ -63,6 +63,9 @@ size_t calculate_ipc_req_size(ipc_req_type_t type){
         case IPC_REQ_UIX_SESSION_CANCEL:
             size += sizeof(ipc_req_uix_session_data_t);
             break;
+        case IPC_REQ_APPS_RELOAD_LIST:
+            // No additional data
+            break;
         default:
             log_error("calculate_ipc_req_size: unknown request type: %d", type);
             break;
@@ -130,6 +133,9 @@ size_t calculate_ipc_resp_size_by_req(ipc_req_type_t type){
             size += sizeof(ipc_resp_uix_session_poll_data_t);
             break;
         case IPC_REQ_UIX_SESSION_CANCEL:
+            // No additional data
+            break;
+        case IPC_REQ_APPS_RELOAD_LIST:
             // No additional data
             break;
         default:
@@ -203,6 +209,9 @@ void ipc_print_req_type(ipc_req_type_t type){
             break;
         case IPC_REQ_UIX_SESSION_CANCEL:
             log_debug("IPC_REQ_UIX_SESSION_CANCEL");
+            break;
+        case IPC_REQ_APPS_RELOAD_LIST:
+            log_debug("IPC_REQ_APPS_RELOAD_LIST");
             break;
         default:
             log_debug("IPC_REQ_UNKNOWN (%d)", type);

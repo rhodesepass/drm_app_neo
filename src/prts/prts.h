@@ -91,11 +91,9 @@ typedef struct {
 
     spsc_bq_t req_queue;
     atomic_int is_auto_switch_blocked;
-
-    bool use_sd;
 } prts_t;
 
-void prts_init(prts_t* prts,overlay_t* overlay,bool use_sd);
+void prts_init(prts_t* prts,overlay_t* overlay);
 void prts_destroy(prts_t* prts);
 
 // 保证 operators 数组至少能容纳 need 个 entry（倍增 realloc，上限 PRTS_OPERATORS_MAX）。

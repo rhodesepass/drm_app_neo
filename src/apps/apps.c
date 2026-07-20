@@ -40,7 +40,7 @@ static void apps_bg_app_check_timer_cb(void *userdata, bool is_last) {
 #endif
 }
 
-int apps_init(apps_t *apps, prts_t *prts, bool use_sd) {
+int apps_init(apps_t *apps, prts_t *prts) {
     log_info("==> Apps Initializing...");
     apps->app_count = 0;
     apps->prts = prts;
@@ -50,12 +50,9 @@ int apps_init(apps_t *apps, prts_t *prts, bool use_sd) {
         log_error("failed to open parse log file: %s", APPS_PARSE_LOG);
     }
 
+    // SD 热插拔:无条件两边都扫,目录打不开时 apps_cfg_scan 返回 0 是安全空操作。
     int errcnt = apps_cfg_scan(apps, APPS_DIR, APP_SOURCE_NAND);
-
-    if (use_sd) {
-        log_info("==> Apps will scan SD directory: %s", APPS_DIR_SD);
-        errcnt += apps_cfg_scan(apps, APPS_DIR_SD, APP_SOURCE_SD);
-    }
+    errcnt += apps_cfg_scan(apps, APPS_DIR_SD, APP_SOURCE_SD);
 
     if (errcnt != 0) {
         log_warn("failed to load apps, error count: %d", errcnt);
@@ -79,6 +76,55 @@ int apps_init(apps_t *apps, prts_t *prts, bool use_sd) {
 
     log_info("==> Apps Initalized! %d apps loaded", apps->app_count);
     return 0;
+}
+
+int apps_reload(apps_t *apps) {
+    // 重扫会重建整个 apps[] 数组,运行中的后台应用 pid 会被清掉,导致
+    // bg_app_check_timer 追踪不到、退出时无法 kill。先按 uuid 快照旧 pid,重扫后回填。
+    struct { uuid_t uuid; int pid; } bg_snapshot[APPS_MAX];
+    int bg_count = 0;
+    for (int i = 0; i < apps->app_count; i++) {
+        if (apps->apps[i].type == APP_TYPE_BACKGROUND && apps->apps[i].pid != -1) {
+            bg_snapshot[bg_count].uuid = apps->apps[i].uuid;
+            bg_snapshot[bg_count].pid = apps->apps[i].pid;
+            bg_count++;
+        }
+    }
+
+    // extmap 存的是指向 apps[] 的裸指针,重扫前必须先清掉,否则悬空。
+    apps_extmap_init(&apps->extmap);
+    apps->app_count = 0;
+
+    // SD 是热插拔的,启动时的 use_sd 快照会过期,重扫时无条件两边都找。
+    // 目录打不开(SD 未插/已拔)时 apps_cfg_scan 返回 0,是安全的空操作。
+    int errcnt = apps_cfg_scan(apps, APPS_DIR, APP_SOURCE_NAND);
+    errcnt += apps_cfg_scan(apps, APPS_DIR_SD, APP_SOURCE_SD);
+
+    for (int i = 0; i < apps->app_count; i++) {
+        if (apps->apps[i].type != APP_TYPE_BACKGROUND)
+            continue;
+        for (int j = 0; j < bg_count; j++) {
+            if (uuid_compare(&apps->apps[i].uuid, &bg_snapshot[j].uuid)) {
+                apps->apps[i].pid = bg_snapshot[j].pid;
+                break;
+            }
+        }
+    }
+
+    if (errcnt != 0) {
+        log_warn("apps_reload: failed to load apps, error count: %d", errcnt);
+        ui_warning(UI_WARNING_APP_LOAD_ERROR);
+    }
+
+#ifndef APP_RELEASE
+    for (int i = 0; i < apps->app_count; i++) {
+        apps_cfg_log_entry(&apps->apps[i]);
+    }
+    apps_extmap_log_entry(&apps->extmap);
+#endif
+
+    log_info("==> Apps reloaded! %d apps loaded", apps->app_count);
+    return errcnt;
 }
 
 static int kill_app_background(int pgid);

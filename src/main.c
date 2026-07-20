@@ -42,7 +42,6 @@ apps_t g_apps;
 
 int g_running = 1;
 int g_exitcode = 0;
-bool g_use_sd = false;
 
 void signal_handler(int sig)
 {
@@ -129,8 +128,6 @@ int main(int argc, char *argv[]){
         }
     }
 
-    // 不再依赖启动参数：/sd 已挂载即启用 SD 资产扫描 (挂载由 init 脚本完成)
-    g_use_sd = is_sd_mounted();
 
 #ifdef APP_RELEASE
     log_warn("Release mode is enabled. Most logs are disabled.");
@@ -221,10 +218,10 @@ int main(int argc, char *argv[]){
     overlay_init(&g_overlay, &g_drm_warpper, &g_layer_animation);
 
     // ============ PRTS 初始化===============
-    prts_init(&g_prts, &g_overlay, g_use_sd);
+    prts_init(&g_prts, &g_overlay);
 
     // ============ APPS 初始化 ===============
-    apps_init(&g_apps, &g_prts, g_use_sd);
+    apps_init(&g_apps, &g_prts);
 
     // ============ LVGL 初始化 ===============
     drm_warpper_init_layer(
@@ -237,11 +234,6 @@ int main(int argc, char *argv[]){
     lvgl_drm_warp_init(&g_lvgl_drm_warp, &g_drm_warpper,&g_layer_animation,&g_prts,&g_apps);
     // drm_warpper_set_layer_coord(&g_drm_warpper, DRM_WARPPER_LAYER_UI, 0, SCREEN_HEIGHT);
     // drm_warpper_set_layer_coord(&g_drm_warpper, DRM_WARPPER_LAYER_OVERLAY, OVERLAY_WIDTH, 0);
-
-    // 如果SD卡插入，但没有启用SD模式，则应该是mount出错了，这边告警
-    if(is_sdcard_inserted() && !g_use_sd){
-        ui_warning(UI_WARNING_SD_MOUNT_ERROR);
-    }
 
 
     // ============ 主循环 ===============

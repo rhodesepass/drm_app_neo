@@ -599,10 +599,10 @@ static void prts_reload_assets(prts_t* prts,bool is_first_load) {
 
     int errcnt = prts_operator_scan_assets(prts, PRTS_ASSET_DIR,PRTS_SOURCE_NAND);
 
-    if(prts->use_sd){
-        log_info("==> PRTS will scan SD assets directory: %s", PRTS_ASSET_DIR_SD);
-        errcnt += prts_operator_scan_assets(prts, PRTS_ASSET_DIR_SD,PRTS_SOURCE_SD);
-    }
+    // SD 热插拔:不依赖启动快照 use_sd,无条件也扫 SD 素材目录。
+    // 目录打不开(SD 未插/已拔)时 prts_operator_scan_assets 返回 0,是安全的空操作。
+    log_info("==> PRTS will scan SD assets directory: %s", PRTS_ASSET_DIR_SD);
+    errcnt += prts_operator_scan_assets(prts, PRTS_ASSET_DIR_SD,PRTS_SOURCE_SD);
 
     if(errcnt != 0){
         ui_warning(UI_WARNING_ASSET_ERROR);
@@ -770,10 +770,9 @@ int prts_operators_reserve(prts_t* prts, int need){
     return 0;
 }
 
-void prts_init(prts_t* prts, overlay_t* overlay, bool use_sd){
+void prts_init(prts_t* prts, overlay_t* overlay){
     log_info("==> PRTS Initializing...");
     prts->overlay = overlay;
-    prts->use_sd = use_sd;
     prts->operators = NULL;
     prts->operator_capacity = 0;
     prts->operator_count = 0;

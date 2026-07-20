@@ -170,6 +170,24 @@ inline static int handle_prts_reload_assets(apps_t *apps, ipc_req_t *req, ipc_re
     return calculate_ipc_resp_size_by_req(req->type);
 }
 
+inline static int handle_apps_reload_list(apps_t *apps, ipc_req_t *req, ipc_resp_t *resp){
+    (void)apps;
+    // 应用列表由 LVGL 线程读取,重扫也必须在该线程做。投递一个 helper 请求过去,
+    // 由 ui_ipc_helper_timer_cb 在 LVGL 线程内 apps_reload + 重建应用列表屏。
+    ui_ipc_helper_req_t* helper_req = (ui_ipc_helper_req_t*)malloc(sizeof(ui_ipc_helper_req_t));
+    if(helper_req == NULL){
+        log_error("handle_apps_reload_list: malloc failed");
+        resp->type = IPC_RESP_ERROR_NOMEM;
+        return sizeof(ipc_resp_type_t);
+    }
+    helper_req->type = UI_IPC_HELPER_REQ_TYPE_RELOAD_APPS;
+    helper_req->on_heap = true;
+    ui_ipc_helper_request(helper_req);
+
+    resp->type = IPC_RESP_OK;
+    return calculate_ipc_resp_size_by_req(req->type);
+}
+
 // =========================================
 // Settings 子模块 处理方法
 // =========================================
@@ -589,6 +607,8 @@ int apps_ipc_handler(apps_t *apps, uint8_t* rxbuf, size_t rxlen,uint8_t* txbuf, 
             return handle_overlay_schedule_transition_video(apps, req, resp);
         case IPC_REQ_APP_EXIT:
             return handle_app_exit(req, resp);
+        case IPC_REQ_APPS_RELOAD_LIST:
+            return handle_apps_reload_list(apps, req, resp);
         case IPC_REQ_UIX_CONFIRM_START:
             return handle_uix_confirm_start(req, resp);
         case IPC_REQ_UIX_USB_SELECT_START:

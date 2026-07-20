@@ -190,7 +190,10 @@ typedef enum {
     IPC_REQ_UIX_SESSION_POLL = 18,
     IPC_REQ_UIX_SESSION_CANCEL = 19,
 
-    IPC_REQ_MAX = 20,
+    // app 子模块：重新从磁盘扫描并刷新应用列表。
+    IPC_REQ_APPS_RELOAD_LIST = 20,
+
+    IPC_REQ_MAX = 21,
 } ipc_req_type_t;
 
 typedef struct {

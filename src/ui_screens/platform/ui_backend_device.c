@@ -24,7 +24,6 @@
 #include <dirent.h>
 
 extern settings_t g_settings;
-extern bool g_use_sd;
 
 static prts_t *s_prts;
 static apps_t *s_apps;
@@ -261,7 +260,6 @@ const char *ui_backend_sd_label(void)
 {
     static char buf[128], used[32], tot[32];
     if (!is_sdcard_inserted()) return "SD卡不存在";
-    if (!g_use_sd)             return "SD卡挂载失败";
     uint64_t total = fs_total(SD_MOUNT_POINT);
     fmt_size(total - fs_avail(SD_MOUNT_POINT), used, sizeof(used));
     fmt_size(total, tot, sizeof(tot));
@@ -398,6 +396,7 @@ void ui_backend_oplist_save_order(void)
 
 // ================= 应用列表 (原 actions_apps.c) =================
 int ui_backend_applist_count(void) { return s_apps ? s_apps->app_count : 0; }
+void ui_backend_reload_applist(void) { if (s_apps) apps_reload(s_apps); }
 bool ui_backend_applist_get(int idx, ui_app_entry_t *out)
 {
     if (!s_apps || idx < 0 || idx >= s_apps->app_count) return false;
