@@ -319,6 +319,64 @@ static void parse_autokeys(void){
     log_info("[sdl] autokey: %d scheduled", s_autokey_count);
 }
 
+// ---- monkey 模式 ----
+// EPASS_MONKEY="<seed>:<step_ms>:<duration_ms>" —— 每 step_ms 用确定性 PRNG
+// (种子=seed, 崩溃可 100% 复现) 注入一个随机导航键, 到 duration_ms 干净退出。
+// 只发设备真有的 5 个键, 覆盖人测不到的角落(快速连按/边界屏来回切)。配合
+// ASan/UBSan 构建, 断言就一句: 别崩、别 UB。
+static bool s_monkey_on;
+static uint32_t s_monkey_seed, s_monkey_step, s_monkey_end, s_monkey_next;
+static uint32_t s_monkey_prev_key;
+
+static uint32_t monkey_rand(void){
+    // xorshift32, 自带状态; 不用 rand() 免得和别处 srand 打架、也更确定
+    uint32_t x = s_monkey_seed;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    s_monkey_seed = x;
+    return x;
+}
+
+static void parse_monkey(void){
+    const char* env = getenv("EPASS_MONKEY");
+    if(!env) return;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s", env);
+    char* save = NULL;
+    char* a = strtok_r(buf, ":", &save);
+    char* b = strtok_r(NULL, ":", &save);
+    char* c = strtok_r(NULL, ":", &save);
+    uint32_t seed = a ? (uint32_t)strtoul(a, NULL, 0) : 1;
+    s_monkey_seed = seed ? seed : 1;   // 0 会让 xorshift 卡死
+    s_monkey_step = b ? (uint32_t)atoi(b) : 60;
+    if(s_monkey_step == 0) s_monkey_step = 60;
+    uint32_t dur = c ? (uint32_t)atoi(c) : 60000;
+    s_monkey_end = dur;                // 相对启动的毫秒数
+    s_monkey_next = 0;
+    s_monkey_on = true;
+    log_info("[sdl] monkey: seed=%u step=%ums dur=%ums", seed, s_monkey_step, dur);
+}
+
+// 在显示循环里驱动: now 为 SDL_GetTicks()。到时长返回后由调用方退出。
+static void monkey_tick(uint32_t now){
+    if(!s_monkey_on) return;
+    if(now >= s_monkey_end){
+        if(s_monkey_prev_key){ key_sdl_inject_release(s_monkey_prev_key); s_monkey_prev_key = 0; }
+        s_monkey_on = false;
+        g_running = 0;
+        return;
+    }
+    if(now < s_monkey_next) return;
+    s_monkey_next = now + s_monkey_step;
+    static const uint32_t keys[] = {
+        LV_KEY_LEFT, LV_KEY_RIGHT, LV_KEY_ENTER, LV_KEY_ESC, LV_KEY_END,
+    };
+    // 上一个键先松开, 再按下一个 —— 模拟真实的短按序列
+    if(s_monkey_prev_key){ key_sdl_inject_release(s_monkey_prev_key); s_monkey_prev_key = 0; }
+    uint32_t k = keys[monkey_rand() % (sizeof(keys)/sizeof(keys[0]))];
+    key_sdl_inject_press(k);
+    s_monkey_prev_key = k;
+}
+
 static void save_shot(const char* path){
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_WIDTH, SCREEN_HEIGHT,
                                                        24, SDL_PIXELFORMAT_RGB24);
@@ -378,6 +436,7 @@ static void* sdl_display_thread(void* arg){
     uint32_t shot_ms = 3000;
     if(getenv("EPASS_SHOT_MS")) shot_ms = (uint32_t)atoi(getenv("EPASS_SHOT_MS"));
     parse_autokeys();
+    parse_monkey();
 
     atomic_store(&s_ready, 1);
     log_info("==> [sdl] display thread started (%dx%d) [F12/Alt+Enter 全屏, 拖角缩放, 等比 letterbox]",
@@ -418,6 +477,8 @@ static void* sdl_display_thread(void* arg){
                 key_sdl_inject_release(s_autokeys[i].lv_key);
             }
         }
+
+        monkey_tick(now);
 
         compose_frame(drm_warpper);
 

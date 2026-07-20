@@ -46,22 +46,26 @@ static bool box_next(struct box_iter *it, uint32_t *type,
 	uint64_t size;
 	unsigned int hdr = 8;
 
-	if (p + 8 > it->end)
+	/* it->p 恒 <= it->end (每次前进都经过下面的 size 校验), 故 end-p 非负可用。
+	 * 一律拿 size 跟剩余空间做减法比较, 不写 p+size —— size 由文件 32/64 位字段
+	 * 决定可达 2^64, p+size 会让指针本身溢出(UB), 且回绕后能骗过 > end 的检查。 */
+	uint64_t avail = (uint64_t)(it->end - p);
+	if (avail < 8)
 		return false;
 
 	size = rd_u32(p);
 	*type = rd_u32(p + 4);
 
 	if (size == 1) {
-		if (p + 16 > it->end)
+		if (avail < 16)
 			return false;
 		size = rd_u64(p + 8);
 		hdr = 16;
 	} else if (size == 0) {
-		size = (uint64_t)(it->end - p);
+		size = avail;
 	}
 
-	if (size < hdr || p + size > it->end)
+	if (size < hdr || size > avail)
 		return false;
 
 	*payload = p + hdr;
@@ -197,9 +201,24 @@ static int build_samples(struct mp4_demux *m, const uint8_t *stbl,
 	sample_count = rd_u32(stsz + 8);
 	if (sample_count == 0)
 		return -1;
+	/* sample_count 是 32 位可控字段, 不设上限 calloc 会请求上 GB 内存 ——
+	 * 64MB 设备直接 OOM。用文件实际尺寸/表长度封顶: 变长模式下每个 sample 在
+	 * stsz 表里占 4 字节, 定长模式下总数据量不能超过整个文件, 都不可能超过
+	 * 文件字节数, 畸形的巨大计数据此被挡在 calloc 之前。 */
+	if (sample_size_default == 0) {
+		if ((uint64_t)sample_count > (stsz_sz - 12) / 4)
+			return -1;
+	} else if ((uint64_t)sample_count * sample_size_default > m->map_size) {
+		return -1;
+	}
 
 	chunk_count = (stco_sz >= 8) ? rd_u32(stco + 4) : 0;
 	if (chunk_count == 0)
+		return -1;
+	/* chunk_count 同为可控 32 位字段。build_samples 的 stsc 遍历会跑满
+	 * chunk_count 次(spc==0 的块 sample_idx 不前进), 不封顶就是 40 亿次死循环。
+	 * 每块偏移在 stco/co64 表里占 4/8 字节, 条目数不可能超过表长。 */
+	if (chunk_count > (stco_sz - 8) / (is_co64 ? 8 : 4))
 		return -1;
 
 	m->samples = calloc(sample_count, sizeof(*m->samples));

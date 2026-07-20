@@ -1,0 +1,11 @@
+# 编译产物与运行产物, 不入库。
+fuzz_h264
+fuzz_mp4
+fuzz_epconfig
+findings/
+
+# 变异语料可再生长(几十 MB / 上万文件), 不入库。
+# 起始种子用 seed_corpus.sh 生成; 崩溃复现样本放 regressions/ 并入库。
+corpus_epconfig/
+corpus_h264/
+corpus_mp4/

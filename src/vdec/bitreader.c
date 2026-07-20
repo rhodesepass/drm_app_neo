@@ -35,8 +35,15 @@ bool br_read(struct bitreader *br, uint32_t *val, unsigned int nbits)
 		uint8_t byte;
 
 	next_byte:
-		if (br->byte >= br->size)
+		if (br->byte >= br->size) {
+			/* 循环中途撞到数据末尾: bits_in_cache 此刻已被本轮累加过,
+			 * 若原样带着脏值返回, 忽略错误继续解析的调用方(br_ue_v 等)
+			 * 下次 read 会算出 shift>=8 → 移位指数溢出 UB。置入一致的
+			 * "读空"死态, 让后续 read 都靠开头的守卫干净失败。 */
+			br->byte = br->size;
+			br->bits_in_cache = 0;
 			return false;
+		}
 
 		byte = br->data[br->byte++];
 		br->epb_cache = (br->epb_cache << 8) | byte;

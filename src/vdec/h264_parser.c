@@ -292,10 +292,16 @@ int h264_parser_parse_param_nal(struct h264_parser *p, const struct nalu *n)
 						    s.scaling_list_8x8, NULL);
 		}
 
+		/* 规范范围 0..12。后面都用作 1<<(x+4) 的移位量与 br_u(x+4) 的位数,
+		 * 畸形 SPS 给出更大值会触发移位指数溢出 UB, 在源头钳死保护所有使用点。 */
 		s.log2_max_frame_num_minus4 = br_ue_v(&br);
+		if (s.log2_max_frame_num_minus4 > 12)
+			s.log2_max_frame_num_minus4 = 12;
 		s.pic_order_cnt_type = br_ue_v(&br);
 		if (s.pic_order_cnt_type == 0) {
 			s.log2_max_pic_order_cnt_lsb_minus4 = br_ue_v(&br);
+			if (s.log2_max_pic_order_cnt_lsb_minus4 > 12)
+				s.log2_max_pic_order_cnt_lsb_minus4 = 12;
 		} else if (s.pic_order_cnt_type == 1) {
 			s.delta_pic_order_always_zero_flag = br_u1(&br);
 			s.offset_for_non_ref_pic = br_se_v(&br);
@@ -437,15 +443,22 @@ static void parse_one_rplm(struct bitreader *br, bool *flag,
 	if (!*flag)
 		return;
 	for (;;) {
-		uint32_t idc = br_ue_v(br);
+		uint32_t idc;
+		/* 码流耗尽时 br_ue_v 恒返回 0(永远不等于终止值 3), 会无限打转 ——
+		 * 畸形切片头即可让解码线程永久占满 CPU。用 br_ue 的错误返回退出。 */
+		if (!br_ue(br, &idc))
+			break;
 		if (idc == 3)
 			break;
 		if (*count < 32) {
 			list[*count].idc = idc;
-			list[*count].val = br_ue_v(br); /* abs_diff or lt_pic_num */
+			if (!br_ue(br, &list[*count].val)) /* abs_diff or lt_pic_num */
+				break;
 			(*count)++;
 		} else {
-			br_ue_v(br);
+			uint32_t skip;
+			if (!br_ue(br, &skip))
+				break;
 		}
 	}
 }
@@ -472,9 +485,16 @@ static void parse_pred_weight_table(struct bitreader *br,
 	int num_l1 = h->num_ref_idx_l1_active_minus1 + 1;
 	int list, i, j;
 
+	/* 规范范围 0..7。畸形码流给出更大值会让下面 1<<denom 触发有符号移位 UB,
+	 * 且该值随后填入 V4L2 控制发给硬件, 一并按规范上限钳死。 */
 	h->luma_log2_weight_denom = br_ue_v(br);
-	if (chroma_array_type != 0)
+	if (h->luma_log2_weight_denom > 7)
+		h->luma_log2_weight_denom = 7;
+	if (chroma_array_type != 0) {
 		h->chroma_log2_weight_denom = br_ue_v(br);
+		if (h->chroma_log2_weight_denom > 7)
+			h->chroma_log2_weight_denom = 7;
+	}
 	h->has_pred_weights = true;
 
 	for (list = 0; list < 2; list++) {
@@ -687,7 +707,9 @@ void h264_parser_compute_poc(struct h264_parser *p,
 {
 	const struct h264_pps *pps = h264_parser_get_pps(p, h->pic_parameter_set_id);
 	const struct h264_sps *sps = pps ? h264_parser_get_sps(p, pps->seq_parameter_set_id) : NULL;
-	int32_t top = 0, bottom = 0;
+	/* top/bottom 及各类型中间量用 int64: 三种 POC 类型都在 int32 上做加/乘,
+	 * 畸形 SPS/slice 可致有符号溢出 UB。末尾写回 out 的 int32 字段是截断(非 UB)。 */
+	int64_t top = 0, bottom = 0;
 
 	memset(out, 0, sizeof(*out));
 	if (!sps)
@@ -696,7 +718,7 @@ void h264_parser_compute_poc(struct h264_parser *p,
 	if (sps->pic_order_cnt_type == 0) {
 		int32_t max_poc_lsb =
 			1 << (sps->log2_max_pic_order_cnt_lsb_minus4 + 4);
-		int32_t prev_msb, prev_lsb, poc_msb;
+		int64_t prev_msb, prev_lsb, poc_msb;
 
 		if (h->idr) {
 			prev_msb = 0;
@@ -726,9 +748,12 @@ void h264_parser_compute_poc(struct h264_parser *p,
 		}
 	} else if (sps->pic_order_cnt_type == 1) {
 		int32_t max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
-		int32_t frame_num_offset, abs_frame_num, expected_poc;
-		int32_t cycle_cnt = 0, frame_in_cycle = 0;
-		int32_t expected_delta = 0;
+		/* 中间量用 int64: 畸形 SPS 的 offset_for_ref_frame 求和/cycle_cnt*delta
+		 * 在 int32 上会有符号溢出 UB。源值均 <=32 位, 64 位算术不会溢出;
+		 * POC 本是模运算, 末尾截回 int32 的 top/bottom 是实现定义截断, 非 UB。 */
+		int64_t frame_num_offset, abs_frame_num, expected_poc;
+		int64_t cycle_cnt = 0, frame_in_cycle = 0;
+		int64_t expected_delta = 0;
 		int i;
 
 		if (h->idr)
@@ -770,7 +795,7 @@ void h264_parser_compute_poc(struct h264_parser *p,
 		p->prev_frame_num = h->frame_num;
 	} else { /* type 2 */
 		int32_t max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
-		int32_t frame_num_offset, tmp_poc;
+		int64_t frame_num_offset, tmp_poc;
 
 		if (h->idr)
 			frame_num_offset = 0;

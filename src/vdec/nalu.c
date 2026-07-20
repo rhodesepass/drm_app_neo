@@ -14,14 +14,16 @@ bool nalu_next_length_prefixed(const uint8_t *au, unsigned int au_size,
 
 	if (len_size < 1 || len_size > 4)
 		return false;
-	if (pos + len_size > au_size)
+	/* 不写 pos+len_size>au_size: nal_size 由 4 字节前缀构成可达 0xFFFFFFFF,
+	 * pos+nal_size 会在 uint32 上回绕、绕过越界检查。一律用剩余空间做减法比较。 */
+	if (pos > au_size || au_size - pos < len_size)
 		return false;
 
 	for (i = 0; i < len_size; i++)
 		nal_size = (nal_size << 8) | au[pos + i];
 	pos += len_size;
 
-	if (nal_size == 0 || pos + nal_size > au_size)
+	if (nal_size == 0 || nal_size > au_size - pos)
 		return false;
 
 	out->data = au + pos;
