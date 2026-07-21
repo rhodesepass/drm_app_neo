@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "lvgl.h"
 
 #define KEY_ENC_EVDEV_MAX_FDS 16
@@ -17,3 +19,6 @@ typedef struct {
 lv_indev_t * key_enc_evdev_init(key_enc_evdev_t * key_enc_evdev);
 
 void key_enc_evdev_destroy(key_enc_evdev_t * key_enc_evdev);
+
+/* 动画期间静音按键:置位后读回调抽干并丢弃所有排队事件 */
+void key_enc_evdev_mute(bool muted);

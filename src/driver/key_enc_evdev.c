@@ -13,6 +13,15 @@
 #include "lvgl.h"
 #include "driver/key_enc_evdev.h"
 
+// 加载/过渡动画期间置位:导航层通过 ui_hook_input_mute 打开。读回调看到后
+// 抽干丢弃所有排队按键,而不是停止轮询——停轮询会让按下事件攒在内核 evdev
+// 缓冲里,动画一结束一次性涌入连续误触发。
+static volatile bool s_muted;
+
+void key_enc_evdev_mute(bool muted){
+    s_muted = muted;
+}
+
 
 static int key_enc_evdev_process_key(uint16_t code)
 {
@@ -140,6 +149,18 @@ static void key_enc_evdev_read_cb(lv_indev_t * indev, lv_indev_data_t * data){
 
     key_enc_evdev_t * key_enc_evdev = (key_enc_evdev_t *)lv_indev_get_driver_data(indev);
     struct input_event in = { 0 };
+
+    if(s_muted){
+        /* 抽干各 fd 的排队事件后丢弃,并复位到 RELEASED,解禁后从干净态起步 */
+        for(int i = 0; i < key_enc_evdev->evdev_fd_count; i++) {
+            while(read(key_enc_evdev->evdev_fds[i], &in, sizeof(in)) > 0){ /* drain */ }
+        }
+        last_key = 0;
+        last_state = LV_INDEV_STATE_RELEASED;
+        data->key = 0;
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
 
     for(int i = 0; i < key_enc_evdev->evdev_fd_count; i++) {
         int fd = key_enc_evdev->evdev_fds[i];

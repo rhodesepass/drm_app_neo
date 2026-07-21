@@ -39,6 +39,11 @@ __attribute__((weak)) void ui_hook_shutdown_request(void)
 {
     log_debug("[nav] shutdown request (no platform handler)");
 }
+// 过渡动画期间静音/解禁按键,平台侧覆盖(设备接 key_enc_evdev)。默认空实现。
+__attribute__((weak)) void ui_hook_input_mute(bool mute)
+{
+    (void)mute;
+}
 __attribute__((weak)) void ui_hook_displayimg_key(uint32_t key)
 {
     (void)key;
@@ -187,6 +192,10 @@ static void curtain_show(void)
     lv_anim_delete(s_curtain, NULL);   // 收帘动画在途时被再次触发：先复位
     lv_obj_set_y(s_curtain, 0);
     lv_obj_remove_flag(s_curtain, LV_OBJ_FLAG_HIDDEN);
+
+    // 过渡动画开始:静音按键直到收帘落地(curtain_retract_done_cb)。链式切屏时
+    // 会重复置位,无害;每次过渡最终都会走 swap_cb->curtain_retract->done_cb 解禁。
+    ui_hook_input_mute(true);
 }
 
 static void curtain_retract_done_cb(lv_anim_t *a)
@@ -194,6 +203,8 @@ static void curtain_retract_done_cb(lv_anim_t *a)
     (void)a;
     lv_obj_add_flag(s_curtain, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_y(s_curtain, 0);
+
+    ui_hook_input_mute(false);   // 过渡落地,解禁按键
 
     // 收帘完成 = 这次过渡彻底落地(rise 早在 150ms 前就到位了)，FB 内容已定格。
     // 落到 spinner 就是落到隐藏态，此刻才进停靠。过渡途中被打断时 curtain_show

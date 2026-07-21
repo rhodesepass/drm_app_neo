@@ -52,6 +52,8 @@ void screens_handle_key(uint32_t key);
 // ---- 平台服务钩子 (弱符号默认空实现，设备侧用强符号覆盖) ----
 // 关机确认 (设备 -> ui_confirm(SHUTDOWN))
 void ui_hook_shutdown_request(void);
+// 过渡动画期间静音/解禁按键 (设备 -> key_enc_evdev_mute)，sim 弱默认空。
+void ui_hook_input_mute(bool mute);
 // 扩列图按键 (设备 -> ui_backend_displayimg_key)
 void ui_hook_displayimg_key(uint32_t key);
 // 重启程序 (设备 -> g_running=0; g_exitcode=EXITCODE_RESTART_APP)

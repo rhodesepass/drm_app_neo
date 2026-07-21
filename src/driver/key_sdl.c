@@ -34,11 +34,34 @@ static void keyq_push(uint32_t lv_key, bool press){
 void key_sdl_inject_press(uint32_t lv_key){ keyq_push(lv_key, true); }
 void key_sdl_inject_release(uint32_t lv_key){ keyq_push(lv_key, false); }
 
+// 动画期间静音:清空队列并拦截读回调,丢弃这段时间攒下的键(与设备侧语义一致)
+static volatile bool s_muted;
+
+void key_enc_evdev_mute(bool muted){
+    s_muted = muted;
+    if(muted){
+        pthread_mutex_lock(&s_mtx);
+        s_count = 0;
+        pthread_mutex_unlock(&s_mtx);
+    }
+}
+
 static void key_sdl_read_cb(lv_indev_t * indev, lv_indev_data_t * data){
     static uint32_t last_key = 0;
     static bool last_pressed = false;
 
     key_enc_evdev_t * ctx = (key_enc_evdev_t *)lv_indev_get_driver_data(indev);
+
+    if(s_muted){
+        pthread_mutex_lock(&s_mtx);
+        s_count = 0;   // 持续丢弃动画期间注入的键
+        pthread_mutex_unlock(&s_mtx);
+        last_key = 0;
+        last_pressed = false;
+        data->key = 0;
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
 
     keyev_t ev = { 0, false };
     bool have = false;

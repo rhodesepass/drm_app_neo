@@ -71,6 +71,11 @@ static void* lvgl_drm_warp_thread_entry(void *arg){
 static void screen_key_event_cb(uint32_t key){
     screens_handle_key(key);
 }
+
+// 覆盖导航层弱符号:过渡动画期间由屏管理器静音/解禁物理按键。
+void ui_hook_input_mute(bool mute){
+    key_enc_evdev_mute(mute);
+}
 void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warpper,layer_animation_t *layer_animation,prts_t *prts,apps_t *apps){
 
     lvgl_drm_warp->drm_warpper = drm_warpper;
