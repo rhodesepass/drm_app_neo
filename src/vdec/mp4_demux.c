@@ -16,6 +16,12 @@
 	(((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | \
 	 ((uint32_t)(c) << 8) | (uint32_t)(d))
 
+/* Sanity caps so a corrupt/hostile stsz/avcC can't drive a huge malloc at
+ * open on a tight-RAM target. The decoder enforces its own (smaller) sample
+ * limit afterwards; these are just the "don't OOM the box" ceilings. */
+#define MP4_MAX_SAMPLE_SIZE   (4u * 1024 * 1024)
+#define MP4_MAX_EXTRADATA     (64u * 1024)
+
 static uint32_t rd_u16(const uint8_t *p) { return (p[0] << 8) | p[1]; }
 static uint32_t rd_u32(const uint8_t *p)
 {
@@ -148,7 +154,9 @@ static int parse_stsd(struct mp4_demux *m, const uint8_t *data, uint64_t size)
 		}
 	}
 
-	m->extradata = cfg;
+	/* transient pointer into the read-only map; mp4_open() replaces it with
+	 * an owned malloc'd copy before dropping the mapping */
+	m->extradata = (uint8_t *)cfg;
 	m->extradata_size = (unsigned int)cfg_size;
 
 	if (m->codec == MP4_CODEC_H264) {
@@ -431,6 +439,41 @@ int mp4_open(struct mp4_demux *m, const char *path)
 		goto fail;
 	}
 
+	/*
+	 * Header parsed. Lift extradata out of the map into an owned copy and
+	 * allocate the reusable sample buffer, then drop the mapping — playback
+	 * reads samples with pread() so a removed card can't SIGBUS us.
+	 * (m->extradata still points into the map here; on any goto fail before
+	 * this, mp4_close munmaps and must NOT free it — hence the map!=NULL
+	 * guard there.)
+	 */
+	if (m->max_sample_size > MP4_MAX_SAMPLE_SIZE ||
+	    m->extradata_size > MP4_MAX_EXTRADATA) {
+		fprintf(stderr, "mp4: implausible sizes (sample=%u extradata=%u)\n",
+			m->max_sample_size, m->extradata_size);
+		goto fail;
+	}
+
+	if (m->extradata_size) {
+		uint8_t *ed = malloc(m->extradata_size);
+		if (!ed)
+			goto fail;
+		memcpy(ed, m->extradata, m->extradata_size);
+		m->extradata = ed;		/* owned now */
+	} else {
+		m->extradata = NULL;
+	}
+	m->sample_buf_cap = m->max_sample_size;
+	m->sample_buf = malloc(m->sample_buf_cap ? m->sample_buf_cap : 1);
+	if (!m->sample_buf) {
+		free(m->extradata);		/* owned copy; avoid leak */
+		m->extradata = NULL;
+		goto fail;
+	}
+
+	munmap((void *)m->map, m->map_size);
+	m->map = NULL;
+	m->map_size = 0;
 	return 0;
 
 fail:
@@ -443,21 +486,37 @@ void mp4_close(struct mp4_demux *m)
 	if (m->samples)
 		free(m->samples);
 	if (m->map)
+		/* still mapped => extradata points into the map, not owned */
 		munmap((void *)m->map, m->map_size);
+	else if (m->extradata)
+		free(m->extradata);		/* owned copy lifted out of the map */
+	if (m->sample_buf)
+		free(m->sample_buf);
 	if (m->fd >= 0)
 		close(m->fd);
 	memset(m, 0, sizeof(*m));
 	m->fd = -1;
 }
 
-const uint8_t *mp4_sample_data(const struct mp4_demux *m, unsigned int index)
+int mp4_read_sample(struct mp4_demux *m, unsigned int index,
+		    const uint8_t **data, uint32_t *size)
 {
 	const struct mp4_sample *s;
+	ssize_t n;
 
 	if (index >= m->samples_count)
-		return NULL;
+		return MP4_ERR_RANGE;
 	s = &m->samples[index];
-	if (s->offset + s->size > m->map_size)
-		return NULL;
-	return m->map + s->offset;
+	if (s->size > m->sample_buf_cap)
+		return MP4_ERR_RANGE;	/* can't happen: buf == max_sample_size */
+
+	n = pread(m->fd, m->sample_buf, s->size, (off_t)s->offset);
+	if (n < 0 || (uint32_t)n != s->size)
+		return MP4_ERR_IO;	/* short read / EIO: card gone, stop */
+
+	if (data)
+		*data = m->sample_buf;
+	if (size)
+		*size = s->size;
+	return MP4_OK;
 }

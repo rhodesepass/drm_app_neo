@@ -513,3 +513,15 @@ mp_status_t mediaplayer_get_status(mediaplayer_t *mp)
 
     return MP_STATUS_PLAYING;
 }
+
+bool mediaplayer_source_lost(mediaplayer_t *mp)
+{
+    bool lost;
+    if (!mp)
+        return false;
+    /* PC/ffmpeg 后端目前不置 SOURCE_LOST(无 SD 热插拔),恒返回 false */
+    pthread_rwlock_rdlock(&mp->thread.rwlock);
+    lost = (mp->thread.state & MEDIAPLAYER_SOURCE_LOST) != 0;
+    pthread_rwlock_unlock(&mp->thread.rwlock);
+    return lost;
+}

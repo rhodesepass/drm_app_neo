@@ -87,7 +87,9 @@ static void parse_scaling_list(struct bitreader *br, uint8_t *out,
 	for (j = 0; j < size; j++) {
 		if (next_scale != 0) {
 			int delta = br_se_v(br);
-			next_scale = (last_scale + delta + 256) % 256;
+			/* delta 是码流里的 se_v，畸形流可给到近 INT_MAX；结果本是 mod 256，
+			 * 用 int64 中间量算完再截回，避免有符号溢出 UB(h264 fuzz 回归) */
+			next_scale = (int)(((int64_t)last_scale + delta + 256) % 256);
 			if (j == 0 && next_scale == 0)
 				*use_default = true;
 		}

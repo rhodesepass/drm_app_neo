@@ -91,6 +91,10 @@ typedef struct {
 
     spsc_bq_t req_queue;
     atomic_int is_auto_switch_blocked;
+
+    // 片源丢失(SD 拔出致 mediaplayer 停播)后挂起:停自动/请求切换,
+    // 等 mdev 触发 RELOAD_ASSETS 重开
+    atomic_int suspended;
 } prts_t;
 
 void prts_init(prts_t* prts,overlay_t* overlay);

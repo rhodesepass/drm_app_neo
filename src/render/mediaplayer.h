@@ -15,6 +15,9 @@
 /* internal state flags */
 #define MEDIAPLAYER_DECODER_ERROR  (1 << 1)
 #define MEDIAPLAYER_DECODER_EXIT   (1 << 4)
+/* 片源读取失败(EIO/短读，通常是 SD 拔出)导致的停止；是 DECODER_ERROR 的一个子类，
+ * 供上层(prts)区分"素材消失"与普通解码错误,据此挂起并等待 reload */
+#define MEDIAPLAYER_SOURCE_LOST    (1 << 5)
 
 typedef struct MultiThreadCtx {
     pthread_rwlock_t rwlock;
@@ -77,6 +80,10 @@ int mediaplayer_start(mediaplayer_t *mediaplayer);
 
 /* get current status: "stopped", "playing", */
 mp_status_t mediaplayer_get_status(mediaplayer_t *mediaplayer);
+
+/* 上一次(仍未被新的 play 覆盖)播放是否因片源读取失败而停止(通常 SD 拔出)。
+   供 prts 区分"素材消失"以挂起等待 reload。新 play 会清除该状态。 */
+bool mediaplayer_source_lost(mediaplayer_t *mediaplayer);
 
 /* 按当前视频尺寸刷新 video 层几何记录(幂等，plane 实际状态由下一个 FLIP 决定)。
    供过渡 middle_cb 在画面被遮盖的时机调用 */

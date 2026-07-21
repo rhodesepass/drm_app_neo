@@ -682,6 +682,14 @@ static void prts_tick_cb(void* userdata,bool is_last){
                     return;
                 }
                 prts_reload_assets(prts, false);
+                // 素材回来了：若之前因片源丢失挂起，解除并重开当前干员。
+                // 注意 reload 在旧干员 uuid 已不存在时内部已 switch_operator(0)，
+                // 那种情况 state 已非 IDLE，这里不再重复 switch。
+                if(atomic_load(&prts->suspended)){
+                    atomic_store(&prts->suspended, 0);
+                    if(prts->state == PRTS_STATE_IDLE)
+                        switch_operator(prts, prts->operator_index);
+                }
                 break;
             default:
                 log_error("invalid request type: %d", req->type);
@@ -692,6 +700,18 @@ static void prts_tick_cb(void* userdata,bool is_last){
             free(req);
         }
     }
+
+    // 片源丢失(通常 SD 拔出致 mediaplayer 停播)：仅在稳态播放(IDLE)时挂起——
+    // 切换途中让其自然收敛到 IDLE，下一 tick 再挂起(那些切换阶段 timer 无法逐个
+    // 取消)。挂起=停播 + 关掉自动/请求切换，直到 mdev 触发 RELOAD_ASSETS 重开。
+    if(!atomic_load(&prts->suspended) && prts->state == PRTS_STATE_IDLE
+       && mediaplayer_source_lost(&g_mediaplayer)){
+        log_warn("prts: media source lost, suspend until asset reload");
+        mediaplayer_stop(&g_mediaplayer);
+        atomic_store(&prts->suspended, 1);
+    }
+    if(atomic_load(&prts->suspended))
+        return;
 
     settings_lock(&g_settings);
     bool interval_sw = should_switch_by_interval(prts);
@@ -778,6 +798,7 @@ void prts_init(prts_t* prts, overlay_t* overlay){
     prts->operator_count = 0;
 
     atomic_store(&prts->is_auto_switch_blocked, 0);
+    atomic_store(&prts->suspended, 0);
 
     spsc_bq_init(&prts->req_queue, 10);
 

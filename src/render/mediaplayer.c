@@ -276,14 +276,15 @@ static void *mp_pacer_thread(void *param)
 
 /*
  * 解码一个 AU（单 slice）。返回:
- *  0 解码成功  1 非视频帧(跳过)  -1 错误(停播)
+ *  0 解码成功  1 非视频帧(跳过)  -1 错误(停播)  MP_DECODE_SOURCE_LOST 片源读取失败
  */
+#define MP_DECODE_SOURCE_LOST (-2)
 static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
                         struct h264_slice_hdr *hdr_out)
 {
     mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     const struct mp4_sample *sample = &p->demux.samples[sample_idx];
-    const uint8_t *au = mp4_sample_data(&p->demux, sample_idx);
+    const uint8_t *au = NULL;
     unsigned int cursor = 0, vcl_count = 0;
     struct nalu n, vcl = { 0 };
     struct h264_poc poc;
@@ -292,7 +293,12 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
     uint64_t ts;
     int slot, retry;
 
-    if (!au) {
+    int rd = mp4_read_sample(&p->demux, sample_idx, &au, NULL);
+    if (rd == MP4_ERR_IO) {
+        log_error("sample %u read failed (source lost?)", sample_idx);
+        return MP_DECODE_SOURCE_LOST;
+    }
+    if (rd != MP4_OK || !au) {
         log_error("sample %u out of range", sample_idx);
         return -1;
     }
@@ -435,6 +441,8 @@ static void *mp_decode_thread(void *param)
             if (decode_us > mp_slow_threshold_us(mp))
                 log_warn("slow decode_au %lldus @%u",
                          decode_us, sample_idx);
+            if (rc == MP_DECODE_SOURCE_LOST)
+                goto source_lost;
             if (rc < 0)
                 goto decode_error;
             sample_idx++;
@@ -483,6 +491,15 @@ decode_error:
     mp->thread.state |= MEDIAPLAYER_DECODER_ERROR | MEDIAPLAYER_DECODER_EXIT;
     pthread_rwlock_unlock(&mp->thread.rwlock);
     log_error("==> mp_decode Thread Ended (error)!");
+    pthread_exit(NULL);
+    return NULL;
+
+source_lost:
+    /* 片源(通常 SD 上的视频)读取失败：干净停解码，额外置 SOURCE_LOST 供上层区分 */
+    pthread_rwlock_wrlock(&mp->thread.rwlock);
+    mp->thread.state |= MEDIAPLAYER_SOURCE_LOST | MEDIAPLAYER_DECODER_ERROR | MEDIAPLAYER_DECODER_EXIT;
+    pthread_rwlock_unlock(&mp->thread.rwlock);
+    log_error("==> mp_decode Thread Ended (source lost)!");
     pthread_exit(NULL);
     return NULL;
 }
@@ -840,4 +857,15 @@ mp_status_t mediaplayer_get_status(mediaplayer_t *mp)
     }
 
     return MP_STATUS_PLAYING;
+}
+
+bool mediaplayer_source_lost(mediaplayer_t *mp)
+{
+    bool lost;
+    if (!mp)
+        return false;
+    pthread_rwlock_rdlock(&mp->thread.rwlock);
+    lost = (mp->thread.state & MEDIAPLAYER_SOURCE_LOST) != 0;
+    pthread_rwlock_unlock(&mp->thread.rwlock);
+    return lost;
 }

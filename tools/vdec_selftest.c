@@ -103,7 +103,7 @@ static int host_check(struct mp4_demux *m)
 	       m->frame_duration_us, m->max_sample_size);
 
 	for (i = 0; i < m->samples_count; i++) {
-		const uint8_t *au = mp4_sample_data(m, i);
+		const uint8_t *au = NULL;
 		unsigned int cursor = 0, vcl_count = 0;
 		struct nalu n;
 		struct h264_slice_hdr hdr;
@@ -113,7 +113,7 @@ static int host_check(struct mp4_demux *m)
 		uint64_t ts;
 		int slot;
 
-		if (!au)
+		if (mp4_read_sample(m, i, &au, NULL) != MP4_OK || !au)
 			break;
 
 		while (nalu_next_length_prefixed(au, m->samples[i].size,
@@ -411,7 +411,7 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 
 	for (i = 0; i < m->samples_count && (!limit || decode_count < limit);
 	     i++) {
-		const uint8_t *au = mp4_sample_data(m, i);
+		const uint8_t *au = NULL;
 		unsigned int cursor = 0, vcl_count = 0;
 		struct nalu n, vcl = { 0 };
 		struct h264_slice_hdr hdr;
@@ -422,7 +422,7 @@ static int device_decode(struct mp4_demux *m, int fps_override, int plane_index,
 		int slot;
 		uint64_t ts;
 
-		if (!au)
+		if (mp4_read_sample(m, i, &au, NULL) != MP4_OK || !au)
 			break;
 
 		while (nalu_next_length_prefixed(au, m->samples[i].size,
