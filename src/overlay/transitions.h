@@ -20,8 +20,9 @@ typedef struct {
     int image_w;
     int image_h;
     uint32_t* image_addr;
-    // 图片加载后的最近邻放大倍数(720p 档显示 360 基准旧素材时为 UI_SCALE，否则 1)
+    // 图片加载后的最近邻缩放:放大(720p 档显示 360 素材)/缩小(360 档显示 720 素材)。只命中一侧。
     int src_upscale;
+    int src_downscale;
 
     uint32_t background_color;
 

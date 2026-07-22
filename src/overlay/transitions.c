@@ -443,7 +443,7 @@ void overlay_transition_load_image(oltr_params_t* params){
     }
     load_img_assets(params->image_path, &params->image_addr, &params->image_w, &params->image_h);
     if(params->image_addr){
-        imgscale_upscale_nn_rgba(&params->image_addr, &params->image_w, &params->image_h, params->src_upscale);
+        imgscale_rescale_nn_rgba(&params->image_addr, &params->image_w, &params->image_h, params->src_upscale, params->src_downscale);
     }
 #if OVERLAY_USE_C8
     // 只量化不上传(旧 overlay 可能还在退场),上传在各 transition 入口

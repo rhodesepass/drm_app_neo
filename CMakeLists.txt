@@ -227,6 +227,7 @@ function(add_epass_target name screen_define)
     src/vdec/h264_parser.c
     src/vdec/h264_dpb.c
     src/vdec/vdec_v4l2.c
+    src/vdec/sdrot.c
   )
   target_include_directories(${name} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

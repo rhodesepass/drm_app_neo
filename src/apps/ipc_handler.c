@@ -327,6 +327,7 @@ inline static int handle_overlay_schedule_transition(apps_t *apps, ipc_req_t *re
     params->image_addr = NULL;
     // IPC 路径不带 epconfig，图片视为当前分辨率基准，不放大
     params->src_upscale = 1;
+    params->src_downscale = 1;
     
     // 加载图片。如果image_path为空 自动不加载。
     overlay_transition_load_image(params);
@@ -418,6 +419,7 @@ inline static int handle_overlay_schedule_transition_video(apps_t *apps, ipc_req
     params->image_addr = NULL;
     // IPC 路径不带 epconfig，图片视为当前分辨率基准，不放大
     params->src_upscale = 1;
+    params->src_downscale = 1;
     
     // 加载图片
     overlay_transition_load_image(params);

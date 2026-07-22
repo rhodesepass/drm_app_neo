@@ -396,38 +396,25 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         }
     }
 
-    const char *screen = json_get_string(json, "screen");
-    if (!screen || screen[0] == '\0') {
-        parse_log_file(prts->parse_log_f, path, "缺少字段 screen", PARSE_LOG_ERROR);
-        cJSON_Delete(json);
-        return -1;
-    }
+    // screen 字段只用来判定素材原生分辨率(决定图片是否软件放大)，不再据此拒绝素材。
+    // 缺失/无法识别时退回本机固件分辨率，按原样处理。
 #if defined(USE_360_640_SCREEN)
-    if (strcmp(screen, "360x640") != 0) {
-        parse_log_file(prts->parse_log_f, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
-        cJSON_Delete(json);
-        return -1;
-    }
-    operator->disp_type = DISPLAY_360_640;
+    display_type_t native_disp = DISPLAY_360_640;
 #elif defined(USE_480_854_SCREEN)
-    if (strcmp(screen, "480x854") != 0) {
-        parse_log_file(prts->parse_log_f, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
-        cJSON_Delete(json);
-        return -1;
-    }
-    operator->disp_type = DISPLAY_480_854;
+    display_type_t native_disp = DISPLAY_480_854;
 #elif defined(USE_720_1280_SCREEN)
-    // 兼容 360x640 旧素材：视频由 DEFE 硬件放大，图片按 UI_SCALE 软件放大
-    if (strcmp(screen, "720x1280") == 0) {
-        operator->disp_type = DISPLAY_720_1280;
-    } else if (strcmp(screen, "360x640") == 0) {
-        operator->disp_type = DISPLAY_360_640;
-    } else {
-        parse_log_file(prts->parse_log_f, path, "screen 与当前固件配置不匹配", PARSE_LOG_ERROR);
-        cJSON_Delete(json);
-        return -1;
-    }
+    display_type_t native_disp = DISPLAY_720_1280;
 #endif
+    const char *screen = json_get_string(json, "screen");
+    if (screen && strcmp(screen, "360x640") == 0) {
+        operator->disp_type = DISPLAY_360_640;
+    } else if (screen && strcmp(screen, "480x854") == 0) {
+        operator->disp_type = DISPLAY_480_854;
+    } else if (screen && strcmp(screen, "720x1280") == 0) {
+        operator->disp_type = DISPLAY_720_1280;
+    } else {
+        operator->disp_type = native_disp;
+    }
 
 
     // ===== loop / intro videos =====
@@ -632,11 +619,18 @@ int prts_operator_try_load(prts_t *prts,prts_operator_entry_t* operator,char * p
         }
     }
 
-    // 旧素材(360 基准)的用户图片在 720p 档加载后需软件放大
-    int upscale = (operator->disp_type == DISPLAY_360_640 && UI_SCALE > 1) ? UI_SCALE : 1;
+    // 用户图片按 素材原生倍率 vs 固件倍率 的比值软件缩放:
+    //   360 基准素材在 720p 档 → 放大 UI_SCALE；720 基准素材在 360 档 → 缩小 2。
+    int asset_scale = (operator->disp_type == DISPLAY_720_1280) ? 2 : 1;
+    int fw_scale = UI_SCALE;
+    int upscale   = (fw_scale > asset_scale) ? fw_scale / asset_scale : 1;
+    int downscale = (asset_scale > fw_scale) ? asset_scale / fw_scale : 1;
     operator->opinfo_params.src_upscale = upscale;
+    operator->opinfo_params.src_downscale = downscale;
     operator->transition_in.src_upscale = upscale;
+    operator->transition_in.src_downscale = downscale;
     operator->transition_loop.src_upscale = upscale;
+    operator->transition_loop.src_downscale = downscale;
 
     cJSON_Delete(json);
     return 0;

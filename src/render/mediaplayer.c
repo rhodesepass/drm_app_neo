@@ -32,6 +32,7 @@
 #include "vdec/h264_parser.h"
 #include "vdec/h264_dpb.h"
 #include "vdec/vdec_v4l2.h"
+#include "vdec/sdrot.h"
 
 #define mp_get_now_us get_now_us
 
@@ -43,6 +44,16 @@ typedef struct {
     struct vdec_ctx    vdec;
     uint32_t           fb_ids[VDEC_MAX_CAP_BUFS];
     uint32_t           gem_handles[VDEC_MAX_CAP_BUFS];
+
+    /*
+     * 倒装机型:解码帧经 SDROT 补 Y 翻转再上屏。启用时 fb_ids/gem_handles 索引
+     * 翻转输出池(flip slot),而非解码 cap slot;显示保持落在 flip_busy 上,解码
+     * cap 不再挂 on_screen。见 docs/boe-flip-180.md。
+     */
+    bool               yflip;
+    struct sdrot_ctx   sdrot;
+    unsigned int       flip_count;
+    bool               flip_busy[SDROT_MAX_CAP_BUFS];
 
     /* 解码线程 → pacer 的待上屏帧；容量 = smooth_bufs + 1(在手的那格) */
     spsc_bq_t          smooth_q;
@@ -92,7 +103,7 @@ static int mp_set_display_size(mediaplayer_t *mp, const struct h264_sps *sps)
 
 static inline unsigned int mp_slow_threshold_us(const mediaplayer_t *mp)
 {
-    return mp->frame_duration_us + mp->frame_duration_us / 2;
+    return mp->frame_duration_us * 2;
 }
 
 /*
@@ -152,7 +163,11 @@ static inline int mp_trace_on(void)
     return mp_trace;
 }
 
-/* 收 free_queue：解除离屏槽位的 on_screen 占用并释放 item */
+/*
+ * 收 free_queue：解除离屏槽位的显示保持并释放 item。非翻转路径清 DPB 的
+ * on_screen(slot == cap slot);翻转路径清 flip_busy(slot == flip slot,DPB 侧
+ * 在解码后就已 mark_displayed,不挂 on_screen)。
+ */
 static void mp_reclaim_free_items(mediaplayer_t *mp)
 {
     mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
@@ -163,14 +178,39 @@ static void mp_reclaim_free_items(mediaplayer_t *mp)
                                              &item) == 0) {
         uintptr_t ud = (uintptr_t)item->userdata;
         int slot = (int)(ud & 0xff) - 1;
+        bool mine = (ud >> 8) == mp->session_gen;
 
         if (mp_trace_on())
-            log_info("T R%d g%d", slot, (int)((ud >> 8) == mp->session_gen));
-        if (slot >= 0 && (ud >> 8) == mp->session_gen)
-            h264_dpb_set_on_screen(&p->dpb, slot, false);
+            log_info("T R%d g%d", slot, (int)mine);
+        if (slot >= 0 && mine) {
+            if (p->yflip) {
+                if ((unsigned int)slot < p->flip_count)
+                    p->flip_busy[slot] = false;
+            } else {
+                h264_dpb_set_on_screen(&p->dpb, slot, false);
+            }
+        }
         mp->items_in_flight--;
         free(item);
     }
+}
+
+/* 找一个空闲翻转输出格;满则等显示线程回流(每 vblank 一次)。返回 -1 = 超时 */
+static int mp_alloc_flip_slot(mediaplayer_t *mp)
+{
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
+    int retry;
+
+    for (retry = 0; retry < 100; retry++) {
+        unsigned int i;
+
+        for (i = 0; i < p->flip_count; i++)
+            if (!p->flip_busy[i])
+                return (int)i;
+        usleep(5 * 1000);
+        mp_reclaim_free_items(mp);
+    }
+    return -1;
 }
 
 /*
@@ -220,6 +260,56 @@ static drm_warpper_queue_item_t *mp_make_frame_item(mediaplayer_t *mp,
         log_info("T E%d", slot);
     mp->items_in_flight++;
     return item;
+}
+
+/*
+ * 翻转帧 item 工厂：占住 flip slot(显示保持)+ in_flight 记账。DPB 侧的
+ * mark_displayed 已在 SDROT 前对解码 cap slot 单独做过,这里不碰 dpb。
+ */
+static drm_warpper_queue_item_t *mp_make_flip_item(mediaplayer_t *mp,
+                                                   uint32_t fb_id, int flip_slot)
+{
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
+    drm_warpper_queue_item_t *item = malloc(sizeof(*item));
+
+    if (!item) {
+        log_error("malloc err");
+        return NULL;
+    }
+    memset(item, 0, sizeof(*item));
+    item->type = DRM_WARPPER_ITEM_FLIP_FB;
+    item->fb_id = fb_id;
+    item->userdata = slot_to_userdata(mp, flip_slot);
+    item->on_heap = false;
+
+    p->flip_busy[flip_slot] = true;
+    if (mp_trace_on())
+        log_info("T E%d(flip)", flip_slot);
+    mp->items_in_flight++;
+    return item;
+}
+
+/*
+ * 出帧前的 Y 翻转(仅倒装机型)：把解码 cap slot 的帧经 SDROT 翻进一个空闲
+ * flip slot,返回该 flip slot(-1 失败)。解码 cap slot 随即 mark_displayed
+ * ——它只需按 DPB 参考逻辑留存,显示保持已转移到 flip 池。
+ */
+static int mp_flip_output(mediaplayer_t *mp, int cap_slot)
+{
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
+    int k = mp_alloc_flip_slot(mp);
+
+    if (k < 0) {
+        log_error("no free flip slot");
+        return -1;
+    }
+    if (sdrot_process(&p->sdrot, p->vdec.cap[cap_slot].dmabuf_fd,
+                      (unsigned int)cap_slot, (unsigned int)k) < 0) {
+        log_error("sdrot failed @slot %d", cap_slot);
+        return -1;
+    }
+    h264_dpb_mark_displayed(&p->dpb, cap_slot);
+    return k;
 }
 
 /*
@@ -456,8 +546,15 @@ static void *mp_decode_thread(void *param)
         if (out < 0)
             continue;
 
-        drm_warpper_queue_item_t *item =
-            mp_make_frame_item(mp, p->fb_ids[out], out);
+        drm_warpper_queue_item_t *item;
+        if (p->yflip) {
+            int k = mp_flip_output(mp, out);
+            if (k < 0)
+                goto decode_error;
+            item = mp_make_flip_item(mp, p->fb_ids[k], k);
+        } else {
+            item = mp_make_frame_item(mp, p->fb_ids[out], out);
+        }
         if (!item)
             goto decode_error;
 
@@ -512,12 +609,23 @@ static void mp_close_session(mediaplayer_t *mp)
     if (!mp->session_open)
         return;
 
-    for (i = 0; i < p->vdec.cap_count; i++) {
-        if (p->fb_ids[i]) {
-            drm_warpper_rm_fb(mp->drm_warpper, p->fb_ids[i], p->gem_handles[i]);
-            p->fb_ids[i] = 0;
-            p->gem_handles[i] = 0;
+    /* fb_ids 在翻转链下索引翻转池,否则索引解码 cap;按对应数量回收 */
+    {
+        unsigned int fb_n = p->yflip ? p->flip_count : p->vdec.cap_count;
+        for (i = 0; i < fb_n; i++) {
+            if (p->fb_ids[i]) {
+                drm_warpper_rm_fb(mp->drm_warpper, p->fb_ids[i],
+                                  p->gem_handles[i]);
+                p->fb_ids[i] = 0;
+                p->gem_handles[i] = 0;
+            }
         }
+    }
+    if (p->yflip) {
+        sdrot_close(&p->sdrot);
+        p->flip_count = 0;
+        memset(p->flip_busy, 0, sizeof(p->flip_busy));
+        p->yflip = false;
     }
     vdec_close(&p->vdec);
     mp4_close(&p->demux);
@@ -570,6 +678,28 @@ int mediaplayer_remount_video_layer(mediaplayer_t *mp)
     return video_layer_ensure_mount(w, h);
 }
 
+/*
+ * 整机是否倒装(视频层内容要不要 SDROT 补 Y 翻转)。存在 DT key 即倒装。
+ * MP_FORCE_YFLIP=0/1 可在板上覆盖(调试用)。检测一次即缓存。
+ */
+static bool mp_detect_yflip(void)
+{
+    static int cached = -1;
+    const char *env;
+
+    if (cached >= 0)
+        return cached;
+
+    env = getenv("MP_FORCE_YFLIP");
+    if (env)
+        cached = (env[0] == '1');
+    else
+        cached = (access(SDROT_YFLIP_DT_PATH, F_OK) == 0);
+
+    log_info("video yflip(scanout) = %d", cached);
+    return cached;
+}
+
 /* play_video/start 的公共段：input_path 已就绪 */
 static int mp_prepare_and_spawn(mediaplayer_t *mp)
 {
@@ -618,6 +748,15 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     if (mp_set_display_size(mp, sps) < 0)
         goto error;
 
+    p->yflip = mp_detect_yflip();
+    /*
+     * SDROT 对整个编码高度做 VFLIP;有底部裁切(编码高 > 显示高)时内容会整体
+     * 下移。这类素材极罕见,先告警不静默错位,真遇到再按显示高单独配 SDROT。
+     */
+    if (p->yflip && mp->frame_height != mp->display_height)
+        log_warn("yflip with vertical crop (coded %d != display %d):"
+                 " content may shift", mp->frame_height, mp->display_height);
+
     // 解码前记录挂载几何(惰性：plane 由显示线程随首帧启用)。
     // 此时旧线程已 join、plane 已 disable，几何更新无并发帧提交
     if (video_layer_ensure_mount(mp->display_width, mp->display_height) < 0)
@@ -659,6 +798,21 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
         cap_count += p->smooth_bufs;
     }
 
+    /*
+     * 倒装机型:显示保持从解码 cap 转移到 SDROT 翻转池。cap_count 里的显示保持
+     * (在屏1 + 入队未上屏1 = SDROT_DISPLAY_HOLD)连同平滑储备一并对冲掉——这些帧
+     * 现在活在翻转池,解码 cap 只需留到 DPB 参考逻辑放行,净 CMA ≈ 不变。
+     */
+    if (p->yflip) {
+        unsigned int reclaim = SDROT_DISPLAY_HOLD + p->smooth_bufs;
+
+        p->flip_count = SDROT_DISPLAY_HOLD + p->smooth_bufs;
+        if (cap_count > reclaim + VDEC_CAPTURE_BUF_MIN)
+            cap_count -= reclaim;
+        else
+            cap_count = VDEC_CAPTURE_BUF_MIN;
+    }
+
     /* ring 深度 == smooth_bufs：待发格数 = ring + 解码线程手里那格，比原路径
      * (只有手里那格)恰好多 smooth_bufs 格，与上面 cap_count 的加法对上 */
     if (p->smooth_bufs) {
@@ -679,24 +833,46 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
         goto error;
     p->vdec.slow_threshold_us = mp_slow_threshold_us(mp);
 
-    for (i = 0; i < p->vdec.cap_count; i++) {
-        if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
-                                         p->vdec.cap[i].dmabuf_fd,
-                                         p->vdec.cap_width,
-                                         p->vdec.cap_height,
-                                         p->vdec.cap_bytesperline,
-                                         p->vdec.cap_uv_offset,
-                                         &p->fb_ids[i],
-                                         &p->gem_handles[i]) < 0)
+    if (p->yflip) {
+        /*
+         * 翻转链:输入端 DMABUF 吃解码 CAPTURE(index == 解码 slot,故 in_count
+         * = 解码 cap_count);输出翻转池当显示 FB。解码 cap 不再导成 FB。
+         */
+        if (sdrot_open(&p->sdrot, mp->frame_width, mp->frame_height,
+                       p->vdec.cap_count, p->flip_count,
+                       0 /*rotate*/, 0 /*hflip*/, 1 /*vflip*/) < 0)
             goto error;
+        for (i = 0; i < p->flip_count; i++) {
+            if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
+                                             p->sdrot.cap[i].dmabuf_fd,
+                                             p->sdrot.cap_width,
+                                             p->sdrot.cap_height,
+                                             p->sdrot.cap_bytesperline,
+                                             p->sdrot.cap_uv_offset,
+                                             &p->fb_ids[i],
+                                             &p->gem_handles[i]) < 0)
+                goto error;
+        }
+    } else {
+        for (i = 0; i < p->vdec.cap_count; i++) {
+            if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
+                                             p->vdec.cap[i].dmabuf_fd,
+                                             p->vdec.cap_width,
+                                             p->vdec.cap_height,
+                                             p->vdec.cap_bytesperline,
+                                             p->vdec.cap_uv_offset,
+                                             &p->fb_ids[i],
+                                             &p->gem_handles[i]) < 0)
+                goto error;
+        }
     }
 
     h264_dpb_init(&p->dpb, cap_count, max_ref, max_frame_num, reorder);
 
-    log_info("vdec: coded=%ux%u display=%dx%d max_ref=%u cap_bufs=%u(smooth %u) dur=%uus",
+    log_info("vdec: coded=%ux%u display=%dx%d max_ref=%u cap_bufs=%u(smooth %u) yflip=%d flip_bufs=%u dur=%uus",
              mp->frame_width, mp->frame_height,
              mp->display_width, mp->display_height, max_ref, cap_count,
-             p->smooth_bufs, mp->frame_duration_us);
+             p->smooth_bufs, p->yflip, p->flip_count, mp->frame_duration_us);
 
     pthread_rwlock_wrlock(&mp->thread.rwlock);
     mp->thread.state = 0;

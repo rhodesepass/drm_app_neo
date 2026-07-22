@@ -112,8 +112,10 @@ typedef struct {
     int appear_time;
     // 进场滑入动画时长(us)，<=0 用默认 1s
     int duration;
-    // 用户图片加载后的最近邻放大倍数(720p 档显示 360 基准旧素材时为 UI_SCALE，否则 1)
+    // 用户图片加载后的最近邻缩放:放大倍数(720p 档显示 360 基准素材)与
+    // 缩小倍数(360 档显示 720 基准素材)。同一素材只会命中一侧，另一侧为 1。
     int src_upscale;
+    int src_downscale;
 
     // image 类型：图片路径（build 后转入元素）
     char image_path[128];

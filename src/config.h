@@ -73,7 +73,7 @@
 #define APPS_MAX 64
 #define APPS_EXTMAP_MAX 128
 #define APPS_PARSE_LOG "/root/apps.log"
-#define APPS_CONFIG_VERSION 1
+#define APPS_CONFIG_VERSION 2
 #define APPS_CONFIG_FILENAME "appconfig.json"
 #define APPS_DIR "/app/"
 #define APPS_DIR_SD SD_MOUNT_POINT "/app/"
@@ -292,6 +292,16 @@
 #define MP_MEM_LARGE_THRESHOLD_KB (40 * 1024)
 // 上限兜底：ring + 解码账本不得撑爆 VDEC_MAX_CAP_BUFS(32)
 #define MP_SMOOTH_BUFS_MAX 8
+
+// ---------- SDROT 视频层 Y 翻转(倒装机型) ----------
+// 存在此 DT key = 整机倒装,DEBE 扫描端 Y 倒扫,视频层内容需 app 用 VE SDROT
+// 预翻(V4L2_CID_VFLIP)。不带 key 的机型此条链整段不启用,零拷贝路径原样不变。
+// 见 docs/boe-flip-180.md、cedrus-rotate-usage.md。
+#define SDROT_YFLIP_DT_PATH \
+	"/proc/device-tree/soc/display-backend@1e60000/srgn,scanout-yflip"
+// 翻转输出池的显示保持格数(入队未上屏1 + 在屏1)。启用翻转时,这几格从解码
+// cap_count 对冲掉(解码 cap 不再承担显示保持,SDROT 一读完即放),净 CMA ≈ 不变。
+#define SDROT_DISPLAY_HOLD 2
 
 
 // ========== Animation Configuration ==========

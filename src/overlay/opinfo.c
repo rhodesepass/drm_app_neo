@@ -1759,10 +1759,10 @@ void overlay_opinfo_load_image(olopinfo_params_t* params){
         load_img_assets(params->logo_path, &params->logo_addr, &params->logo_w, &params->logo_h);
         // class/logo 也是用户图，旧素材同样按基准放大
         if(params->class_addr){
-            imgscale_upscale_nn_rgba(&params->class_addr, &params->class_w, &params->class_h, params->src_upscale);
+            imgscale_rescale_nn_rgba(&params->class_addr, &params->class_w, &params->class_h, params->src_upscale, params->src_downscale);
         }
         if(params->logo_addr){
-            imgscale_upscale_nn_rgba(&params->logo_addr, &params->logo_w, &params->logo_h, params->src_upscale);
+            imgscale_rescale_nn_rgba(&params->logo_addr, &params->logo_w, &params->logo_h, params->src_upscale, params->src_downscale);
         }
 #if OVERLAY_USE_C8
         // theme ramp 先入池(corner fade 的半透明落点),再量化两张用户图
@@ -1813,7 +1813,7 @@ void overlay_opinfo_load_image(olopinfo_params_t* params){
         }
         load_img_assets(el->image_path, &el->image_addr, &el->image_w, &el->image_h);
         if(el->image_addr){
-            imgscale_upscale_nn_rgba(&el->image_addr, &el->image_w, &el->image_h, params->src_upscale);
+            imgscale_rescale_nn_rgba(&el->image_addr, &el->image_w, &el->image_h, params->src_upscale, params->src_downscale);
         }
 #if OVERLAY_USE_C8
         pool_quantize_image(params, pool_cap, el->image_path,
