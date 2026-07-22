@@ -9,7 +9,7 @@
 #define RES_DEFAULT_ICON_FILE "defaulticon.png"
 
 // ========== Application Information ==========
-#define APP_SUBCODENAME "proj0cpy"
+#define APP_SUBCODENAME "a10bydesign"
 #define APP_BARNER \
     "           =-+           \n" \
     "     +@@@@@  @@@@@@        Rhodes Island\n" \
@@ -30,8 +30,7 @@
     "https://github.com/rhodesepass\n" \
     "电子通行证是白银个人业余时间设计的一款开源的自由硬件，人人均可复刻，" \
     "与鹰角网络没有任何直接或间接的关联。相关游戏素材版权属于鹰角网络。\n"\
-    "本设计方案按“原样”提供，不附带任何形式的明示或默示担保。白银不对使用本设计方案造成的任何索赔、损害或其他责任承担责任。" \
-    "白银不参与本项目的任何商业活动，也不从中获取任何利益，亦无义务对本设计方案进行任何形式的维护或更新。"
+    "本设计方案按“原样”提供，不附带任何形式的明示或默示担保。白银不对使用本设计方案造成的任何索赔、损害或其他责任承担责任。" 
 
 #define APP_VERSION EPASS_GIT_TAG
 #define APP_VERSION_STRING (APP_VERSION "_" EPASS_GIT_VERSION)

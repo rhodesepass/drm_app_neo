@@ -133,7 +133,7 @@ lv_obj_t *screen_mainmenu_create(void)
         add_style_label_small(o);
         lv_label_set_text(o,
             "电子通行证播放程序\n罗德岛工程部 白银 <inapp@iccmc.cc> Et al.2026 \n"
-            "本项目是开源的自由硬件.不带任何形式的保证.\n作者不获取任何利润 github.com/rhodesepass");
+            "本项目是开源的自由硬件.不带任何形式的保证.\n github.com/rhodesepass");
     }
 
     return root;
