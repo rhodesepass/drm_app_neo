@@ -174,6 +174,7 @@ set(EPASS_SOURCES
   src/ui_screens/screens/screen_warning.c
   src/ui_screens/screens/screen_confirm.c
   src/ui_screens/screens/screen_usbselect.c
+  src/ui_screens/ui_preview.c
   src/ui_screens/platform/ui_backend_device.c
   src/ui_screens/platform/ui_plane_device.c
   src/ui_screens/platform/ui_services_device.c

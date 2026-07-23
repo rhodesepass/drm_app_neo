@@ -13,6 +13,7 @@ static struct {
     lv_obj_t *title;
     char h[64];
     char t[128];
+    bool t_large;   // 第二行字号 (show_impl 记录,create 懒建时也要按它应用)
     void (*on_proceed)(void);
     void (*on_cancel)(void);
 } self;
@@ -56,7 +57,7 @@ lv_obj_t *screen_confirm_create(void)
 
     self.title = lv_label_create(root);
     lv_obj_set_pos(self.title, S(83), S(37)); lv_obj_set_width(self.title, S(262));
-    add_style_label_large(self.title);
+    set_style_label_size(self.title, self.t_large);
     lv_label_set_text(self.title, self.t);
 
     ui_text_button(root, 28, 70, 149, 51, UI_SEM_NEUTRAL, "取消", on_cancel);
@@ -75,6 +76,7 @@ static void show_impl(const char *head, const char *desc,
 {
     lv_strlcpy(self.h, head ? head : "=PRTS二次确认=", sizeof(self.h));
     lv_strlcpy(self.t, desc ? desc : "确认操作?", sizeof(self.t));
+    self.t_large = desc_large;
     self.on_proceed = proceed;
     self.on_cancel = cancel;
     if (self.head) lv_label_set_text(self.head, self.h);

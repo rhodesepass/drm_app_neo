@@ -14,7 +14,20 @@
 static struct {
     lv_obj_t *btn[4]; // 与 uix_usb_choice_t 下标一致
     uint32_t session_id;
+    uint32_t func_mask; // show 记录,create 懒建时也要按它应用 (0 视作全显)
 } self;
+
+static void apply_func_mask(void)
+{
+    uint32_t mask = self.func_mask ? self.func_mask : 0xF;
+    for (int i = 0; i < 4; i++) {
+        if (!self.btn[i]) continue;
+        if (mask & (1u << i))
+            lv_obj_remove_flag(self.btn[i], LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(self.btn[i], LV_OBJ_FLAG_HIDDEN);
+    }
+}
 
 static void pick(uint32_t choice)
 {
@@ -44,7 +57,7 @@ lv_obj_t *screen_usbselect_create(void)
 
     lv_obj_t *hint = lv_label_create(root);
     lv_obj_set_pos(hint, S(83), S(37)); lv_obj_set_width(hint, S(262));
-    add_style_label_large(hint);
+    add_style_label_small(hint);
     lv_label_set_text(hint, "请选择本次连接的用途");
 
     self.btn[UIX_USB_CHOICE_EPASS]       = ui_text_button(root, 28, 80, 149, 51, UI_SEM_NEUTRAL, "管理APP", on_epass);
@@ -52,19 +65,14 @@ lv_obj_t *screen_usbselect_create(void)
     self.btn[UIX_USB_CHOICE_MTP]         = ui_text_button(root, 28, 137, 149, 51, UI_SEM_NEUTRAL, "文件/MTP", on_mtp);
     self.btn[UIX_USB_CHOICE_CHARGE_ONLY] = ui_text_button(root, 187, 137, 147, 51, UI_SEM_NEUTRAL, "仅充电", on_charge);
 
+    apply_func_mask();
     return root;
 }
 
 void screen_usbselect_show(uint32_t session_id, uint32_t func_mask)
 {
     self.session_id = session_id;
-    if (func_mask == 0) func_mask = 0xF;
-    for (int i = 0; i < 4; i++) {
-        if (!self.btn[i]) continue;
-        if (func_mask & (1u << i))
-            lv_obj_remove_flag(self.btn[i], LV_OBJ_FLAG_HIDDEN);
-        else
-            lv_obj_add_flag(self.btn[i], LV_OBJ_FLAG_HIDDEN);
-    }
+    self.func_mask = func_mask;
+    apply_func_mask();
     screen_show(SCREEN_USBSELECT);
 }

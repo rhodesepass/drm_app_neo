@@ -24,6 +24,7 @@
 #include "ui_screens/screen_manager.h"
 #include "ui_screens/ui_backend.h"
 #include "ui_screens/ui_services.h"
+#include "ui_screens/ui_preview.h"
 #include "ui_screens/ui_plane.h"
 
 static uint32_t lvgl_drm_warp_tick_get_cb(void)
@@ -126,6 +127,7 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     ui_services_init();
     ui_battery_init();
     ui_ipc_helper_init();
+    ui_preview_start();   // 命令行 `preview` 时轮播弹窗预览,否则 no-op
 
     atomic_store(&lvgl_drm_warp->running, 1);
     if (pthread_create(&lvgl_drm_warp->lvgl_thread, NULL, lvgl_drm_warp_thread_entry, lvgl_drm_warp) != 0) {

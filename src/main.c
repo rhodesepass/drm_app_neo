@@ -1,4 +1,5 @@
 #include <apps/apps.h>
+#include <ui_screens/ui_preview.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,11 +121,16 @@ void mount_video_layer_callback(void *userdata,bool is_last){
 // 10. lvgl_drm_warp
 
 int main(int argc, char *argv[]){
-    if(argc == 2){
+    if(argc >= 2){
         if(strcmp(argv[1], "version") == 0){
             printf("APP_VERSION: %s\n", APP_VERSION_STRING);
             printf("COMPILE_TIME: %s\n", COMPILE_TIME);
             return 0;
+        }
+        // 弹窗预览 (PC/sim 调试用):`preview [间隔ms]`,轮播 warning/confirm/fido-uix/usbselect 看排版。
+        if(strcmp(argv[1], "preview") == 0){
+            g_ui_preview_interval_ms = (argc >= 3) ? atoi(argv[2]) : 3000;
+            if(g_ui_preview_interval_ms <= 0) g_ui_preview_interval_ms = 3000;
         }
     }
 
