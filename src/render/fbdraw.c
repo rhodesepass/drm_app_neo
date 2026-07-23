@@ -204,7 +204,10 @@ void fbdraw_text(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, const l
 
                     const int px = (int)cursor_x + (int)g_dsc.ofs_x + col;
                     const int py = base_y - (int)g_dsc.box_h - (int)g_dsc.ofs_y + row;
-                    if(px < rect->x || px >= rect->x + rect->w || py < rect->y || py >= rect->y + rect->h) continue;
+                    /* rect->y 是排版参考线不是裁剪线：font_registry 收紧过 line_height 的
+                     * 字体，基线上方(line_height - base_line)容不下最高字形（hinting 后的
+                     * 大写字母/汉字），墨迹会越出 rect 上缘 1~S(3) px，只按 fb 边界裁剪 */
+                    if(px < rect->x || px >= rect->x + rect->w || py >= rect->y + rect->h) continue;
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     fbdraw_blend_px(fb, px, py, src_r, src_g, src_b, pixel_alpha);
@@ -274,7 +277,8 @@ void fbdraw_text_vertical(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text
 
                     const int px = (int)cursor_x + (int)g_dsc.ofs_x + col;
                     const int py = base_y - (int)g_dsc.box_h - (int)g_dsc.ofs_y + row;
-                    if(px < rect->x || px >= rect->x + rect->w || py < rect->y || py >= rect->y + rect->h) continue;
+                    /* 与 fbdraw_text 相同：rect 上缘不裁剪（收紧行高字体的墨迹会越界） */
+                    if(px < rect->x || px >= rect->x + rect->w || py >= rect->y + rect->h) continue;
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     fbdraw_blend_px(fb, px, py, src_r, src_g, src_b, pixel_alpha);
@@ -395,7 +399,8 @@ void fbdraw_text_range(fbdraw_fb_t* fb, fbdraw_rect_t* rect, const char* text, c
 
                     const int px = (int)cursor_x + (int)g_dsc.ofs_x + col;
                     const int py = base_y - (int)g_dsc.box_h - (int)g_dsc.ofs_y + row;
-                    if(px < rect->x || px >= rect->x + rect->w || py < rect->y || py >= rect->y + rect->h) continue;
+                    /* 与 fbdraw_text 相同：rect 上缘不裁剪（收紧行高字体的墨迹会越界） */
+                    if(px < rect->x || px >= rect->x + rect->w || py >= rect->y + rect->h) continue;
                     if(px < 0 || px >= fb->width || py < 0 || py >= fb->height) continue;
 
                     fbdraw_blend_px(fb, px, py, src_r, src_g, src_b, pixel_alpha);

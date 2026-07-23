@@ -725,6 +725,14 @@ static void el_resolve(opinfo_engine_t* d, int i){
         rect_union(&st->bbox, &b, &set);
         // cur_dx/dy 初始 0：相位从 0 起，sin(0)=0，起手在落点
     }
+
+    // 收紧行高的字体(见 font_registry 的 lh_pct)基线上方容不下最高字形，
+    // fbdraw 文本不再裁 rect 上缘，墨迹最多越出 content 上缘 S(3) px。
+    // 清除/落盘范围随之上扩，否则动画重画会留拖影、增量落盘会漏拷顶部几行。
+    if(el->type == OPINFO_EL_TEXT){
+        st->bbox.y -= S(3);
+        st->bbox.h += S(3);
+    }
 }
 
 static int group_find(opinfo_engine_t* d, int i){
@@ -791,7 +799,8 @@ static bool engine_compose(opinfo_engine_t* d){
             fbdraw_text_range(&d->shadow_fb, &st->content, d->els[g].text,
                               el_font(&d->els[g]), d->els[g].color,
                               S(d->els[g].line_height), st->cpidx, st->cpidx + 1);
-            fbdraw_copy_rect(&d->shadow_fb, &vram_fb, &st->content, &st->content);
+            // 按 bbox 落盘：字形墨迹可越出 content 上缘（见 el_resolve 的 bbox 上扩）
+            fbdraw_copy_rect(&d->shadow_fb, &vram_fb, &st->bbox, &st->bbox);
             st->dirty = 0;
             continue;
         }
