@@ -56,6 +56,11 @@ void fbdraw_fill_rect(fbdraw_fb_t* fb, fbdraw_rect_t* rect, uint32_t color){
 }
 
 void fbdraw_copy_rect(fbdraw_fb_t* src_fb, fbdraw_fb_t* dst_fb, fbdraw_rect_t* src_rect, fbdraw_rect_t* dst_rect){
+    if(!src_fb || !dst_fb || !src_rect || !dst_rect || !src_fb->vaddr || !dst_fb->vaddr){
+        log_error("fbdraw_copy_rect: invalid framebuffer");
+        return;
+    }
+
     int w = src_rect->w < dst_rect->w ? src_rect->w : dst_rect->w;
     int h = src_rect->h < dst_rect->h ? src_rect->h : dst_rect->h;
     int sx = src_rect->x;

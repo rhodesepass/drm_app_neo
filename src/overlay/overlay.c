@@ -27,6 +27,9 @@ int load_img_assets(char *image_path, uint32_t** addr,int* w,int* h){
     uint8_t* pixdata = stbi_load(image_path, w, h, &c, 4);
     if(!pixdata){
         log_error("failed to load image: %s", image_path);
+        *w = 0;
+        *h = 0;
+        *addr = NULL;
         return -1;
     }
     *addr = malloc((*w) * (*h) * 4);
@@ -34,6 +37,9 @@ int load_img_assets(char *image_path, uint32_t** addr,int* w,int* h){
         log_error("failed to malloc memory: %s", image_path);
         stbi_image_free(pixdata);
         pixdata = NULL;
+        *w = 0;
+        *h = 0;
+        *addr = NULL;
         return -1;
     }
     for(int y = 0; y < (*h); y++){
