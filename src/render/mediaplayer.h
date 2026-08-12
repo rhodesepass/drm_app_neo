@@ -26,9 +26,9 @@ typedef struct MultiThreadCtx {
 } MultiThreadCtx;
 
 typedef struct {
-    /* 解码后端私有会话状态：设备 = 自制 demux/parser/DPB + cedrus V4L2，
-     * PC = ffmpeg。init 时由后端分配，destroy 时释放；公共字段留在本结构，
-     * ipc_handler 等直接读 video_path/running。 */
+    /* 解码后端私有会话状态：设备 = srgnvdec stream，PC = ffmpeg。
+     * init 时由后端分配，destroy 时释放；公共字段留在本结构，ipc_handler 等
+     * 直接读 video_path/running。 */
     void                *priv;
     bool                 session_open;
 
