@@ -83,6 +83,18 @@
 #define APPS_IPC_BACKLOG 16
 
 
+// ========== Platform Configuration ==========
+// SoC 目标由构建系统注入：cmake -DEPASS_PLATFORM=f1c | d1s
+//   f1c = F1C200s + 5.4.99，DEBE/DEFE 显示，VE 带 MPEG 旋转单元(SDROT)
+//   d1s = D1s + 7.x，DE2 mixer 显示，无旋转单元
+// 两者的板级内核 patch 不同，见各自 buildroot 的 board/rhodesisland/*/patch。
+// 未注入时兜底 f1c(与 CMake 默认一致)，保证独立/clangd 也能解析。
+// 解码栈(srgnvdec 包)不看这个宏，它有自己的 SRGNVDEC_UAPI_PRESTABLE；
+// mediaplayer.c 里有编译期对账防两者错配。
+#ifndef EPASS_PLATFORM_F1C
+#define EPASS_PLATFORM_F1C 1
+#endif
+
 // ========== Screen Configuration ==========
 // 屏目标由构建系统注入：cmake -DEPASS_SCREEN=360x640 | 480x854 | 720x1280
 // (设备 CMakeLists 与 sim/CMakeLists 都支持该变量)。
@@ -207,12 +219,12 @@
 #define DRM_WARPPER_LAYER_OVERLAY 1
 #define DRM_WARPPER_LAYER_VIDEO 0
 
-// overlay 层像素格式。1 = C8(256 色调色板, DEBE 片上 SRAM 查表出色,
+// overlay 层像素格式。1 = C8(256 色调色板, 片上 SRAM 查表出色,
 // 每帧扫描 fetch 降为 8888 的 1/4, 省 DDR 带宽给 VE; 每个调色板项自带 8bit alpha),
 // 0 = 回退 ARGB8888(A/B 对比与硬件翻车回滚用)。
-// 需要内核 patch 0029(DRM_FORMAT_C8 + /sys/kernel/debe_palette/palette)。
-// 硬件约束: 调色板全局唯一(四层共享一块 SRAM); C8 不能缩放(overlay 本不缩放);
-// C8 恒占 alpha plane 名额(NV12+C8+RGB565 组合够用)。
+// 需要板级内核 patch: F1C 的 0029(DEBE) / D1s 的 0010(DE2 mixer)。
+// 硬件约束两边一致: 调色板每通道唯一(四个 overlay 共享一张表); C8 不能缩放
+// (overlay 本不缩放); C8 恒占 alpha plane 名额(NV12+C8+RGB565 组合够用)。
 #define OVERLAY_USE_C8 1
 
 #if OVERLAY_USE_C8
@@ -222,7 +234,13 @@
 #endif
 #define OVERLAY_BUF_BYTES (OVERLAY_WIDTH * OVERLAY_HEIGHT * OVERLAY_BPP)
 
-#define DEBE_PALETTE_SYSFS_PATH "/sys/kernel/debe_palette/palette"
+// 1024 字节小端 ARGB8888，写入立即锁存不等 vsync。两条线的 sysfs 语义相同，
+// 只是挂载点不同：F1C 是 DEBE 的全局节点，D1s 挂在 mixer 的 platform device 上。
+#if EPASS_PLATFORM_F1C
+#define PALETTE_SYSFS_PATH "/sys/kernel/debe_palette/palette"
+#else
+#define PALETTE_SYSFS_PATH "/sys/devices/platform/soc/5100000.mixer/palette"
+#endif
 
 // ---------- C8 调色板分段(见 src/render/c8pal.h) ----------
 // 烘焙段 0..95 编译期固定(c8pal_baked.h, tools/gen_c8.sh 生成):
@@ -260,8 +278,10 @@
 // #define MP_TIMING_DEBUG
 
 // ========== Media Player (V4L2 stateless / cedrus) ==========
-// OUTPUT(码流)buffer 大小：一帧一个 NAL，打开时按 mp4 最大 sample 校验
+// OUTPUT(码流)buffer 大小：一帧一个 NAL，打开时按 mp4 最大 sample 校验。
+// H.265 单帧压得更满(IRAP 大帧常超 512K)，单独给到 1M。
 #define VDEC_OUTPUT_BUF_SIZE (512 * 1024)
+#define VDEC_OUTPUT_BUF_SIZE_H265 (1024 * 1024)
 #define VDEC_OUTPUT_BUF_COUNT 2
 // B 帧重排深度下限（素材 has_b_frames=2）
 #define VDEC_REORDER_DEPTH 2
@@ -296,15 +316,16 @@
 // 上限兜底：ring + 解码账本不得撑爆 VDEC_MAX_CAP_BUFS(32)
 #define MP_SMOOTH_BUFS_MAX 8
 
-// ---------- SDROT 视频层 Y 翻转(倒装机型) ----------
-// 存在此 DT key = 整机倒装,DEBE 扫描端 Y 倒扫,视频层内容需 app 用 VE SDROT
-// 预翻(V4L2_CID_VFLIP)。不带 key 的机型此条链整段不启用,零拷贝路径原样不变。
-// 见 docs/boe-flip-180.md、cedrus-rotate-usage.md。
-#define SDROT_YFLIP_DT_PATH \
+// ---------- 视频层 PP 变换(倒装机型 Y 翻转等) ----------
+// 存在此 DT key = 整机倒装,扫描端 Y 倒扫,视频层内容需 app 经 srgnvdec 的 PP
+// 管线预翻(F1C 走 cedrus-rotate/VE,D1 走 sun8i-rotate/G2D,库内统一)。
+// 运行时检测:D1s 的 DT 里没有这个 key,天然不启用;MP_FORCE_YFLIP=1 可在
+// 平装机上强制走 PP 链(调试/验证用)。见 docs/boe-flip-180.md。
+#define MP_YFLIP_DT_PATH \
 	"/proc/device-tree/soc/display-backend@1e60000/srgn,scanout-yflip"
-// 翻转输出池的显示保持格数(入队未上屏1 + 在屏1)。启用翻转时,这几格从解码
-// cap_count 对冲掉(解码 cap 不再承担显示保持,SDROT 一读完即放),净 CMA ≈ 不变。
-#define SDROT_DISPLAY_HOLD 2
+// PP 输出池的显示保持格数(入队未上屏1 + 在屏1)。启用变换时,这几格从解码
+// cap_count 对冲掉(解码 cap 不再承担显示保持,PP 一读完即放),净 CMA ≈ 不变。
+#define MP_PP_HOLD 2
 
 
 // ========== Animation Configuration ==========

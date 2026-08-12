@@ -43,6 +43,25 @@ else()
   message(STATUS "TARGET_PC=OFF → building device targets only")
 endif()
 
+# 目标 SoC。差异是硬件绑定的，内核版本只是跟着 SoC 走的结果：
+#   f1c = F1C200s + 5.4.99，DEBE/DEFE，VE 带 MPEG 旋转单元(SDROT)，
+#         H.264 stateless 走 pre-stable uapi
+#   d1s = D1s + 7.x，DE2 mixer，无旋转单元，走内核头里的 stable uapi
+# uapi 差异全部封装在 srgnvdec 包里(按 SRGNVDEC_UAPI 构建)；这里的开关只剩
+# drm_warpper 的 FB modifier 分支(tiled vs linear)在用，并在下方与找到的
+# srgnvdec 配置对账。
+set(EPASS_PLATFORM "f1c" CACHE STRING "Target SoC platform (f1c|d1s)")
+set_property(CACHE EPASS_PLATFORM PROPERTY STRINGS f1c d1s)
+
+if(EPASS_PLATFORM STREQUAL "f1c")
+  set(EPASS_PLATFORM_F1C 1)
+elseif(EPASS_PLATFORM STREQUAL "d1s")
+  set(EPASS_PLATFORM_F1C 0)
+else()
+  message(FATAL_ERROR "EPASS_PLATFORM must be f1c or d1s (got '${EPASS_PLATFORM}')")
+endif()
+message(STATUS "EPASS_PLATFORM=${EPASS_PLATFORM}")
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
   set(APP_RELEASE ON CACHE BOOL "Build type" FORCE)
@@ -72,6 +91,26 @@ endif()
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 if(NOT TARGET_PC)
   pkg_check_modules(LIBEVDEV REQUIRED libevdev)
+
+  # 解码栈 —— 独立包 srgnvdec (buildroot staging 自动命中; 裸 dev 构建传
+  # -DCMAKE_PREFIX_PATH=<srgnvdec 安装前缀>)。uapi 布局宏随 imported target
+  # 带入, 不手传 -D。
+  find_package(srgnvdec REQUIRED CONFIG)
+  # 库的 uapi/PP 配置必须和 EPASS_PLATFORM 对上, 链错了控制结构体布局不匹配,
+  # 到真机上才炸 —— 在 configure 期拦下。
+  get_target_property(_srgnvdec_defs srgnvdec::srgnvdec INTERFACE_COMPILE_DEFINITIONS)
+  string(REGEX MATCH "SRGNVDEC_UAPI_PRESTABLE=([01])" _m "${_srgnvdec_defs}")
+  set(_srgnvdec_prestable "${CMAKE_MATCH_1}")
+  string(REGEX MATCH "SRGNVDEC_HAVE_PP=([01])" _m "${_srgnvdec_defs}")
+  set(_srgnvdec_pp "${CMAKE_MATCH_1}")
+  if(NOT _srgnvdec_prestable STREQUAL "${EPASS_PLATFORM_F1C}")
+    message(FATAL_ERROR "srgnvdec 编的是 UAPI_PRESTABLE=${_srgnvdec_prestable}, "
+      "但 EPASS_PLATFORM=${EPASS_PLATFORM} 需要 ${EPASS_PLATFORM_F1C} "
+      "(f1c=prestable/5.4, d1s=stable)")
+  endif()
+  if(EPASS_PLATFORM_F1C AND NOT _srgnvdec_pp STREQUAL "1")
+    message(FATAL_ERROR "f1c 需要 SDROT, srgnvdec 必须以 SRGNVDEC_WITH_PP=ON 构建")
+  endif()
 endif()
 
 # 系统共享字体 (buildroot 的 epass-fonts 包)。找到就用它导出的目录, 编译期把
@@ -134,7 +173,7 @@ endif()
 # 源文件
 # ============================================================================
 # 平台无关的公共源；显示/视频/按键三个后端缝按 target 追加：
-#   设备 = drm_warpper.c + mediaplayer.c(+vdec) + key_enc_evdev.c
+#   设备 = drm_warpper.c + mediaplayer.c(链 srgnvdec) + key_enc_evdev.c
 #   PC   = drm_warpper_sdl.c + mediaplayer_ffmpeg.c + key_sdl.c
 set(EPASS_SOURCES
   src/main.c
@@ -222,13 +261,6 @@ function(add_epass_target name screen_define)
     src/driver/drm_warpper.c
     src/driver/key_enc_evdev.c
     src/render/mediaplayer.c
-    src/vdec/mp4_demux.c
-    src/vdec/bitreader.c
-    src/vdec/nalu.c
-    src/vdec/h264_parser.c
-    src/vdec/h264_dpb.c
-    src/vdec/vdec_v4l2.c
-    src/vdec/sdrot.c
   )
   target_include_directories(${name} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -243,6 +275,7 @@ function(add_epass_target name screen_define)
   target_compile_definitions(${name} PRIVATE
     _DEFAULT_SOURCE
     ${screen_define}
+    EPASS_PLATFORM_F1C=${EPASS_PLATFORM_F1C}
     EPASS_GIT_VERSION="${GIT_COMMIT}"
     EPASS_GIT_TAG="${GIT_TAG}"
     COMPILE_TIME="${COMPILE_TIME}"
@@ -268,6 +301,7 @@ function(add_epass_target name screen_define)
     ${PNG_LIBRARIES}
     ${FREETYPE_LIBRARIES}
     lvgl
+    srgnvdec::srgnvdec
   )
   # 资源拷贝：按 config.h 的 res/ 结构落到可执行文件同级
   set(RES_OUT_DIR $<TARGET_FILE_DIR:${name}>/res)
@@ -298,19 +332,6 @@ if(NOT LVGL_FOUND)
 endif()
 
 if(NOT TARGET_PC)
-  # vdec 解码栈独立验证工具（真机 bring-up 用，make vdec_selftest 手动构建）
-  add_executable(vdec_selftest EXCLUDE_FROM_ALL
-    tools/vdec_selftest.c
-    src/vdec/mp4_demux.c
-    src/vdec/bitreader.c
-    src/vdec/nalu.c
-    src/vdec/h264_parser.c
-    src/vdec/h264_dpb.c
-    src/vdec/vdec_v4l2.c
-  )
-  target_include_directories(vdec_selftest PRIVATE src/vdec ${LIBDRM_INCLUDE_DIRS})
-  target_link_libraries(vdec_selftest ${LIBDRM_LIBRARIES})
-
   add_epass_target(app_360 USE_360_640_SCREEN)
   add_epass_target(app_720 USE_720_1280_SCREEN)
 endif()
@@ -353,6 +374,8 @@ if(TARGET_PC)
       _DEFAULT_SOURCE
       ${screen_define}
       EPASS_PC_TARGET
+      # SDL 后端自带 palette/视频路径，平台差异对它无影响；注入只为口径一致
+      EPASS_PLATFORM_F1C=${EPASS_PLATFORM_F1C}
       EPASS_GIT_VERSION="${GIT_COMMIT}"
       EPASS_GIT_TAG="${GIT_TAG}"
       COMPILE_TIME="${COMPILE_TIME}"

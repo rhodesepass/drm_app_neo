@@ -1,5 +1,6 @@
 # 编译产物与运行产物, 不入库。
 fuzz_h264
+fuzz_h264_f1c
 fuzz_mp4
 fuzz_epconfig
 findings/

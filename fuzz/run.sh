@@ -4,20 +4,18 @@
 # 用 fuzz/<target> <样本文件> 可单独复现。
 #
 # 用法:
-#   fuzz/run.sh h264 [秒数]      默认 300
-#   fuzz/run.sh mp4  [秒数]
-#   fuzz/run.sh epconfig [秒数]
+#   fuzz/run.sh epconfig [秒数]  默认 300
 #
-# 复现单个样本:  fuzz/fuzz_h264 fuzz/findings/h264_crash-xxxx
+# 解码栈(mp4/h264/h265)的 fuzz 已随 srgnvdec 包走: 见 ../srgnvdec/fuzz/run.sh
+#
+# 复现单个样本:  fuzz/fuzz_epconfig fuzz/findings/epconfig_crash-xxxx
 #
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-T="${1:?用法: run.sh <h264|mp4|epconfig> [秒数]}"
+T="${1:?用法: run.sh <epconfig> [秒数]}"
 SECS="${2:-300}"
 
 case "$T" in
-  h264)     BIN="$HERE/fuzz_h264";     CORP="$HERE/corpus_h264";     MAXLEN=4096   ;;
-  mp4)      BIN="$HERE/fuzz_mp4";      CORP="$HERE/corpus_mp4";      MAXLEN=131072 ;;
   epconfig) BIN="$HERE/fuzz_epconfig"; CORP="$HERE/corpus_epconfig"; MAXLEN=8192   ;;
   *) echo "未知 target: $T"; exit 1 ;;
 esac

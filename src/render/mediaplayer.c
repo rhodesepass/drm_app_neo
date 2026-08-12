@@ -1,5 +1,5 @@
 /*
- * Mediaplayer：src/vdec 自制解码栈（MP4 demux + H264 parser/DPB + cedrus
+ * Mediaplayer：srgnvdec 解码栈（MP4 demux + H.264/H.265 parser/DPB + cedrus
  * V4L2 request API）→ dmabuf FB → drm_warpper atomic 翻页。
  *
  * 两个线程：解码线程全速解码(demux 是内存 sample 表、request 是同步等待，
@@ -15,6 +15,7 @@
 
 #include "mediaplayer.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,33 +28,50 @@
 #include "utils/misc.h"
 #include "utils/spsc_queue.h"
 
-#include "vdec/nalu.h"
-#include "vdec/mp4_demux.h"
-#include "vdec/h264_parser.h"
-#include "vdec/h264_dpb.h"
-#include "vdec/vdec_v4l2.h"
-#include "vdec/sdrot.h"
+#include <srgnvdec/nalu.h>
+#include <srgnvdec/mp4_demux.h>
+#include <srgnvdec/h264_parser.h>
+#include <srgnvdec/h264_dpb.h>
+#include <srgnvdec/vdec.h>
+#include <srgnvdec/vdec_codec.h>
+#include <srgnvdec/vdec_v4l2.h>
+#if SRGNVDEC_HAVE_H265
+#include <srgnvdec/hevc_parser.h>
+#include <srgnvdec/hevc_dpb.h>
+#include <srgnvdec/hevc_ctrls.h>
+#endif
+/*
+ * 链错配置的库时控制结构体布局对不上，编译器不会吭声，真机上才炸 —— CMake
+ * 已在 configure 期校验过一道，这里再挡住绕过 CMake 的手写构建。
+ */
+#if EPASS_PLATFORM_F1C != SRGNVDEC_UAPI_PRESTABLE
+#error "srgnvdec 的 uapi 配置与 EPASS_PLATFORM 不符 (f1c=prestable, d1s=stable)"
+#endif
 
 #define mp_get_now_us get_now_us
 
 /* 设备后端的会话私有状态（mediaplayer_t.priv） */
 typedef struct {
     struct mp4_demux   demux;
+    enum mp4_codec     codec;
     struct h264_parser parser;
     struct h264_dpb    dpb;
+#if SRGNVDEC_HAVE_H265
+    struct hevc_parser hparser;
+    struct hevc_dpb    hdpb;
+#endif
     struct vdec_ctx    vdec;
     uint32_t           fb_ids[VDEC_MAX_CAP_BUFS];
     uint32_t           gem_handles[VDEC_MAX_CAP_BUFS];
 
     /*
-     * 倒装机型:解码帧经 SDROT 补 Y 翻转再上屏。启用时 fb_ids/gem_handles 索引
-     * 翻转输出池(flip slot),而非解码 cap slot;显示保持落在 flip_busy 上,解码
-     * cap 不再挂 on_screen。见 docs/boe-flip-180.md。
+     * 显示变换(倒装机型 = vflip,见 docs/boe-flip-180.md)。非 identity 时库内
+     * 走 PP 管线,fb_ids 索引的是 PP 输出池;identity 时即解码 cap 池——对本
+     * 文件而言只是 vdec_out 枚举/借帧 API 的活动池换了,代码不分叉。
      */
-    bool               yflip;
-    struct sdrot_ctx   sdrot;
-    unsigned int       flip_count;
-    bool               flip_busy[SDROT_MAX_CAP_BUFS];
+    struct vdec_transform tform;
+    /* 借出去未归还的帧,按活动池 slot 索引(item 回流时凭 slot 归还) */
+    struct vdec_frame  *inflight[VDEC_MAX_CAP_BUFS];
 
     /* 解码线程 → pacer 的待上屏帧；容量 = smooth_bufs + 1(在手的那格) */
     spsc_bq_t          smooth_q;
@@ -164,9 +182,57 @@ static inline int mp_trace_on(void)
 }
 
 /*
- * 收 free_queue：解除离屏槽位的显示保持并释放 item。非翻转路径清 DPB 的
- * on_screen(slot == cap slot);翻转路径清 flip_busy(slot == flip slot,DPB 侧
- * 在解码后就已 mark_displayed,不挂 on_screen)。
+ * DPB 触点按 codec 分发。两套 DPB 的槽位/显示语义一致(capture slot == DPB
+ * slot)，pacer/free_queue 只见 slot，故解码线程之外的路径全走这三个入口。
+ */
+static int mp_dpb_next_output(mp_dev_priv_t *p, bool flush)
+{
+#if SRGNVDEC_HAVE_H265
+    if (p->codec == MP4_CODEC_H265)
+        return hevc_dpb_next_output(&p->hdpb, flush);
+#endif
+    return h264_dpb_next_output(&p->dpb, flush);
+}
+
+static void mp_dpb_set_on_screen(mp_dev_priv_t *p, int slot, bool on)
+{
+#if SRGNVDEC_HAVE_H265
+    if (p->codec == MP4_CODEC_H265) {
+        hevc_dpb_set_on_screen(&p->hdpb, slot, on);
+        return;
+    }
+#endif
+    h264_dpb_set_on_screen(&p->dpb, slot, on);
+}
+
+static void mp_dpb_mark_displayed(mp_dev_priv_t *p, int slot)
+{
+#if SRGNVDEC_HAVE_H265
+    if (p->codec == MP4_CODEC_H265) {
+        hevc_dpb_mark_displayed(&p->hdpb, slot);
+        return;
+    }
+#endif
+    h264_dpb_mark_displayed(&p->dpb, slot);
+}
+
+/* 库借帧模型的 DPB 回调:两套 DPB 的分发在上面的 mp_dpb helpers 里 */
+static void mp_ops_lock(void *arg, int slot)
+{
+    mp_dev_priv_t *p = arg;
+
+    mp_dpb_set_on_screen(p, slot, true);
+    mp_dpb_mark_displayed(p, slot);
+}
+
+static void mp_ops_unlock(void *arg, int slot)
+{
+    mp_dpb_set_on_screen(arg, slot, false);
+}
+
+/*
+ * 收 free_queue：归还离屏帧并释放 item。slot 索引活动池,凭 inflight[] 找回
+ * 借出的帧交还库(库内按帧来源解 DPB 显示保持或还 PP 池)。
  */
 static void mp_reclaim_free_items(mediaplayer_t *mp)
 {
@@ -182,35 +248,13 @@ static void mp_reclaim_free_items(mediaplayer_t *mp)
 
         if (mp_trace_on())
             log_info("T R%d g%d", slot, (int)mine);
-        if (slot >= 0 && mine) {
-            if (p->yflip) {
-                if ((unsigned int)slot < p->flip_count)
-                    p->flip_busy[slot] = false;
-            } else {
-                h264_dpb_set_on_screen(&p->dpb, slot, false);
-            }
+        if (slot >= 0 && mine && p->inflight[slot]) {
+            vdec_frame_release(&p->vdec, p->inflight[slot]);
+            p->inflight[slot] = NULL;
         }
         mp->items_in_flight--;
         free(item);
     }
-}
-
-/* 找一个空闲翻转输出格;满则等显示线程回流(每 vblank 一次)。返回 -1 = 超时 */
-static int mp_alloc_flip_slot(mediaplayer_t *mp)
-{
-    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
-    int retry;
-
-    for (retry = 0; retry < 100; retry++) {
-        unsigned int i;
-
-        for (i = 0; i < p->flip_count; i++)
-            if (!p->flip_busy[i])
-                return (int)i;
-        usleep(5 * 1000);
-        mp_reclaim_free_items(mp);
-    }
-    return -1;
 }
 
 /*
@@ -233,10 +277,11 @@ static void mp_pace_wait(mediaplayer_t *mp, long long *next)
 }
 
 /*
- * 帧 item 工厂：占住 slot + in_flight 记账。只在解码线程调用(碰 dpb)。
+ * 帧 item 工厂：登记借来的帧 + in_flight 记账。只在解码线程调用。
+ * 帧的 DPB 显示保持已由 vdec_frame_acquire 处理,这里只做 item 侧账。
  */
 static drm_warpper_queue_item_t *mp_make_frame_item(mediaplayer_t *mp,
-                                                    uint32_t fb_id, int slot)
+                                                    struct vdec_frame *f)
 {
     mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     drm_warpper_queue_item_t *item = malloc(sizeof(*item));
@@ -247,69 +292,15 @@ static drm_warpper_queue_item_t *mp_make_frame_item(mediaplayer_t *mp,
     }
     memset(item, 0, sizeof(*item));
     item->type = DRM_WARPPER_ITEM_FLIP_FB;
-    item->fb_id = fb_id;
-    item->userdata = slot_to_userdata(mp, slot);
+    item->fb_id = p->fb_ids[f->slot];
+    item->userdata = slot_to_userdata(mp, f->slot);
     item->on_heap = false; /* 帧类 item 由本模块经 free_queue 回收 */
 
-    /* 交出去就算占住 slot：内容要保到上屏后离屏为止 */
-    if (slot >= 0) {
-        h264_dpb_set_on_screen(&p->dpb, slot, true);
-        h264_dpb_mark_displayed(&p->dpb, slot);
-    }
+    p->inflight[f->slot] = f;
     if (mp_trace_on())
-        log_info("T E%d", slot);
+        log_info("T E%d", f->slot);
     mp->items_in_flight++;
     return item;
-}
-
-/*
- * 翻转帧 item 工厂：占住 flip slot(显示保持)+ in_flight 记账。DPB 侧的
- * mark_displayed 已在 SDROT 前对解码 cap slot 单独做过,这里不碰 dpb。
- */
-static drm_warpper_queue_item_t *mp_make_flip_item(mediaplayer_t *mp,
-                                                   uint32_t fb_id, int flip_slot)
-{
-    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
-    drm_warpper_queue_item_t *item = malloc(sizeof(*item));
-
-    if (!item) {
-        log_error("malloc err");
-        return NULL;
-    }
-    memset(item, 0, sizeof(*item));
-    item->type = DRM_WARPPER_ITEM_FLIP_FB;
-    item->fb_id = fb_id;
-    item->userdata = slot_to_userdata(mp, flip_slot);
-    item->on_heap = false;
-
-    p->flip_busy[flip_slot] = true;
-    if (mp_trace_on())
-        log_info("T E%d(flip)", flip_slot);
-    mp->items_in_flight++;
-    return item;
-}
-
-/*
- * 出帧前的 Y 翻转(仅倒装机型)：把解码 cap slot 的帧经 SDROT 翻进一个空闲
- * flip slot,返回该 flip slot(-1 失败)。解码 cap slot 随即 mark_displayed
- * ——它只需按 DPB 参考逻辑留存,显示保持已转移到 flip 池。
- */
-static int mp_flip_output(mediaplayer_t *mp, int cap_slot)
-{
-    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
-    int k = mp_alloc_flip_slot(mp);
-
-    if (k < 0) {
-        log_error("no free flip slot");
-        return -1;
-    }
-    if (sdrot_process(&p->sdrot, p->vdec.cap[cap_slot].dmabuf_fd,
-                      (unsigned int)cap_slot, (unsigned int)k) < 0) {
-        log_error("sdrot failed @slot %d", cap_slot);
-        return -1;
-    }
-    h264_dpb_mark_displayed(&p->dpb, cap_slot);
-    return k;
 }
 
 /*
@@ -373,29 +364,41 @@ static void *mp_pacer_thread(void *param)
  *  0 解码成功  1 非视频帧(跳过)  -1 错误(停播)  MP_DECODE_SOURCE_LOST 片源读取失败
  */
 #define MP_DECODE_SOURCE_LOST (-2)
-static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
-                        struct h264_slice_hdr *hdr_out)
+
+/* AU 读取的公共段：返回码同上，0 = au/size 就绪 */
+static int mp_read_au(mp_dev_priv_t *p, unsigned int sample_idx,
+                      const uint8_t **au)
+{
+    int rd = mp4_read_sample(&p->demux, sample_idx, au, NULL);
+
+    if (rd == MP4_ERR_IO) {
+        log_error("sample %u read failed (source lost?)", sample_idx);
+        return MP_DECODE_SOURCE_LOST;
+    }
+    if (rd != MP4_OK || !*au) {
+        log_error("sample %u out of range", sample_idx);
+        return -1;
+    }
+    return 0;
+}
+
+static int mp_decode_au_h264(mediaplayer_t *mp, unsigned int sample_idx)
 {
     mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     const struct mp4_sample *sample = &p->demux.samples[sample_idx];
     const uint8_t *au = NULL;
     unsigned int cursor = 0, vcl_count = 0;
     struct nalu n, vcl = { 0 };
+    struct h264_slice_hdr hdr;
     struct h264_poc poc;
     struct vdec_h264_ctrls ctrl;
     bool have_hdr = false;
     uint64_t ts;
     int slot, retry;
 
-    int rd = mp4_read_sample(&p->demux, sample_idx, &au, NULL);
-    if (rd == MP4_ERR_IO) {
-        log_error("sample %u read failed (source lost?)", sample_idx);
-        return MP_DECODE_SOURCE_LOST;
-    }
-    if (rd != MP4_OK || !au) {
-        log_error("sample %u out of range", sample_idx);
-        return -1;
-    }
+    int rd = mp_read_au(p, sample_idx, &au);
+    if (rd)
+        return rd;
 
     while (nalu_next_length_prefixed(au, sample->size,
                                      p->demux.nal_length_size, &cursor, &n)) {
@@ -407,11 +410,11 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
             vcl_count++;
             if (have_hdr)
                 continue;
-            if (h264_parser_parse_slice(&p->parser, &n, hdr_out) < 0) {
+            if (h264_parser_parse_slice(&p->parser, &n, &hdr) < 0) {
                 log_error("slice parse failed @%u", sample_idx);
                 return -1;
             }
-            h264_parser_compute_poc(&p->parser, hdr_out, &poc);
+            h264_parser_compute_poc(&p->parser, &hdr, &poc);
             vcl = n;
             have_hdr = true;
         }
@@ -426,7 +429,7 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
         return -1;
     }
 
-    if (h264_parser_fill_controls(&p->parser, hdr_out, &poc, &ctrl) < 0) {
+    if (h264_parser_fill_controls(&p->parser, &hdr, &poc, &ctrl) < 0) {
         log_error("fill_controls failed @%u", sample_idx);
         return -1;
     }
@@ -437,7 +440,7 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
 
     /* 无空槽 = 在飞帧太多，等显示线程回流(每 vblank 一次) */
     for (retry = 0; retry < 100; retry++) {
-        slot = h264_dpb_begin_frame(&p->dpb, hdr_out, &poc, &ts, &ctrl);
+        slot = h264_dpb_begin_frame(&p->dpb, &hdr, &poc, &ts, &ctrl);
         if (slot >= 0)
             break;
         usleep(5 * 1000);
@@ -459,7 +462,7 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
         return -1;
     }
 
-    h264_dpb_end_frame(&p->dpb, hdr_out);
+    h264_dpb_end_frame(&p->dpb, &hdr);
 #ifdef MP_TIMING_DEBUG
     t2 = mp_get_now_us();
     if (t2 - t0 > mp_slow_threshold_us(mp))
@@ -467,6 +470,117 @@ static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx,
                  sample_idx, t1 - t0, t2 - t1, vcl.size);
 #endif
     return 0;
+}
+
+#if SRGNVDEC_HAVE_H265
+static int mp_decode_au_h265(mediaplayer_t *mp, unsigned int sample_idx)
+{
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
+    const struct mp4_sample *sample = &p->demux.samples[sample_idx];
+    const uint8_t *au = NULL;
+    unsigned int cursor = 0, vcl_count = 0;
+    struct nalu n, vcl = { 0 };
+    struct hevc_slice_hdr hdr;
+    struct vdec_h265_ctrls ctrl;
+    const struct hevc_sps *sps;
+    const struct hevc_pps *pps;
+    bool have_hdr = false;
+    uint64_t ts;
+    int slot, retry;
+
+    int rd = mp_read_au(p, sample_idx, &au);
+    if (rd)
+        return rd;
+
+    while (nalu_next_length_prefixed(au, sample->size,
+                                     p->demux.nal_length_size, &cursor, &n)) {
+        unsigned int t = nalu_h265_type(&n);
+
+        if (t == HEVC_NAL_VPS || t == HEVC_NAL_SPS || t == HEVC_NAL_PPS) {
+            hevc_parser_parse_param_nal(&p->hparser, &n);
+        } else if (hevc_nal_is_vcl(t)) {
+            vcl_count++;
+            if (have_hdr)
+                continue;
+            if (hevc_parser_parse_slice(&p->hparser, &n, &hdr) < 0) {
+                log_error("slice parse failed @%u", sample_idx);
+                return -1;
+            }
+            hevc_parser_compute_poc(&p->hparser, &hdr);
+            vcl = n;
+            have_hdr = true;
+        }
+    }
+
+    if (!have_hdr)
+        return 1;
+
+    if (vcl_count > 1) {
+        log_error("frame %u has %u slices, unsupported", sample_idx, vcl_count);
+        return -1;
+    }
+
+    sps = hevc_parser_sps_for_slice(&p->hparser, &hdr);
+    pps = hevc_parser_get_pps(&p->hparser, hdr.pic_parameter_set_id);
+    if (!sps || !pps) {
+        log_error("no SPS/PPS for slice @%u", sample_idx);
+        return -1;
+    }
+
+#ifdef MP_TIMING_DEBUG
+    long long t0 = mp_get_now_us(), t1, t2;
+#endif
+
+    for (retry = 0; retry < 100; retry++) {
+        slot = hevc_dpb_begin_frame(&p->hdpb, &hdr, &ts);
+        if (slot >= 0)
+            break;
+        usleep(5 * 1000);
+        mp_reclaim_free_items(mp);
+    }
+    if (slot < 0) {
+        log_error("no free capture slot @%u", sample_idx);
+        return -1;
+    }
+    if (mp_trace_on())
+        log_info("T D%d @%u", slot, sample_idx);
+#ifdef MP_TIMING_DEBUG
+    t1 = mp_get_now_us();
+#endif
+
+    /* 与 H.264 的次序相反：DPB 表/参考列表由 begin_frame 备好后才能进控制集 */
+    hevc_ctrls_fill(&ctrl, sps, pps, &hdr, vcl.size);
+    hevc_ctrls_set_dpb(&ctrl, p->hdpb.entries, p->hdpb.n_entries,
+                       &p->hdpb.sets);
+    hevc_ctrls_set_ref_lists(&ctrl, p->hdpb.ref_list0, p->hdpb.n_ref_list0,
+                             p->hdpb.ref_list1, p->hdpb.n_ref_list1);
+
+    if (vdec_decode(&p->vdec, slot, ts, vcl.data, vcl.size, &ctrl) < 0) {
+        log_error("decode failed @%u", sample_idx);
+        hevc_dpb_abort_frame(&p->hdpb);
+        return -1;
+    }
+
+    hevc_dpb_end_frame(&p->hdpb, &hdr);
+#ifdef MP_TIMING_DEBUG
+    t2 = mp_get_now_us();
+    if (t2 - t0 > mp_slow_threshold_us(mp))
+        log_warn("slow @%u: slot_wait=%lldus ve=%lldus size=%u",
+                 sample_idx, t1 - t0, t2 - t1, vcl.size);
+#endif
+    return 0;
+}
+#endif /* SRGNVDEC_HAVE_H265 */
+
+static int mp_decode_au(mediaplayer_t *mp, unsigned int sample_idx)
+{
+#if SRGNVDEC_HAVE_H265
+    mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
+
+    if (p->codec == MP4_CODEC_H265)
+        return mp_decode_au_h265(mp, sample_idx);
+#endif
+    return mp_decode_au_h264(mp, sample_idx);
 }
 
 /*
@@ -503,23 +617,22 @@ static void *mp_decode_thread(void *param)
 
         /* GOP 边界(素材回绕)先按 flush 逐帧排空 DPB */
         if (pending_flush) {
-            out = h264_dpb_next_output(&p->dpb, true);
+            out = mp_dpb_next_output(p, true);
             if (out < 0)
                 pending_flush = false;
         } else {
-            out = h264_dpb_next_output(&p->dpb, false);
+            out = mp_dpb_next_output(p, false);
         }
 
         /* 没有可显示帧就继续喂 AU，直到重排队列吐出一帧 */
         while (out < 0 && !pending_flush) {
-            struct h264_slice_hdr hdr;
             int rc;
 
             if (sample_idx >= p->demux.samples_count) {
                 /* EOS：排空后回 sample 0 循环（素材以 IDR 开头） */
                 sample_idx = 0;
                 pending_flush = true;
-                out = h264_dpb_next_output(&p->dpb, true);
+                out = mp_dpb_next_output(p, true);
                 break;
             }
 
@@ -527,10 +640,11 @@ static void *mp_decode_thread(void *param)
              * mid-stream IDR 前先按档期排空上一 GOP 押着的帧：IDR 的
              * POC 复位为 0，一旦喂进去，min-POC bump 会先吐 IDR、旧帧
              * (POC 最大)反排其后 —— 屏上表现为每 GOP 边界一次帧序回跳
-             * (slider 靶子第 7 趟必现，keyint=250)。sync 采样 = IDR。
+             * (slider 靶子第 7 趟必现，keyint=250)。sync 采样 = IDR,
+             * H.265 侧 = IRAP,语义相同。
              */
             if (sample_idx > 0 && p->demux.samples[sample_idx].sync) {
-                out = h264_dpb_next_output(&p->dpb, true);
+                out = mp_dpb_next_output(p, true);
                 if (out >= 0)
                     break; /* 本档期先出旧帧，sample 不前进 */
             }
@@ -538,7 +652,7 @@ static void *mp_decode_thread(void *param)
 #ifdef MP_TIMING_DEBUG
             long long d0 = mp_get_now_us();
 #endif
-            rc = mp_decode_au(mp, sample_idx, &hdr);
+            rc = mp_decode_au(mp, sample_idx);
 #ifdef MP_TIMING_DEBUG
             long long decode_us = mp_get_now_us() - d0;
             if (decode_us > mp_slow_threshold_us(mp))
@@ -553,7 +667,7 @@ static void *mp_decode_thread(void *param)
             if (rc > 0)
                 continue;
 
-            out = h264_dpb_next_output(&p->dpb, false);
+            out = mp_dpb_next_output(p, false);
         }
 
         /* flush 刚排空：立即回到顶部从 sample 0 续喂，不空烧一个档期 */
@@ -561,16 +675,31 @@ static void *mp_decode_thread(void *param)
             continue;
 
         drm_warpper_queue_item_t *item;
-        if (p->yflip) {
-            int k = mp_flip_output(mp, out);
-            if (k < 0)
-                goto decode_error;
-            item = mp_make_flip_item(mp, p->fb_ids[k], k);
-        } else {
-            item = mp_make_frame_item(mp, p->fb_ids[out], out);
+        struct vdec_frame *frame = NULL;
+
+        /* 借帧;PP 池竭时等显示线程回流(每 vblank 一次),同旧 flip 池等法 */
+        {
+            int retry;
+
+            for (retry = 0; retry < 100; retry++) {
+                frame = vdec_frame_acquire(&p->vdec, out);
+                if (frame || errno != EAGAIN)
+                    break;
+                usleep(5 * 1000);
+                mp_reclaim_free_items(mp);
+            }
         }
-        if (!item)
+        if (!frame) {
+            log_error("frame acquire failed @slot %d: %s", out,
+                      strerror(errno));
             goto decode_error;
+        }
+
+        item = mp_make_frame_item(mp, frame);
+        if (!item) {
+            vdec_frame_release(&p->vdec, frame);
+            goto decode_error;
+        }
 
         if (p->smooth_bufs) {
             /* 交 pacer 定速。ring 满则在此阻塞 = 解码限速阀；
@@ -623,9 +752,10 @@ static void mp_close_session(mediaplayer_t *mp)
     if (!mp->session_open)
         return;
 
-    /* fb_ids 在翻转链下索引翻转池,否则索引解码 cap;按对应数量回收 */
+    /* fb_ids 索引活动池;数量必须在 vdec_close(会 detach PP)之前取 */
     {
-        unsigned int fb_n = p->yflip ? p->flip_count : p->vdec.cap_count;
+        unsigned int fb_n = vdec_out_count(&p->vdec);
+
         for (i = 0; i < fb_n; i++) {
             if (p->fb_ids[i]) {
                 drm_warpper_rm_fb(mp->drm_warpper, p->fb_ids[i],
@@ -635,12 +765,7 @@ static void mp_close_session(mediaplayer_t *mp)
             }
         }
     }
-    if (p->yflip) {
-        sdrot_close(&p->sdrot);
-        p->flip_count = 0;
-        memset(p->flip_busy, 0, sizeof(p->flip_busy));
-        p->yflip = false;
-    }
+    memset(p->inflight, 0, sizeof(p->inflight));
     vdec_close(&p->vdec);
     mp4_close(&p->demux);
     if (p->smooth_q_ready) {
@@ -693,8 +818,9 @@ int mediaplayer_remount_video_layer(mediaplayer_t *mp)
 }
 
 /*
- * 整机是否倒装(视频层内容要不要 SDROT 补 Y 翻转)。存在 DT key 即倒装。
- * MP_FORCE_YFLIP=0/1 可在板上覆盖(调试用)。检测一次即缓存。
+ * 整机是否倒装(视频层内容要不要 PP 补 Y 翻转)。存在 DT key 即倒装——运行时
+ * 检测,D1s 上这个 key 不存在,天然为假;MP_FORCE_YFLIP=0/1 可覆盖(调试/在
+ * 平装机上验证 PP 链)。检测一次即缓存。
  */
 static bool mp_detect_yflip(void)
 {
@@ -708,7 +834,7 @@ static bool mp_detect_yflip(void)
     if (env)
         cached = (env[0] == '1');
     else
-        cached = (access(SDROT_YFLIP_DT_PATH, F_OK) == 0);
+        cached = (access(MP_YFLIP_DT_PATH, F_OK) == 0);
 
     log_info("video yflip(scanout) = %d", cached);
     return cached;
@@ -720,8 +846,16 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     mp_dev_priv_t *p = (mp_dev_priv_t *)mp->priv;
     char video_path[32], media_path[32];
     const struct h264_sps *sps = NULL;
+    const struct vdec_codec *vcodec;
     unsigned int cap_count, max_ref, reorder, max_frame_num;
+    unsigned int out_size, cap_floor, pp_out_count;
     unsigned int i;
+
+    /* 头文件宏与库实际编的 uapi 对账；错配 = 控制集布局错位，启动即拦 */
+    if (!srgnvdec_abi_ok()) {
+        log_error("srgnvdec ABI mismatch: lib uapi != compile-time macros");
+        return -1;
+    }
 
     /* 先清上一会话的错误位:失败路径直接 return -1 不会走到下面,残留的
      * DECODER_ERROR 会被 prts 轮询当成本次的异步失败重复上报。此刻旧解码
@@ -738,46 +872,129 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     mp->session_gen++;
     mp->session_open = true; /* demux 已开，之后统一走 close_session */
 
-    if (p->demux.codec != MP4_CODEC_H264) {
-        log_error("not an H264 mp4");
-        goto error;
+    p->codec = p->demux.codec;
+
+    if (p->codec == MP4_CODEC_H264) {
+        if (p->demux.max_sample_size > VDEC_OUTPUT_BUF_SIZE) {
+            log_error("max sample %u exceeds output buffer",
+                      p->demux.max_sample_size);
+            goto error;
+        }
+
+        h264_parser_init(&p->parser);
+        if (h264_parser_parse_avcc(&p->parser, p->demux.extradata,
+                                   p->demux.extradata_size) < 0) {
+            log_error("avcC parse err");
+            goto error;
+        }
+        for (i = 0; i < 32 && !sps; i++)
+            sps = h264_parser_get_sps(&p->parser, i);
+        if (!sps) {
+            log_error("no SPS in avcC");
+            goto error;
+        }
+        if (!sps->frame_mbs_only_flag) {
+            log_error("interlaced stream unsupported");
+            goto error;
+        }
+
+        /* 编码尺寸(MB 对齐)与 CedarX 时代 parser 报告值一致(384x640/736x1280) */
+        mp->frame_width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
+        mp->frame_height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
+        if (mp_set_display_size(mp, sps) < 0)
+            goto error;
+
+        max_ref = sps->max_num_ref_frames ? sps->max_num_ref_frames : 1;
+        max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
+        if (sps->vui_reorder_valid) {
+            /* refs 与重排共享 DPB。+4 = bump滞后1 + 入队未上屏1 + 在屏1 +
+             * 解码中1；阻塞 commit 返回=旧帧已离屏，在屏只押 1(NONBLOCK 在飞
+             * 翻页时代要押 curr/pending 2 格即 +5，且真机实测再少 1 个会周期性
+             * 等 25-50ms) */
+            reorder = sps->vui_max_num_reorder_frames;
+            cap_count = sps->vui_max_dec_frame_buffering + 4;
+        } else {
+            reorder = max_ref < VDEC_REORDER_DEPTH ? VDEC_REORDER_DEPTH
+                                                   : max_ref;
+            cap_count = max_ref + reorder + 3;
+        }
+        cap_floor = VDEC_CAPTURE_BUF_MIN;
+        out_size = VDEC_OUTPUT_BUF_SIZE;
+        vcodec = &vdec_codec_h264;
     }
-    if (p->demux.max_sample_size > VDEC_OUTPUT_BUF_SIZE) {
-        log_error("max sample %u exceeds output buffer", p->demux.max_sample_size);
+#if SRGNVDEC_HAVE_H265
+    else if (p->codec == MP4_CODEC_H265) {
+        const struct hevc_sps *hsps = NULL;
+        unsigned int vis_w, vis_h;
+
+        if (p->demux.max_sample_size > VDEC_OUTPUT_BUF_SIZE_H265) {
+            log_error("max sample %u exceeds output buffer",
+                      p->demux.max_sample_size);
+            goto error;
+        }
+
+        hevc_parser_init(&p->hparser);
+        if (hevc_parser_parse_hvcc(&p->hparser, p->demux.extradata,
+                                   p->demux.extradata_size) < 0) {
+            log_error("hvcC parse err");
+            goto error;
+        }
+        for (i = 0; i < HEVC_MAX_SPS_COUNT && !hsps; i++)
+            hsps = hevc_parser_get_sps(&p->hparser, (int)i);
+        if (!hsps) {
+            log_error("no SPS in hvcC");
+            goto error;
+        }
+        /* 解码栈不解 scaling_list_data，只会填 flat 矩阵 —— 明说而不是花屏 */
+        if (hsps->scaling_list_enabled_flag) {
+            log_error("scaling_list_enabled stream unsupported");
+            goto error;
+        }
+        if (hsps->bit_depth_luma_minus8 || hsps->bit_depth_chroma_minus8) {
+            log_error("only 8bit H265 supported");
+            goto error;
+        }
+
+        /*
+         * 不做 32 对齐(与 H.264 规则相反！)：cedrus 的 HEVC 路径把 src_fmt
+         * 宽高原封写进 DEC_PIC_SIZE，硬件靠它判图像边界的隐式 CTB 划分，
+         * 720 报成 736 会 CABAC 失步。H.264 的几何来自 SPS 的 MB 数，驱动
+         * 不看 src_fmt，所以那边按 MB 对齐无害。
+         */
+        mp->frame_width = hsps->pic_width_in_luma_samples;
+        mp->frame_height = hsps->pic_height_in_luma_samples;
+        hevc_sps_crop(hsps, &vis_w, &vis_h);
+        mp->display_width = (int)vis_w;
+        mp->display_height = (int)vis_h;
+
+        /* max_ref 借放 max_dec_pic_buffering(含当前帧)，日志/后面 dpb_init 用 */
+        max_ref = (unsigned int)hsps->max_dec_pic_buffering_minus1 + 1;
+        reorder = hsps->max_num_reorder_pics;
+        max_frame_num = 0;
+        /* +4 同 H.264 侧的显示/在飞账 */
+        cap_count = max_ref + 4;
+        /*
+         * H.265 的 RPS 是每帧全量参考集：capture 数被预算钳到参考集放不下时
+         * 不是"重排饿槽"而是 begin_frame 直接失败。下限保住 参考 + 在屏 +
+         * 解码中，CMA 真不够会在 vdec_open 干净地报错。
+         */
+        cap_floor = max_ref + 2;
+        if (cap_floor < VDEC_CAPTURE_BUF_MIN)
+            cap_floor = VDEC_CAPTURE_BUF_MIN;
+        out_size = VDEC_OUTPUT_BUF_SIZE_H265;
+        vcodec = &vdec_codec_h265;
+    }
+#endif /* SRGNVDEC_HAVE_H265 */
+    else {
+        log_error("unsupported codec %d in mp4%s", (int)p->demux.codec,
+                  p->demux.codec == MP4_CODEC_H265 ?
+                      " (H265 not built in)" : "");
         goto error;
     }
 
-    h264_parser_init(&p->parser);
-    if (h264_parser_parse_avcc(&p->parser, p->demux.extradata,
-                               p->demux.extradata_size) < 0) {
-        log_error("avcC parse err");
-        goto error;
-    }
-    for (i = 0; i < 32 && !sps; i++)
-        sps = h264_parser_get_sps(&p->parser, i);
-    if (!sps) {
-        log_error("no SPS in avcC");
-        goto error;
-    }
-    if (!sps->frame_mbs_only_flag) {
-        log_error("interlaced stream unsupported");
-        goto error;
-    }
-
-    /* 编码尺寸(MB 对齐)与 CedarX 时代 parser 报告值一致(384x640/736x1280) */
-    mp->frame_width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
-    mp->frame_height = (sps->pic_height_in_map_units_minus1 + 1) * 16;
-    if (mp_set_display_size(mp, sps) < 0)
-        goto error;
-
-    p->yflip = mp_detect_yflip();
-    /*
-     * SDROT 对整个编码高度做 VFLIP;有底部裁切(编码高 > 显示高)时内容会整体
-     * 下移。这类素材极罕见,先告警不静默错位,真遇到再按显示高单独配 SDROT。
-     */
-    if (p->yflip && mp->frame_height != mp->display_height)
-        log_warn("yflip with vertical crop (coded %d != display %d):"
-                 " content may shift", mp->frame_height, mp->display_height);
+    /* 目前 app 只有倒装补偿一种变换;attach 时由库校验布局可行性 */
+    memset(&p->tform, 0, sizeof(p->tform));
+    p->tform.vflip = mp_detect_yflip();
 
     // 解码前记录挂载几何(惰性：plane 由显示线程随首帧启用)。
     // 此时旧线程已 join、plane 已 disable，几何更新无并发帧提交
@@ -787,31 +1004,20 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     mp->frame_duration_us = p->demux.frame_duration_us ?
                             p->demux.frame_duration_us : 33333;
 
-    max_ref = sps->max_num_ref_frames ? sps->max_num_ref_frames : 1;
-    max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
-    if (sps->vui_reorder_valid) {
-        /* refs 与重排共享 DPB。+4 = bump滞后1 + 入队未上屏1 + 在屏1 + 解码中1；
-         * 阻塞 commit 返回=旧帧已离屏，在屏只押 1(NONBLOCK 在飞翻页时代要押
-         * curr/pending 2 格即 +5，且真机实测再少 1 个会周期性等 25-50ms) */
-        reorder = sps->vui_max_num_reorder_frames;
-        cap_count = sps->vui_max_dec_frame_buffering + 4;
-    } else {
-        reorder = max_ref < VDEC_REORDER_DEPTH ? VDEC_REORDER_DEPTH : max_ref;
-        cap_count = max_ref + reorder + 3;
-    }
     {
         unsigned int cap_max =
             (unsigned int)mp->frame_width * mp->frame_height >=
                     VDEC_CAPTURE_LARGE_AREA ?
                 VDEC_CAPTURE_BUF_MAX_LARGE : VDEC_CAPTURE_BUF_MAX_SMALL;
-        if (cap_count < VDEC_CAPTURE_BUF_MIN)
-            cap_count = VDEC_CAPTURE_BUF_MIN;
         if (cap_count > cap_max) {
             log_warn("capture need %u > budget %u (%dx%d), clamped;"
                      " 素材 ref/reorder 超预算可能饿槽",
                      cap_count, cap_max, mp->frame_width, mp->frame_height);
             cap_count = cap_max;
         }
+        /* floor 压过预算：钳到参考集放不下解码根本进行不下去(见上) */
+        if (cap_count < cap_floor)
+            cap_count = cap_floor;
         /* 平滑储备是解码正确性预算之外的额外格，钳制之后再叠 —— 否则大内存
          * 机型的储备会被 720 档的 cap_max 吃掉，等于白配 */
         p->smooth_bufs = mp_smooth_bufs();
@@ -821,14 +1027,14 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
     }
 
     /*
-     * 倒装机型:显示保持从解码 cap 转移到 SDROT 翻转池。cap_count 里的显示保持
-     * (在屏1 + 入队未上屏1 = SDROT_DISPLAY_HOLD)连同平滑储备一并对冲掉——这些帧
-     * 现在活在翻转池,解码 cap 只需留到 DPB 参考逻辑放行,净 CMA ≈ 不变。
+     * 带变换时:显示保持从解码 cap 转移到 PP 输出池。cap_count 里的显示保持
+     * (在屏1 + 入队未上屏1 = MP_PP_HOLD)连同平滑储备一并对冲掉——这些帧现在
+     * 活在 PP 池,解码 cap 只需留到 DPB 参考逻辑放行,净 CMA ≈ 不变。
      */
-    if (p->yflip) {
-        unsigned int reclaim = SDROT_DISPLAY_HOLD + p->smooth_bufs;
+    pp_out_count = MP_PP_HOLD + p->smooth_bufs;
+    if (!vdec_transform_is_identity(&p->tform)) {
+        unsigned int reclaim = pp_out_count;
 
-        p->flip_count = SDROT_DISPLAY_HOLD + p->smooth_bufs;
         if (cap_count > reclaim + VDEC_CAPTURE_BUF_MIN)
             cap_count -= reclaim;
         else
@@ -849,52 +1055,65 @@ static int mp_prepare_and_spawn(mediaplayer_t *mp)
                          media_path, sizeof(media_path)) < 0)
         goto error;
 
-    if (vdec_open(&p->vdec, video_path, media_path,
+    if (vdec_open(&p->vdec, vcodec, video_path, media_path,
                   mp->frame_width, mp->frame_height,
-                  cap_count, VDEC_OUTPUT_BUF_COUNT, VDEC_OUTPUT_BUF_SIZE) < 0)
+                  cap_count, VDEC_OUTPUT_BUF_COUNT, out_size) < 0)
         goto error;
     p->vdec.slow_threshold_us = mp_slow_threshold_us(mp);
 
-    if (p->yflip) {
-        /*
-         * 翻转链:输入端 DMABUF 吃解码 CAPTURE(index == 解码 slot,故 in_count
-         * = 解码 cap_count);输出翻转池当显示 FB。解码 cap 不再导成 FB。
-         */
-        if (sdrot_open(&p->sdrot, mp->frame_width, mp->frame_height,
-                       p->vdec.cap_count, p->flip_count,
-                       0 /*rotate*/, 0 /*hflip*/, 1 /*vflip*/) < 0)
+    /* 变换声明进库(identity 零成本);传可见尺寸,布局可行性由库校验 */
+    {
+        struct vdec_dpb_ops ops = { mp_ops_lock, mp_ops_unlock, p };
+
+        if (vdec_pp_attach(&p->vdec, &p->tform, (unsigned int)mp->display_width,
+                           (unsigned int)mp->display_height, pp_out_count,
+                           &ops) < 0) {
+            log_error("pp attach failed (transform rot%u%s%s)", p->tform.rot,
+                      p->tform.hflip ? "+hflip" : "",
+                      p->tform.vflip ? "+vflip" : "");
             goto error;
-        for (i = 0; i < p->flip_count; i++) {
-            if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
-                                             p->sdrot.cap[i].dmabuf_fd,
-                                             p->sdrot.cap_width,
-                                             p->sdrot.cap_height,
-                                             p->sdrot.cap_bytesperline,
-                                             p->sdrot.cap_uv_offset,
-                                             &p->fb_ids[i],
-                                             &p->gem_handles[i]) < 0)
-                goto error;
         }
-    } else {
-        for (i = 0; i < p->vdec.cap_count; i++) {
+    }
+
+    /* FB 建在活动池上(PP 开 = 旋转输出池,关 = 解码 cap 池),代码不分叉 */
+    {
+        struct vdec_out_geom g;
+
+        vdec_out_geom(&p->vdec, &g);
+        if (g.rect_x || g.rect_y) {
+            /* drm_warpper 的视频层不带 src 偏移;真旋转需求出现时再扩 */
+            log_error("pp rect offset %u,%u unsupported by display path",
+                      g.rect_x, g.rect_y);
+            goto error;
+        }
+        for (i = 0; i < vdec_out_count(&p->vdec); i++) {
             if (drm_warpper_import_dmabuf_fb(mp->drm_warpper,
-                                             p->vdec.cap[i].dmabuf_fd,
-                                             p->vdec.cap_width,
-                                             p->vdec.cap_height,
-                                             p->vdec.cap_bytesperline,
-                                             p->vdec.cap_uv_offset,
+                                             vdec_out_dmabuf(&p->vdec, i),
+                                             g.width, g.height,
+                                             g.bytesperline, g.uv_offset,
                                              &p->fb_ids[i],
                                              &p->gem_handles[i]) < 0)
                 goto error;
         }
     }
 
-    h264_dpb_init(&p->dpb, cap_count, max_ref, max_frame_num, reorder);
+    if (p->codec == MP4_CODEC_H264) {
+        h264_dpb_init(&p->dpb, cap_count, max_ref, max_frame_num, reorder);
+    }
+#if SRGNVDEC_HAVE_H265
+    else {
+        /* H265 路径 max_ref 装的是 max_dec_pic_buffering(见上) */
+        hevc_dpb_init(&p->hdpb, (int)cap_count, (int)max_ref, (int)reorder);
+    }
+#endif
 
-    log_info("vdec: coded=%ux%u display=%dx%d max_ref=%u cap_bufs=%u(smooth %u) yflip=%d flip_bufs=%u dur=%uus",
+    log_info("vdec: codec=%s coded=%ux%u display=%dx%d max_ref=%u"
+             " cap_bufs=%u(smooth %u) pp=%d out_bufs=%u dur=%uus",
+             p->codec == MP4_CODEC_H264 ? "h264" : "h265",
              mp->frame_width, mp->frame_height,
              mp->display_width, mp->display_height, max_ref, cap_count,
-             p->smooth_bufs, p->yflip, p->flip_count, mp->frame_duration_us);
+             p->smooth_bufs, (int)p->vdec.pp.enabled,
+             vdec_out_count(&p->vdec), mp->frame_duration_us);
 
     atomic_store(&mp->running, 1);
 

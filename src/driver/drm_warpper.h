@@ -29,8 +29,10 @@ typedef struct drmModePlaneRes drmModePlaneRes;
 typedef enum {
     DRM_WARPPER_LAYER_MODE_RGB565,
     DRM_WARPPER_LAYER_MODE_ARGB8888,
-    DRM_WARPPER_LAYER_MODE_MB32_NV12, //allwinner specific format
-    DRM_WARPPER_LAYER_MODE_C8,        // 256 色调色板(DEBE palette 模式, 内核 patch 0029)
+    // video 层。tile 与否跟着 cedrus 输出走(见 srgnvdec/vdec_v4l2.h 的 VDEC_CAP_PIXFMT)：
+    // F1C 是 ALLWINNER_TILED(MB32)，D1s 是 linear。两处必须同步。
+    DRM_WARPPER_LAYER_MODE_NV12,
+    DRM_WARPPER_LAYER_MODE_C8,        // 256 色调色板(F1C patch 0029 / D1s patch 0010)
 } drm_warpper_layer_mode_t;
 
 typedef enum {
@@ -114,7 +116,7 @@ int drm_warpper_init_layer(drm_warpper_t *drm_warpper,int layer_id,int width,int
 int drm_warpper_destroy_layer(drm_warpper_t *drm_warpper,int layer_id);
 int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf);
 // 通用:src=(0,0,src_w,src_h) 从 buf 左上角裁,dst=(x,y,dst_w,dst_h) 屏幕显示区。
-// src != dst 走 DEFE 硬件缩放;src_w<buf->width 裁掉对齐 padding。裁切与缩放可组合。仅 MB32_NV12(video)层支持缩放。
+// src != dst 走 DEFE 硬件缩放;src_w<buf->width 裁掉对齐 padding。裁切与缩放可组合。仅 NV12(video)层支持缩放。
 int drm_warpper_mount_layer_rect(drm_warpper_t *drm_warpper,int layer_id,int x,int y,buffer_object_t *buf,int src_w,int src_h,int dst_w,int dst_h);
 
 
@@ -122,7 +124,8 @@ int drm_warpper_allocate_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_o
 int drm_warpper_allocate_buffer_sized(drm_warpper_t *drm_warpper,int layer_id,int width,int height,buffer_object_t *buf);
 int drm_warpper_free_buffer(drm_warpper_t *drm_warpper,int layer_id,buffer_object_t *buf);
 
-// dmabuf(如 cedrus capture buffer) 导入为 NV12 + ALLWINNER_TILED 的 DRM FB。
+// dmabuf(如 cedrus capture buffer) 导入为 NV12 的 DRM FB(F1C 带 ALLWINNER_TILED
+// modifier, D1s 为 linear —— 跟着 srgnvdec/vdec_v4l2.h 的 VDEC_CAP_PIXFMT 走)。
 // pitch/uv_offset 按 V4L2 G_FMT 回读值传入。gem_handle 回传 prime 句柄，
 // rm_fb 时必须一并传回 close，否则 CMA 被 pin 住不归还。
 int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int width,int height,int pitch,int uv_offset,uint32_t *fb_id,uint32_t *gem_handle);

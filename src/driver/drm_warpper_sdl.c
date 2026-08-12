@@ -152,7 +152,7 @@ static void fb_unregister(uint32_t fb_id){
 static uint32_t layer_sdl_format(drm_warpper_layer_mode_t mode){
     switch(mode){
         case DRM_WARPPER_LAYER_MODE_RGB565:    return SDL_PIXELFORMAT_RGB565;
-        case DRM_WARPPER_LAYER_MODE_MB32_NV12: return SDL_PIXELFORMAT_NV12;
+        case DRM_WARPPER_LAYER_MODE_NV12: return SDL_PIXELFORMAT_NV12;
         // C8: SDL streaming 纹理不吃 INDEX8,上传前软件展开
         default:                               return SDL_PIXELFORMAT_ARGB8888;
     }
@@ -199,7 +199,7 @@ static void layer_flip_upload(int layer_id, uint32_t fb_id){
     layer_ensure_texture(l, fb->width, fb->height);
     if(!l->tex) return;
 
-    if(fb->mode == DRM_WARPPER_LAYER_MODE_MB32_NV12){
+    if(fb->mode == DRM_WARPPER_LAYER_MODE_NV12){
         SDL_UpdateNVTexture(l->tex, NULL,
                             fb->vaddr, fb->pitch,
                             fb->vaddr + fb->uv_offset, fb->pitch);
@@ -597,7 +597,7 @@ int drm_warpper_allocate_buffer_sized(drm_warpper_t *drm_warpper,int layer_id,in
     int uv_offset = 0;
     size_t size;
 
-    if(mode == DRM_WARPPER_LAYER_MODE_MB32_NV12){
+    if(mode == DRM_WARPPER_LAYER_MODE_NV12){
         // PC 上退化为 planar NV12：Y 满幅 + UV 半高
         uv_offset = pitch * height;
         size = (size_t)pitch * height * 3 / 2;
@@ -608,7 +608,7 @@ int drm_warpper_allocate_buffer_sized(drm_warpper_t *drm_warpper,int layer_id,in
     memset(buf, 0, sizeof(*buf));
     buf->vaddr = calloc(1, size);
     if(!buf->vaddr) return -1;
-    if(mode == DRM_WARPPER_LAYER_MODE_MB32_NV12){
+    if(mode == DRM_WARPPER_LAYER_MODE_NV12){
         // 黑帧：UV=128
         memset(buf->vaddr + uv_offset, 128, size - (size_t)uv_offset);
     }

@@ -170,7 +170,7 @@ int main(int argc, char *argv[]){
         DRM_WARPPER_LAYER_VIDEO, 
         VIDEO_WIDTH, 
         VIDEO_HEIGHT, 
-    DRM_WARPPER_LAYER_MODE_MB32_NV12);
+    DRM_WARPPER_LAYER_MODE_NV12);
 
     // 老 FIXME 里那两块"跑 modeset 用"的黑 buffer 已优化掉：video 层惰性
     // 挂载(首帧随 mount 属性一起 commit)，stop 后 disable plane 露出黑背景

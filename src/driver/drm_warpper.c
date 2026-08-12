@@ -130,8 +130,19 @@ static int drm_warpper_discover_plane_props(drm_warpper_t *drm_warpper, int laye
         else if (!strcmp(prop->name, "CRTC_Y"))  p->crtc_y  = prop->prop_id;
         else if (!strcmp(prop->name, "CRTC_W"))  p->crtc_w  = prop->prop_id;
         else if (!strcmp(prop->name, "CRTC_H"))  p->crtc_h  = prop->prop_id;
-        else if (!strcmp(prop->name, "alpha"))   p->alpha   = prop->prop_id;
-        else if (!strcmp(prop->name, "zpos"))    p->zpos    = prop->prop_id;
+        // 只读属性一律不记 id：drm_atomic_set_property 在跑 atomic_check 之前
+        // 就对 IMMUTABLE 直接返回 -EINVAL，且写入值等于现值也照拒，一条属性
+        // 把整个 req(含 FB_ID/CRTC_*)全带塌。zpos 正是这样——F1C 内核那份改成
+        // 了可写 range，D1s 用的是原版 sun4i_layer.c(zpos immutable,值即 plane
+        // index),恰好就是想要的 video<overlay<UI,不设反而正确。
+        else if (!strcmp(prop->name, "alpha") || !strcmp(prop->name, "zpos")) {
+            if (prop->flags & DRM_MODE_PROP_IMMUTABLE) {
+                log_info("plane %d: %s is immutable, leaving it to the driver",
+                         layer_id, prop->name);
+            }
+            else if (prop->name[0] == 'a') p->alpha = prop->prop_id;
+            else                           p->zpos  = prop->prop_id;
+        }
         drmModeFreeProperty(prop);
     }
     drmModeFreeObjectProperties(props);
@@ -567,7 +578,7 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
     int ret;
 
     memset(&creq, 0, sizeof(struct drm_mode_create_dumb));
-    if(mode == DRM_WARPPER_LAYER_MODE_MB32_NV12){
+    if(mode == DRM_WARPPER_LAYER_MODE_NV12){
         creq.width = width;
         creq.height = height * 3 / 2;
         creq.bpp = 8;
@@ -604,16 +615,14 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
     memset(&pitches, 0, sizeof(pitches));
     memset(&modifiers, 0, sizeof(modifiers));
 
-    if(mode == DRM_WARPPER_LAYER_MODE_MB32_NV12){
+    if(mode == DRM_WARPPER_LAYER_MODE_NV12){
         offsets[0] = 0;
         handles[0] = creq.handle;
         pitches[0] = creq.pitch;
-        modifiers[0] = DRM_FORMAT_MOD_ALLWINNER_TILED;
 
         offsets[1] = creq.pitch * height;
         handles[1] = creq.handle;
         pitches[1] = creq.pitch;
-        modifiers[1] = DRM_FORMAT_MOD_ALLWINNER_TILED;
     }
     else{
         offsets[0] = 0;
@@ -622,10 +631,16 @@ static int drm_warpper_create_buffer_object(int fd,buffer_object_t* bo,int width
         modifiers[0] = 0;
     }
 
-    if(mode == DRM_WARPPER_LAYER_MODE_MB32_NV12){
+    if(mode == DRM_WARPPER_LAYER_MODE_NV12){
+#if EPASS_PLATFORM_F1C
+        modifiers[0] = modifiers[1] = DRM_FORMAT_MOD_ALLWINNER_TILED;
         ret = drmModeAddFB2WithModifiers(fd, width, height, DRM_FORMAT_NV12, handles,
                                      pitches, offsets, modifiers, &bo->fb_id,
                                      DRM_MODE_FB_MODIFIERS);
+#else
+        ret = drmModeAddFB2(fd, width, height, DRM_FORMAT_NV12, handles,
+                            pitches, offsets, &bo->fb_id, 0);
+#endif
     }
     else if(mode == DRM_WARPPER_LAYER_MODE_RGB565){
         ret = drmModeAddFB2(fd, width, height, DRM_FORMAT_RGB565, handles, pitches, offsets,&bo->fb_id, 0);
@@ -757,12 +772,23 @@ int drm_warpper_import_dmabuf_fb(drm_warpper_t *drm_warpper,int dmabuf_fd,int wi
     pitches[0] = pitches[1] = pitch;
     offsets[0] = 0;
     offsets[1] = uv_offset;
-    modifiers[0] = modifiers[1] = DRM_FORMAT_MOD_ALLWINNER_TILED;
 
+    // tile 与否必须跟 cedrus CAPTURE 的实际排布一致，见 vdec_v4l2.h 的
+    // VDEC_CAP_PIXFMT（两边同由 EPASS_PLATFORM_F1C 推导）
+#if EPASS_PLATFORM_F1C
+    modifiers[0] = modifiers[1] = DRM_FORMAT_MOD_ALLWINNER_TILED;
     ret = drmModeAddFB2WithModifiers(drm_warpper->fd, width, height,
                                      DRM_FORMAT_NV12, handles, pitches,
                                      offsets, modifiers, fb_id,
                                      DRM_MODE_FB_MODIFIERS);
+#else
+    // linear 走不带 modifier 的 AddFB2：驱动即便没实现 format_mod_supported
+    // (IN_FORMATS 里 NV12 只有 LINEAR 就是这种)也认，带上 DRM_MODE_FB_MODIFIERS
+    // 反而会被 core 的 modifier 校验拒掉
+    (void)modifiers;
+    ret = drmModeAddFB2(drm_warpper->fd, width, height, DRM_FORMAT_NV12,
+                        handles, pitches, offsets, fb_id, 0);
+#endif
     if(ret < 0){
         log_error("import dmabuf AddFB2 failed %s(%d)", strerror(errno), errno);
         struct drm_gem_close gc = { .handle = handle };
@@ -825,7 +851,7 @@ int drm_warpper_disable_layer_sync(drm_warpper_t *drm_warpper,int layer_id){
 
 // 通用挂载:src 矩形(0,0,src_w,src_h)从 buf 左上角裁,dst 矩形(x,y,dst_w,dst_h)是屏幕显示区。
 //   src==dst        -> 1:1
-//   src<dst / src>dst -> DEFE frontend 硬件缩放(仅 MB32 NV12 video 层;DEBE 无 scaler)
+//   src<dst / src>dst -> DEFE frontend 硬件缩放(仅 NV12 video 层;DEBE 无 scaler)
 //   src_w<buf->width -> 裁掉右侧对齐 padding
 // 三者可组合:如 src=(360,720) dst=(720,H) 即"先裁左 360 再放大到 720"。
 // 同步 atomic commit(首挂即启用 plane;CRTC 开机已 active,无需 ALLOW_MODESET)
@@ -878,9 +904,9 @@ int drm_warpper_mount_layer(drm_warpper_t *drm_warpper,int layer_id,int x,int y,
 
 int drm_warpper_set_palette(drm_warpper_t *drm_warpper,const uint32_t pal[256]){
     (void)drm_warpper; // sysfs 接口与 DRM master 无关
-    int fd = open(DEBE_PALETTE_SYSFS_PATH, O_WRONLY);
+    int fd = open(PALETTE_SYSFS_PATH, O_WRONLY);
     if(fd < 0){
-        log_error("open %s failed: %m", DEBE_PALETTE_SYSFS_PATH);
+        log_error("open %s failed: %m", PALETTE_SYSFS_PATH);
         return -1;
     }
     ssize_t n = write(fd, pal, 256 * sizeof(uint32_t));
