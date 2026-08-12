@@ -235,6 +235,9 @@ static void compose_frame(drm_warpper_t* drm_warpper){
                 s_layers[i].alpha = item->alpha;
                 if(item->on_heap) free(item);
                 break;
+            case DRM_WARPPER_ITEM_FENCE:
+                if(item->on_heap) free(item);
+                break;
             }
         }
     }
@@ -739,6 +742,12 @@ int drm_warpper_set_layer_alpha(drm_warpper_t *drm_warpper,int layer_id,int alph
     item->alpha = (uint8_t)alpha;
     item->on_heap = true;
     return drm_warpper_enqueue_display_item(drm_warpper, layer_id, item);
+}
+
+int drm_warpper_flush_layer(drm_warpper_t *drm_warpper,int layer_id){
+    (void)drm_warpper;
+    (void)layer_id;
+    return 0;
 }
 
 int drm_warpper_set_palette(drm_warpper_t *drm_warpper,const uint32_t pal[256]){

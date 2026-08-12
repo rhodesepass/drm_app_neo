@@ -152,6 +152,13 @@ typedef struct {
     int n;
 } drained_frames_t;
 
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    bool done;
+    int result;
+} drm_warpper_fence_t;
+
 static inline int64_t dw_now_us(void){
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -174,6 +181,8 @@ static void* drm_warpper_display_thread(void *arg){
     while(atomic_load(&drm_warpper->thread_running)){
         drmModeAtomicReq *req = NULL;
         drained_frames_t drained[4] = { 0 };
+        drm_warpper_fence_t *fences[4] = { 0 };
+        int commit_ret = 0;
 
         for(int i = 0; i < 4; i++){
             layer_t* layer = &drm_warpper->layer[i];
@@ -209,6 +218,10 @@ static void* drm_warpper_display_thread(void *arg){
                     else{
                         log_error("layer %d has no alpha property", i);
                     }
+                    if(item->on_heap) free(item);
+                    break;
+                case DRM_WARPPER_ITEM_FENCE:
+                    fences[i] = item->userdata;
                     if(item->on_heap) free(item);
                     break;
                 }
@@ -251,6 +264,7 @@ static void* drm_warpper_display_thread(void *arg){
             c0 = dw_now_us();
             pthread_mutex_lock(&drm_warpper->commit_mutex);
             ret = drmModeAtomicCommit(drm_warpper->fd, req, 0, NULL);
+            commit_ret = ret;
             pthread_mutex_unlock(&drm_warpper->commit_mutex);
             cdt = dw_now_us() - c0;
             if(cdt > 60000)
@@ -287,8 +301,19 @@ static void* drm_warpper_display_thread(void *arg){
                              (long long)vstat.max_us);
                     memset(&vstat, 0, sizeof(vstat));
                     vstat.last_us = now;
-                }
             }
+        }
+
+        for(int i = 0; i < 4; i++){
+            drm_warpper_fence_t *fence = fences[i];
+            if(!fence)
+                continue;
+            pthread_mutex_lock(&fence->mutex);
+            fence->result = commit_ret;
+            fence->done = true;
+            pthread_cond_signal(&fence->cond);
+            pthread_mutex_unlock(&fence->mutex);
+        }
 
             for(int i = 0; i < 4; i++){
                 layer_t* layer = &drm_warpper->layer[i];
@@ -374,6 +399,41 @@ int drm_warpper_set_layer_alpha(drm_warpper_t *drm_warpper,int layer_id,int alph
     item->alpha = (uint8_t)alpha;
     item->on_heap = true;
     return drm_warpper_enqueue_display_item(drm_warpper, layer_id, item);
+}
+
+int drm_warpper_flush_layer(drm_warpper_t *drm_warpper,int layer_id){
+    drm_warpper_fence_t fence;
+    drm_warpper_queue_item_t *item;
+    int ret;
+
+    item = calloc(1, sizeof(*item));
+    if(!item)
+        return -1;
+
+    pthread_mutex_init(&fence.mutex, NULL);
+    pthread_cond_init(&fence.cond, NULL);
+    fence.done = false;
+    fence.result = 0;
+
+    item->type = DRM_WARPPER_ITEM_FENCE;
+    item->userdata = &fence;
+    item->on_heap = true;
+
+    ret = drm_warpper_enqueue_display_item(drm_warpper, layer_id, item);
+    if(ret == 0){
+        pthread_mutex_lock(&fence.mutex);
+        while(!fence.done)
+            pthread_cond_wait(&fence.cond, &fence.mutex);
+        ret = fence.result;
+        pthread_mutex_unlock(&fence.mutex);
+    }
+    else{
+        free(item);
+    }
+
+    pthread_cond_destroy(&fence.cond);
+    pthread_mutex_destroy(&fence.mutex);
+    return ret;
 }
 
 int drm_warpper_init(drm_warpper_t *drm_warpper){

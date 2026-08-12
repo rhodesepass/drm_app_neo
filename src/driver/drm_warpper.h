@@ -40,6 +40,7 @@ typedef enum {
     DRM_WARPPER_ITEM_SET_COORD,
     // atomic：plane alpha。255 = 不透明(ARGB 层回到像素 alpha)
     DRM_WARPPER_ITEM_SET_ALPHA,
+    DRM_WARPPER_ITEM_FENCE,
 } drm_warpper_item_type_t;
 
 typedef struct {
@@ -139,6 +140,7 @@ int drm_warpper_try_dequeue_free_item(drm_warpper_t *drm_warpper,int layer_id,dr
 
 int drm_warpper_set_layer_coord(drm_warpper_t *drm_warpper,int layer_id,int x,int y);
 int drm_warpper_set_layer_alpha(drm_warpper_t *drm_warpper,int layer_id,int alpha);
+int drm_warpper_flush_layer(drm_warpper_t *drm_warpper,int layer_id);
 
 // C8 调色板上传:256 项小端 ARGB8888。设备侧写 sysfs(立即锁存,不等 vsync,
 // 在屏内容会当场换色——调用方自行保证时机);SDL 侧存软副本供合成线程展开。

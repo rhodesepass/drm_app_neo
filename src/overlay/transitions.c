@@ -42,6 +42,7 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
     // alpha 置 0 后直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0);
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0, 0);
+    drm_warpper_flush_layer(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY);
 
 #if OVERLAY_USE_C8
     oltr_apply_palette(params);
@@ -115,6 +116,7 @@ void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_p
     // 先挪到屏外再直绘单 buffer，绘制过程不可见
     drm_warpper_set_layer_coord(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, SCREEN_WIDTH, 0);
     drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 255);
+    drm_warpper_flush_layer(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY);
 
 #if OVERLAY_USE_C8
     oltr_apply_palette(params);
@@ -372,6 +374,9 @@ static void swipe_timer_cb(void *userdata,bool is_last){
 
 // 类似drm_app的过渡效果，但是使用贝塞尔，需要使用worker。
 void overlay_transition_swipe(overlay_t* overlay,oltr_callback_t* callback,oltr_params_t* params){
+
+    drm_warpper_set_layer_alpha(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY, 0);
+    drm_warpper_flush_layer(overlay->drm_warpper, DRM_WARPPER_LAYER_OVERLAY);
 
 #if OVERLAY_USE_C8
     // idx 0 在任何表里都是全透明,先换表再清 buffer 顺序无所谓
