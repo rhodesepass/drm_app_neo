@@ -14,6 +14,19 @@
 #include "utils/stb_image.h"
 
 
+/*
+ * DEBE 帧末怪癖(实测确认):最后一条扫描线会用该线最后一个像素的 CLUT 色
+ * 填充整行,索引随素材/重映射变化(最初 31,素材重映射后变 32)。把两条
+ * 边界(倒装 BOE=行 0,正装 HSD=行 639)的收尾像素钉成
+ * C8PAL_IDX_DEBE_LASTLINE —— commit 守卫保证该索引恒为黑,帧末线不可见。
+ */
+void overlay_pin_frame_end(overlay_t* overlay){
+    uint8_t* v = (uint8_t*)overlay->overlay_buf.vaddr;
+    v[0 * OVERLAY_WIDTH + (OVERLAY_WIDTH - 1)] = (uint8_t)C8PAL_IDX_DEBE_LASTLINE;
+    v[(OVERLAY_HEIGHT - 1) * OVERLAY_WIDTH + (OVERLAY_WIDTH - 1)] = (uint8_t)C8PAL_IDX_DEBE_LASTLINE;
+}
+
+
 int load_img_assets(char *image_path, uint32_t** addr,int* w,int* h){
     int c;
 
@@ -132,7 +145,6 @@ int overlay_init(overlay_t* overlay,drm_warpper_t* drm_warpper,layer_animation_t
         log_error("overlay pitch mismatch: got %u, expect %d",
                   overlay->overlay_buf.pitch, OVERLAY_WIDTH * OVERLAY_BPP);
     }
-
     memset(overlay->overlay_buf.vaddr, 0, OVERLAY_BUF_BYTES);
 
     drm_warpper_mount_layer(drm_warpper, DRM_WARPPER_LAYER_OVERLAY, OVERLAY_WIDTH, 0, &overlay->overlay_buf);

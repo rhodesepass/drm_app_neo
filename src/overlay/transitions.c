@@ -79,6 +79,7 @@ void overlay_transition_fade(overlay_t* overlay,oltr_callback_t* callback,oltr_p
     }
 
     // 渐变到图层
+    overlay_pin_frame_end(overlay);
     layer_animation_fade_in(
         overlay->layer_animation, 
         DRM_WARPPER_LAYER_OVERLAY, 
@@ -149,6 +150,7 @@ void overlay_transition_move(overlay_t* overlay,oltr_callback_t* callback,oltr_p
         fbdraw_copy_rect(&fbsrc, &fbdst, &src_rect, &dst_rect);
     }
 
+    overlay_pin_frame_end(overlay);
     layer_animation_ease_out_move(
         overlay->layer_animation, 
         DRM_WARPPER_LAYER_OVERLAY, 
@@ -351,6 +353,7 @@ static void swipe_worker(void *userdata,int skipped_frames){
         fbdraw_fill_rect(&fbdst, &dst_rect, 0x00000000);
     }
 
+    overlay_pin_frame_end(data->overlay);
     data->curr_frame ++;
     if(data->curr_frame >= data->total_frames){
         // 单 buffer：结束后把图层泊回屏外，让后续过渡的直绘阶段不可见

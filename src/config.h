@@ -238,6 +238,13 @@
 #define C8PAL_IDX_TRANSPARENT    0
 #define C8PAL_IDX_BLACK          1
 #define C8PAL_IDX_WHITE          2
+/*
+ * DEBE 帧末怪癖(实测确认):整帧最后一条扫描线会用该线最后一个像素的
+ * CLUT 色填充整行,索引随素材/内容变化。修复策略是 overlay_pin_frame_end()
+ * 把收尾像素钉成本索引,因此本索引必须永远是黑/背景色 —— c8pal_commit()
+ * 每次提交强制钉住(防 image 模式整表覆盖把它冲掉)。
+ */
+#define C8PAL_IDX_DEBE_LASTLINE   31
 
 #define C8PAL_DYN_BASE           96
 #define C8PAL_DYN_QUOTA          159

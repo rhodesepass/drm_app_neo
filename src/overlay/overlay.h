@@ -54,3 +54,5 @@ void overlay_worker_schedule(overlay_t* overlay,void (*func)(void *userdata,int 
 
 // 请求终止Overlay，并等待worker处理完资源回收工作。
 void overlay_abort(overlay_t* overlay);
+
+void overlay_pin_frame_end(overlay_t* overlay);

@@ -825,6 +825,7 @@ static bool engine_compose(opinfo_engine_t* d){
         }
     }
 
+    overlay_pin_frame_end(d->overlay);
     d->curr_frame++;
 
     if(d->has_loop){
@@ -1505,6 +1506,7 @@ static void arknights_overlay_worker(void *userdata,int skipped_frames){
         data->arrow_y_value = asset_h;
     }
 
+    overlay_pin_frame_end(data->overlay);
     data->curr_frame++;
 }
 
@@ -1677,6 +1679,7 @@ void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params)
 #endif
 
     init_template_arknights_overlay((uint32_t*)overlay->overlay_buf.vaddr, params);
+    overlay_pin_frame_end(overlay);
 
     static arknights_overlay_worker_data_t data;
     memset(&data, 0, sizeof(arknights_overlay_worker_data_t));
@@ -1727,6 +1730,11 @@ void overlay_opinfo_show_arknights(overlay_t* overlay,olopinfo_params_t* params)
     );
 
 
+    /*
+     * C8 叠层全高(640)挂载。帧末白线根因是 DEBE 用最后一条扫描线最后一
+     * 个像素的 CLUT 色填充整行,overlay_pin_frame_end() 把收尾像素钉成
+     * 31 号(恒黑),这里不再需要 h=639/停靠 Y 的绕法,全屏覆盖即可。
+     */
     layer_animation_ease_in_out_move(
         overlay->layer_animation,
         DRM_WARPPER_LAYER_OVERLAY,
