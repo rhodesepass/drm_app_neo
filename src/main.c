@@ -127,9 +127,22 @@ int main(int argc, char *argv[]){
             printf("COMPILE_TIME: %s\n", COMPILE_TIME);
             return 0;
         }
-        // 弹窗预览 (PC/sim 调试用):`preview [间隔ms]`,轮播 warning/confirm/fido-uix/usbselect 看排版。
+        // UI 预览 (PC/sim 调试用):
+        //   `preview [--theme <名|id>] [--screen <页名>] [间隔ms]`
+        //   只传间隔 = 旧行为 (轮播弹窗);--theme 覆盖启动主题;--screen 只显示指定页面。
         if(strcmp(argv[1], "preview") == 0){
-            g_ui_preview_interval_ms = (argc >= 3) ? atoi(argv[2]) : 3000;
+            g_ui_preview_interval_ms = 3000;
+            for(int i = 2; i < argc; i++){
+                if(strcmp(argv[i], "--theme") == 0 && i + 1 < argc){
+                    g_ui_preview_theme_id = ui_preview_theme_parse(argv[++i]);
+                } else if(strcmp(argv[i], "--screen") == 0 && i + 1 < argc){
+                    g_ui_preview_screen = ui_preview_screen_parse(argv[++i]);
+                } else {
+                    // 位置参数 = 间隔ms (兼容旧语法)
+                    int ms = atoi(argv[i]);
+                    if(ms > 0) g_ui_preview_interval_ms = ms;
+                }
+            }
             if(g_ui_preview_interval_ms <= 0) g_ui_preview_interval_ms = 3000;
         }
     }

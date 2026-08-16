@@ -21,7 +21,7 @@ static void on_load_start(lv_event_t *e)
 lv_obj_t *screen_filemanager_create(void)
 {
     lv_obj_t *root = ui_screen_root_bare();
-    ui_header(root, "文件");
+    ui_theme_header(root, ui_theme_title(SCREEN_FILEMANAGER, "文件"));
 
     lv_obj_t *content = lv_obj_create(root);
     lv_obj_set_pos(content, 0, S(40));

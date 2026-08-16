@@ -7,18 +7,20 @@
 #include "styles.h"
 #include "ui_backend.h"
 #include "ui_metrics.h"
+#include "ui/ui_theme.h"
+#include "config.h"
 
 // 干员列表：焦点驱动的虚拟滚动 —— 只建 UI_OPLIST_VISIBLE_SLOTS 个槽位循环复用，
 // 不随干员数线性增长 (弱端省 RAM)。移植自原 actions_oplist.c。
 typedef struct {
-    lv_obj_t *cont;     // 槽位外层(决定行高/间距)
-    lv_obj_t *btn;      // 可聚焦按钮
+    lv_obj_t *cont;
+    lv_obj_t *btn;
     lv_obj_t *logo;
     lv_obj_t *name;
     lv_obj_t *desc;
     lv_obj_t *sd;
-    lv_obj_t *res; // 分辨率角标 (SD 上方)
-    int       op_index; // 当前绑定干员，-1=空
+    lv_obj_t *res;
+    int       op_index;
 } oplist_slot_t;
 
 static struct {
@@ -32,7 +34,7 @@ static struct {
 } self;
 
 // 排序模式：长按确定"拎起"当前干员，左右键在列表里上下移动，短按确定/ESC 落位。
-// 被拎起的项靠 group editing 态下聚焦项自动进入的 LV_STATE_EDITED 高亮，随移动自动跟随。
+// 被拎起的项显式打 LV_STATE_USER_1 高亮 (类表 edit 态)，随移动自动跟随。
 static bool s_reorder_active = false;
 static int  s_reorder_op     = -1;
 
@@ -186,44 +188,58 @@ static void make_slot(int i)
 
     s->btn = lv_button_create(s->cont);
     lv_obj_set_size(s->btn, lv_pct(100), lv_pct(100));
-    add_style_op_btn(s->btn);
+    // 条目外观 (底色/圆角/聚焦高亮条/排序拎起条) 由主题 oplist 条目类决定，切主题自动翻转
+    add_class(s->btn, UI_CLS_OPLIST_ENTRY);
+    // 指针悬停保持中性底，不让 LVGL 默认主题的 hover 底盖掉条目底色
+    lv_obj_set_style_bg_color(s->btn, ui_color(UI_C_NEUTRAL), LV_PART_MAIN | LV_STATE_HOVERED);
     // 选中改到 SHORT_CLICKED(松开触发)，给长按让路：长按=进排序模式，短按=选中/落位
     lv_obj_add_event_cb(s->btn, slot_click_cb, LV_EVENT_SHORT_CLICKED, s);
     lv_obj_add_event_cb(s->btn, slot_longpress_cb, LV_EVENT_LONG_PRESSED, s);
     lv_obj_add_event_cb(s->btn, slot_focus_cb, LV_EVENT_FOCUSED, s);
-    lv_obj_remove_flag(s->btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS); // 关默认动画滚动，改由 focus cb 无动画滚
-
-    // 排序模式"拎起"高亮：被拎的槽打 USER_1 —— 整块换醒目橙底，
-    // 与普通(灰底)/焦点(青底)明显拉开，一眼看出该项正处于"可上下移动"状态。
-    lv_obj_set_style_bg_color(s->btn, lv_color_hex(0xF07000), LV_PART_MAIN | LV_STATE_USER_1);
-    lv_obj_set_style_bg_opa(s->btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_USER_1);
+    lv_obj_remove_flag(s->btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
 
     s->logo = lv_image_create(s->btn);
     lv_obj_set_pos(s->logo, 0, 0);
     lv_obj_set_size(s->logo, S(64), S(64));
     lv_image_set_inner_align(s->logo, LV_IMAGE_ALIGN_STRETCH);
+    lv_obj_set_style_outline_width(s->logo, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_outline_opa(s->logo, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_outline_color(s->logo, ui_color(UI_C_IMG_OUTLINE), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(s->logo, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     s->name = lv_label_create(s->btn);
     lv_obj_set_pos(s->name, S(68), 0);
     lv_obj_set_size(s->name, S(232), S(32)); // LONG_DOT 要固定高度才会截断，否则退化成换行
     lv_label_set_long_mode(s->name, LV_LABEL_LONG_DOT);
     add_style_label_large(s->name);
+    lv_obj_set_style_text_color(s->name, ui_color(UI_C_TEXT), LV_PART_MAIN | LV_STATE_DEFAULT);
 
     s->desc = lv_label_create(s->btn);
-    lv_obj_set_pos(s->desc, S(68), S(32));
-    lv_obj_set_size(s->desc, S(213), S(32));
+    lv_obj_set_pos(s->desc, S(68), S(35));
+    lv_obj_set_size(s->desc, S(190), S(32));
     lv_label_set_long_mode(s->desc, LV_LABEL_LONG_DOT);
     add_style_label_small(s->desc);
-
-    // res 在上、sd 在下，竖直堆叠。角标加了上下 padding 变高，两者需拉开间距避免重叠。
-    s->sd = lv_label_create(s->btn);
-    lv_obj_set_pos(s->sd, S(281), S(52));
-    add_style_sd_flag(s->sd);
-    lv_label_set_text(s->sd, "数据");
+    lv_obj_set_style_text_color(s->desc, ui_color(UI_C_TEXT), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_line_space(s->desc, -1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(s->desc, ui_color(UI_C_ACCENT2), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_side(s->desc, LV_BORDER_SIDE_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(s->desc, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_post(s->desc, false, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_left(s->desc, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     s->res = lv_label_create(s->btn);
-    lv_obj_set_pos(s->res, S(281), S(26));
-    add_style_res_flag(s->res);
+    lv_obj_set_pos(s->res, S(281), S(26));   // 旧版基准坐标
+    // 角标底色/圆角/文字色由主题类决定；坐标经 ui_place 叠加主题偏移
+    add_style_label_small(s->res);
+    add_class(s->res, UI_CLS_OPLIST_FLAG_RES);
+    ui_place(s->res, 281, 26, UI_OF_SLOT_OPLIST_RES);
+
+    s->sd = lv_label_create(s->btn);
+    lv_obj_set_pos(s->sd, S(281), S(52));   // 旧版基准坐标
+    add_style_label_small(s->sd);
+    add_class(s->sd, UI_CLS_OPLIST_FLAG_SD);
+    lv_label_set_text(s->sd, "数据");
+    ui_place(s->sd, 281, 52, UI_OF_SLOT_OPLIST_SD);
 
     s->op_index = -1;
 }
@@ -237,7 +253,11 @@ static void update_slot_content(int i, int op_idx)
     lv_label_set_text(s->desc, e.desc);
     if (e.logo_path) lv_image_set_src(s->logo, e.logo_path);
     if (e.sd) lv_obj_remove_flag(s->sd, LV_OBJ_FLAG_HIDDEN);
-    else      lv_obj_add_flag(s->sd, LV_OBJ_FLAG_HIDDEN);
+    #ifdef EPASS_PC_TARGET
+        else      lv_obj_remove_flag(s->sd, LV_OBJ_FLAG_HIDDEN); // PC 强制显示看效果
+    #else
+        else      lv_obj_add_flag(s->sd, LV_OBJ_FLAG_HIDDEN);
+    #endif
     if (e.res) {
         lv_label_set_text(s->res, e.res);
         lv_obj_remove_flag(s->res, LV_OBJ_FLAG_HIDDEN);
@@ -305,7 +325,7 @@ lv_obj_t *screen_oplist_create(void)
 {
     memset(&self, 0, sizeof(self));
     lv_obj_t *root = ui_screen_root_bare();
-    ui_header(root, "干员列表");
+    ui_theme_header(root, ui_theme_title(SCREEN_OPLIST, "干员列表"));
 
     self.total = ui_backend_oplist_count();
 
@@ -325,14 +345,18 @@ lv_obj_t *screen_oplist_create(void)
         // margin_top，导致间距不随分辨率缩放。清零，间距全由 op_entry 的 margin_top(S(5)) 定。
         lv_obj_set_style_pad_row(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_width(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_radius(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_bg_opa(self.scroll, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
         for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++) make_slot(i);
         update_visible_range(0);
     }
 
-    self.refresh_btn = ui_text_button(root, 17, 327, 159, 51, UI_SEM_SUCCESS, "刷新列表", on_refresh);
-    self.menu_btn    = ui_text_button(root, 187, 327, 157, 51, UI_SEM_DEFAULT, "主菜单", on_menu);
+    // 底部动作按钮：直角/阴影/圆角随主题 (UI_CLS_BTN_ACTION)，颜色走语义 fill
+    self.refresh_btn = ui_text_button(root, 17, 327, 159, 51, UI_SEM_LIGHT, "刷新列表", on_refresh);
+    add_class(self.refresh_btn, UI_CLS_BTN_ACTION);
+    self.menu_btn    = ui_text_button(root, 187, 327, 157, 51, UI_SEM_PRIMARY, "主菜单", on_menu);
+    add_class(self.menu_btn, UI_CLS_BTN_ACTION);
 
     lv_obj_add_event_cb(root, on_load_start, LV_EVENT_SCREEN_LOAD_START, NULL);
     return root;

@@ -4,6 +4,7 @@
 // 逻辑搬自原 actions_settings/sysinfo/displayimg/oplist/apps。
 //
 #include "ui_screens/ui_backend.h"
+#include "ui_screens/screen_manager.h"
 #include "ui_screens/ui_services.h"
 #include "ui/ui_theme.h"
 
@@ -218,6 +219,11 @@ void ui_backend_theme_set(int id)
     settings_unlock(&g_settings);
     settings_update(&g_settings);
     ui_theme_apply(id);
+    // 主题切换只重着色共享 style；图标文本/内联 ui_color 等随主题内容要重建屏才刷新
+    screens_rebuild_all();
+    // 当前屏异步重建：清除旧主题残留对象并刷新文字色。
+    // 主题切换由设置屏下拉的 VALUE_CHANGED 事件触发，必须延迟到事件处理完再换屏。
+    screens_reload_current_async();
 }
 
 // ================= 存储 / sysinfo (原 actions_sysinfo.c) =================
