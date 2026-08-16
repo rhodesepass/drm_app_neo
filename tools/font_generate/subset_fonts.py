@@ -57,6 +57,76 @@ KANA_PUNCT_RANGES = [
     (0xFF00, 0xFFEF),  # 全角/半角形式
 ]
 
+# 内嵌 LV_SYMBOL 码点表 —— 取自固定版本 LVGL (CMake FetchContent) 的 lv_symbol_def.h。
+# LVGL 内建控件会经文字字体 fallback 落到图标字体，图标子集必须包含全套。
+# 本项目 LVGL 由 CMake FetchContent 拉取，仓库内无检出，原 submodule 路径定位会落空、
+# 导致 LV_SYMBOL 静默缺失；内嵌表保证任何环境都齐全。仓库内如另有真实 lvgl 检出，
+# 则解析真表做差异校验，否则使用内嵌表。
+LV_SYMBOLS = {
+    "BULLET":          0x2022,  # 非 FontAwesome（LVGL 自带 normal 字体）
+    "AUDIO":           0xF001,
+    "VIDEO":           0xF008,
+    "LIST":            0xF00B,
+    "OK":              0xF00C,
+    "CLOSE":           0xF00D,
+    "POWER":           0xF011,
+    "SETTINGS":        0xF013,
+    "HOME":            0xF015,
+    "DOWNLOAD":        0xF019,
+    "DRIVE":           0xF01C,
+    "REFRESH":         0xF021,
+    "MUTE":            0xF026,
+    "VOLUME_MID":      0xF027,
+    "VOLUME_MAX":      0xF028,
+    "IMAGE":           0xF03E,
+    "TINT":            0xF043,
+    "PREV":            0xF048,
+    "PLAY":            0xF04B,
+    "PAUSE":           0xF04C,
+    "STOP":            0xF04D,
+    "NEXT":            0xF051,
+    "EJECT":           0xF052,
+    "LEFT":            0xF053,
+    "RIGHT":           0xF054,
+    "PLUS":            0xF067,
+    "MINUS":           0xF068,
+    "EYE_OPEN":        0xF06E,
+    "EYE_CLOSE":       0xF070,
+    "WARNING":         0xF071,
+    "SHUFFLE":         0xF074,
+    "UP":              0xF077,
+    "DOWN":            0xF078,
+    "LOOP":            0xF079,
+    "DIRECTORY":       0xF07B,
+    "UPLOAD":          0xF093,
+    "CALL":            0xF095,
+    "CUT":             0xF0C4,
+    "COPY":            0xF0C5,
+    "SAVE":            0xF0C7,
+    "BARS":            0xF0C9,
+    "ENVELOPE":        0xF0E0,
+    "CHARGE":          0xF0E7,
+    "PASTE":           0xF0EA,
+    "BELL":            0xF0F3,
+    "KEYBOARD":        0xF11C,
+    "GPS":             0xF124,
+    "FILE":            0xF158,
+    "WIFI":            0xF1EB,
+    "BATTERY_FULL":    0xF240,
+    "BATTERY_3":       0xF241,
+    "BATTERY_2":       0xF242,
+    "BATTERY_1":       0xF243,
+    "BATTERY_EMPTY":   0xF244,
+    "USB":             0xF287,
+    "BLUETOOTH":       0xF293,
+    "TRASH":           0xF2ED,
+    "EDIT":            0xF304,
+    "BACKSPACE":       0xF55A,
+    "SD_CARD":         0xF7C2,
+    "NEW_LINE":        0xF8A2,
+    "DUMMY":           0xF8FF,
+}
+
 
 def read_text(path):
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -113,9 +183,39 @@ def collect_source_literals(src_dir):
     return chars
 
 
+def find_lv_symbol_def():
+    """定位仓库内真实 lvgl 检出的 lv_symbol_def.h（可选，用于校验/刷新内嵌表）。
+
+    LV_SYMBOL 一律以脚本内嵌表 LV_SYMBOLS 为准；
+    仅当仓库内存在真实 lvgl 检出时解析真表做差异校验，否则回落内嵌表。"""
+    # 仓库内 lvgl 检出 (submodule 布局，即最初实现的定位路径)。本项目 LVGL 由 CMake
+    # FetchContent 拉取，仓库内通常没有检出，故绝大多数情况回落内嵌表；保留扫描仅为
+    # 有本地检出的开发者提供差异校验。
+    path = os.path.join(REPO, "lvgl", "src", "font", "lv_symbol_def.h")
+    return path if os.path.isfile(path) else None
+
+
+def parse_lv_symbols(path):
+    """从 lv_symbol_def.h 解析全套 LV_SYMBOL 码点。每个宏是一串 \\xHH UTF-8 字节，拼回解码。"""
+    codes = set()
+    for line in read_text(path).splitlines():
+        m = re.search(r'#define\s+LV_SYMBOL_\w+\s+"((?:\\x[0-9a-fA-F]{2})+)', line)
+        if not m:
+            continue
+        raw = bytes(int(b, 16) for b in re.findall(r"\\x([0-9a-fA-F]{2})", m.group(1)))
+        try:
+            codes.add(ord(raw.decode("utf-8")))
+        except (UnicodeDecodeError, TypeError):
+            pass
+    return codes
+
+
 def collect_icon_codepoints(src_dir):
     """FontAwesome 需要的码点：src/icons.h 里的 \\uXXXX / \\xXX，加全套 LV_SYMBOL。
-    LVGL 内建控件通过文字字体的 fallback 落到这个图标字体，所以 LV_SYMBOL 全带上。"""
+    LVGL 内建控件会经文字字体 fallback 落到图标字体，故图标子集必须包含全套。
+
+    LV_SYMBOL 默认使用内嵌表 LV_SYMBOLS；
+    若仓库内存在真实 lvgl 检出则解析真表做差异校验，否则回落内嵌表。"""
     codes = set()
 
     icons_h = os.path.join(src_dir, "icons.h")
@@ -126,18 +226,16 @@ def collect_icon_codepoints(src_dir):
         for m in re.findall(r"\\x([0-9a-fA-F]{2})", txt):
             codes.add(int(m, 16))
 
-    sym = os.path.join(REPO, "lvgl", "src", "font", "lv_symbol_def.h")
-    if os.path.isfile(sym):
-        # 每个 LV_SYMBOL 是一串 \xHH UTF-8 字节，拼回来解码成码点
-        for line in read_text(sym).splitlines():
-            m = re.search(r'#define\s+LV_SYMBOL_\w+\s+"((?:\\x[0-9a-fA-F]{2})+)"', line)
-            if not m:
-                continue
-            raw = bytes(int(b, 16) for b in re.findall(r"\\x([0-9a-fA-F]{2})", m.group(1)))
-            try:
-                codes.add(ord(raw.decode("utf-8")))
-            except (UnicodeDecodeError, TypeError):
-                pass
+    builtin = set(LV_SYMBOLS.values())
+    codes |= builtin
+
+    sym = find_lv_symbol_def()
+    if sym:
+        live = parse_lv_symbols(sym)
+        codes |= live
+        if live != builtin:
+            print(f"  [提示] 内嵌 LV_SYMBOL 表与真源 {os.path.relpath(sym, REPO)} 不一致"
+                  f" (内嵌 {len(builtin)} / 真源 {len(live)})，以真源为准，建议同步内嵌表")
     return codes
 
 
