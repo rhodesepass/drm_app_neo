@@ -41,3 +41,14 @@
 #define UI_ICON_FACE_FLUSHED "\uf579"
 #define UI_ICON_FACE_SAD_CRY "\uf5b3"
 #define UI_ICON_SD_CARD "\uf7c2"
+
+#define UI_ICON_CIRCLE_XMARK "\uf057"
+#define UI_ICON_CIRCLE_CHECK "\uf058"
+#define UI_ICON_PLAY "\uf04b"
+
+#define UI_ICON_ID_BADGE "\uf2c1"
+#define UI_ICON_CUBE "\uf1b2"
+#define UI_ICON_PERSON_CIRCLE_PLUS "\ue541"
+#define UI_ICON_COPY "\uf0c5"
+#define UI_ICON_DATABASE "\uf1c0"
+#define UI_ICON_COMPACT_DISC "\uf51f"

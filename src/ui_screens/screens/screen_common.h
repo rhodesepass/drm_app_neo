@@ -22,13 +22,19 @@ lv_obj_t *ui_screen_root(void);
 // 同上但不挂自动聚焦 cb；需要自管导航 group 的屏(虚拟滚动列表)用。
 lv_obj_t *ui_screen_root_bare(void);
 
-// 左上角统一页头：PRTS logo + 标题。
-void ui_header(lv_obj_t *root, const char *title);
+// 左上角统一页头：PRTS logo + 标题。返回标题 label (便于屏内单独设色)。
+lv_obj_t *ui_header(lv_obj_t *root, const char *title);
+// 创建 PRTS logo 图片 (不定位), 供 ui_header 与主题页面装饰复用。
+lv_obj_t *ui_header_logo(lv_obj_t *parent);
 
 // 居中文字大按钮；sem=UI_SEM_DEFAULT 走主题默认底色；cb=NULL 不挂回调。
 // 语义底色随主题翻转 (见 add_style_fill)。
 lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
                          ui_sem_t sem, const char *text, lv_event_cb_t cb);
+
+// 以旧版 (main 分支) 坐标为基准放置元素，并叠加主题坐标偏移 + 尺寸覆盖 (slot 见 ui_theme.h)。
+// 屏内一律用旧坐标写基准，主题用 ofs 表把元素搬到自己的布局 (Old 主题无需偏移)。
+void ui_place(lv_obj_t *obj, int base_x, int base_y, ui_of_slot_t slot);
 lv_obj_t *ui_small_text_button(lv_obj_t *root, int x, int y, int w, int h,
                          ui_sem_t sem, const char *text, lv_event_cb_t cb);
 
