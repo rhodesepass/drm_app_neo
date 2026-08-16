@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "screen_common.h"
+#include "screen_manager.h"
 #include "styles.h"
 #include "ui_backend.h"
 #include "ui_metrics.h"
@@ -20,7 +21,7 @@ lv_obj_t *screen_displayimg_create(void)
 {
     memset(&self, 0, sizeof(self));
     lv_obj_t *root = ui_screen_root();
-    ui_header(root, "扩列信息");
+    ui_theme_header(root, ui_theme_title(SCREEN_DISPLAYIMG, "扩列信息"));
 
     // 图片容器铺满，置底 (标题/路径浮在其上)。
     self.img_box = lv_obj_create(root);
@@ -33,8 +34,12 @@ lv_obj_t *screen_displayimg_create(void)
     lv_obj_move_background(self.img_box);
 
     self.size = lv_label_create(root);
-    lv_obj_set_pos(self.size, S(157), S(16)); lv_obj_set_width(self.size, S(120));
+    int dx = 0, dy = 0;
+    ui_theme_size_label_ofs(&dx, &dy);   // 计数器位置可由主题按布局微调 (默认基准 157,16)
+    lv_obj_set_pos(self.size, S(157 + dx), S(16 + dy));
+    lv_obj_set_width(self.size, S(120));
     add_style_label_large(self.size);
+    lv_obj_set_style_text_color(self.size, ui_color(UI_C_HEADER_TITLE), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(self.size, "");
 
     self.no_pic = lv_label_create(root);

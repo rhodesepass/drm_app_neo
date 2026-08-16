@@ -48,22 +48,32 @@ lv_obj_t *screen_usbselect_create(void)
     add_style_fill(root, UI_SEM_PRIMARY);
 
     lv_obj_t *icon = lv_label_create(root);
-    lv_obj_set_pos(icon, S(14), S(4)); add_style_fa_label(icon);
+    ui_place(icon, 14, 4, UI_OF_SLOT_USB_ICON); add_style_fa_label(icon);
     lv_label_set_text(icon, UI_ICON_MOBILE_SCREEN);
 
     lv_obj_t *head = lv_label_create(root);
-    lv_obj_set_pos(head, S(83), S(4)); add_style_label_large(head);
+    ui_place(head, 83, 4, UI_OF_SLOT_USB_HEAD); add_style_label_large(head);
     lv_label_set_text(head, "检测到USB连接");
 
     lv_obj_t *hint = lv_label_create(root);
-    lv_obj_set_pos(hint, S(83), S(37)); lv_obj_set_width(hint, S(262));
+    ui_place(hint, 83, 37, UI_OF_SLOT_USB_HINT); lv_obj_set_width(hint, S(262));
     add_style_label_small(hint);
     lv_label_set_text(hint, "请选择本次连接的用途");
 
-    self.btn[UIX_USB_CHOICE_EPASS]       = ui_text_button(root, 28, 80, 149, 51, UI_SEM_NEUTRAL, "管理APP", on_epass);
-    self.btn[UIX_USB_CHOICE_FIDO]        = ui_text_button(root, 187, 80, 147, 51, UI_SEM_NEUTRAL, "FIDO密钥", on_fido);
-    self.btn[UIX_USB_CHOICE_MTP]         = ui_text_button(root, 28, 137, 149, 51, UI_SEM_NEUTRAL, "文件/MTP", on_mtp);
-    self.btn[UIX_USB_CHOICE_CHARGE_ONLY] = ui_text_button(root, 187, 137, 147, 51, UI_SEM_NEUTRAL, "仅充电", on_charge);
+    // 基础布局 = 旧版坐标 (28/187 x, 80/137 y, 149 宽)；主题 ui_place 偏移到新布局
+    self.btn[UIX_USB_CHOICE_EPASS]       = ui_text_button(root, 28,  80,  149, 51, UI_SEM_DEFAULT, "管理APP", on_epass);
+    ui_place(self.btn[UIX_USB_CHOICE_EPASS], 28, 80, UI_OF_SLOT_USB_EPASS);
+    self.btn[UIX_USB_CHOICE_FIDO]        = ui_text_button(root, 187, 80,  149, 51, UI_SEM_DEFAULT, "FIDO密钥", on_fido);
+    ui_place(self.btn[UIX_USB_CHOICE_FIDO], 187, 80, UI_OF_SLOT_USB_FIDO);
+    self.btn[UIX_USB_CHOICE_MTP]         = ui_text_button(root, 28,  137, 149, 51, UI_SEM_DEFAULT, "文件/MTP", on_mtp);
+    ui_place(self.btn[UIX_USB_CHOICE_MTP], 28, 137, UI_OF_SLOT_USB_MTP);
+    self.btn[UIX_USB_CHOICE_CHARGE_ONLY] = ui_text_button(root, 187, 137, 149, 51, UI_SEM_DEFAULT, "仅充电", on_charge);
+    ui_place(self.btn[UIX_USB_CHOICE_CHARGE_ONLY], 187, 137, UI_OF_SLOT_USB_CHARGE);
+
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *b = self.btn[i];
+        add_class(b, UI_CLS_BTN_SELECT);
+    }
 
     apply_func_mask();
     return root;

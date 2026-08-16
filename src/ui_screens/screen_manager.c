@@ -116,10 +116,9 @@ static void load_now(screen_id_t id)
 
         // 新屏成为 active 后再删旧屏；旧屏可能仍是切屏前实际显示的页面。
         lv_obj_delete(old);
-        return;
+    } else {
+        lv_screen_load(screen->obj);
     }
-
-    lv_screen_load(screen->obj);
 }
 
 // ---- 停靠态 ----
@@ -320,6 +319,44 @@ void screens_rebuild(screen_id_t id)
     // 这里只标脏。screen_show 会先把 UI 平面下潜到幕帘位置，swap_cb 真正加载
     // 该屏时才重建，避免刷新完成通知删除仍处于 active 状态的干员页。
     s_screens[id].rebuild_pending = true;
+}
+
+void screens_rebuild_all(void)
+{
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        screens_rebuild(i);
+    }
+}
+
+void screens_reload_current(void)
+{
+    screen_entry_t *screen = &s_screens[s_current];
+    if (!screen->obj || !screen->create) return;
+
+    lv_obj_t *old = screen->obj;
+    lv_obj_t *fresh = screen->create();
+    if (!fresh) {
+        log_error("screen %d reload failed", (int)s_current);
+        return;
+    }
+    screen->obj = fresh;
+    screen->rebuild_pending = false;
+    lv_screen_load(fresh);
+    lv_obj_delete_async(old);
+}
+
+static void reload_current_async_cb(void *user_data)
+{
+    (void)user_data;
+    screens_reload_current();
+}
+
+void screens_reload_current_async(void)
+{
+    // 主题切换由设置屏下拉的 VALUE_CHANGED 事件触发：不能在该事件回调内同步重建/换屏
+    // (会打断 LVGL 事件派发、把正在处理事件的对象一起换掉)。用 lv_async_call 延迟到
+    // 事件处理结束后再执行，保证安全。
+    lv_async_call(reload_current_async_cb, NULL);
 }
 
 // ============ 按键导航状态机 (原 scr_transition.c::screen_key_event_cb) ============

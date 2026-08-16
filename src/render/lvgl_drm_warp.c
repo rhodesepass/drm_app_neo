@@ -126,7 +126,8 @@ void lvgl_drm_warp_init(lvgl_drm_warp_t *lvgl_drm_warp,drm_warpper_t *drm_warppe
     // 手写 UI 起步：字体 -> 后端数据/动作 -> 平面滑动绑定 -> 建屏 -> 绑定导航 group。
     font_registry_init();
     ui_backend_init(prts, apps);
-    ui_theme_apply(ui_backend_theme_get());   // 按存档应用深/浅主题(顺带把中文字体设成主题默认)
+    // 预览模式 `preview --theme <id>` 可覆盖启动主题;否则按存档应用 (顺带把中文字体设成主题默认)。
+    ui_theme_apply(g_ui_preview_theme_id >= 0 ? g_ui_preview_theme_id : ui_backend_theme_get());
     ui_plane_device_bind(layer_animation);
     filemanager_init(apps);
     screens_init();
