@@ -14,6 +14,7 @@ static struct {
     char h[64];
     char t[128];
     bool t_large;   // 第二行字号 (show_impl 记录,create 懒建时也要按它应用)
+    lv_obj_t *menu_btn;
     void (*on_proceed)(void);
     void (*on_cancel)(void);
 } self;
@@ -48,20 +49,33 @@ lv_obj_t *screen_confirm_create(void)
     add_style_fill(root, UI_SEM_WARNING);
 
     lv_obj_t *icon = lv_label_create(root);
-    lv_obj_set_pos(icon, S(14), S(4)); add_style_fa_label(icon);
+    ui_place(icon, 14, 4, UI_OF_SLOT_CONFIRM_ICON); add_style_fa_label(icon);
     lv_label_set_text(icon, UI_ICON_TRIANGLE_EXCLAMATION);
 
     self.head = lv_label_create(root);
-    lv_obj_set_pos(self.head, S(83), S(4)); add_style_label_large(self.head);
+    ui_place(self.head, 83, 4, UI_OF_SLOT_CONFIRM_HEAD); add_style_label_large(self.head);
+    lv_obj_set_style_text_color(self.head, ui_color(UI_C_TEXT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(self.head, self.h);
 
     self.title = lv_label_create(root);
-    lv_obj_set_pos(self.title, S(83), S(37)); lv_obj_set_width(self.title, S(262));
+    ui_place(self.title, 83, 37, UI_OF_SLOT_CONFIRM_TITLE); lv_obj_set_width(self.title, S(262));
     set_style_label_size(self.title, self.t_large);
+    lv_obj_set_style_text_color(self.title, ui_color(UI_C_TEXT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(self.title, self.t);
 
-    ui_text_button(root, 28, 70, 149, 51, UI_SEM_NEUTRAL, "取消", on_cancel);
-    ui_text_button(root, 187, 69, 147, 52, UI_SEM_DANGER, "确定", on_proceed);
+    lv_obj_t *btns[2];
+    // 基础布局 = 旧版坐标+文字 (取消/确定)。主题类表可覆盖按钮文字 (label_text)，
+    // ui_place 叠加坐标/尺寸偏移 (见 UI_OF_SLOT_CONFIRM_*)。
+    btns[0] = ui_text_button(root, 28, 70, 149, 51, UI_SEM_NEUTRAL, "取消", on_cancel);
+    ui_place(btns[0], 28, 70, UI_OF_SLOT_CONFIRM_CANCEL);
+    btns[1] = ui_text_button(root, 187, 69, 147, 52, UI_SEM_DANGER, "确定", on_proceed);
+    ui_place(btns[1], 187, 69, UI_OF_SLOT_CONFIRM_OK);
+    self.menu_btn = btns[1];
+
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *b = btns[i];
+        add_class(b, i == 0 ? UI_CLS_BTN_CANCEL : UI_CLS_BTN_CONFIRM);
+    }
 
     return root;
 }

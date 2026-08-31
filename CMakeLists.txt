@@ -196,6 +196,10 @@ set(EPASS_SOURCES
   src/utils/imgscale.c
 )
 
+# 主题类表：新增 theme_xxx.c 放到 src/ui/ui_theme/ 下即可，无需手动加进源列表。
+file(GLOB EPASS_THEME_SOURCES CONFIGURE_DEPENDS src/ui/ui_theme/*.c)
+list(APPEND EPASS_SOURCES ${EPASS_THEME_SOURCES})
+
 # 纯 POSIX 子系统：IPC(unix socket + epoll) 与 posix 定时器后端。设备端与 Linux
 # PC 都用；Windows PC 交叉编译时剔除（apps.c/main.c 已 #ifdef _WIN32 stub 掉调用
 # 侧，timer 换 win32 后端）。见下方 add_epass_pc_target 的 if(WIN32) 分流。

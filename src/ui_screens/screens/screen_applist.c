@@ -92,7 +92,7 @@ static void make_slot(int i)
 
     s->btn = lv_button_create(s->cont);
     lv_obj_set_size(s->btn, lv_pct(100), lv_pct(100));
-    add_style_op_btn(s->btn);
+    add_class(s->btn, UI_CLS_OPLIST_ENTRY);   // 与 oplist 同级的列表条目类 (聚焦左侧高亮条)
     lv_obj_add_event_cb(s->btn, slot_click_cb, LV_EVENT_PRESSED, s);
     lv_obj_add_event_cb(s->btn, slot_focus_cb, LV_EVENT_FOCUSED, s);
     lv_obj_remove_flag(s->btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS); // 关默认动画滚动，改由 focus cb 无动画滚
@@ -116,11 +116,11 @@ static void make_slot(int i)
 
     // sd 在上、state(前/后台) 在下，竖直堆叠。角标加了上下 padding 变高，拉开间距避免重叠。
     s->state = lv_label_create(s->btn);
-    lv_obj_set_pos(s->state, S(303), S(52));
+    ui_place(s->state, 303, 52, UI_OF_SLOT_APPLIST_STATE);
 
     s->sd = lv_label_create(s->btn);
-    lv_obj_set_pos(s->sd, S(313), S(26));
-    add_style_sd_flag(s->sd);
+    ui_place(s->sd, 313, 26, UI_OF_SLOT_APPLIST_SD);
+    add_class(s->sd, UI_CLS_OPLIST_FLAG_SD);   // 与 oplist sd 角标同款 (颜色/圆角随主题)
     lv_label_set_text(s->sd, "数据");
 
     s->app_index = -1;
@@ -210,7 +210,7 @@ lv_obj_t *screen_applist_create(void)
 {
     memset(&self, 0, sizeof(self));
     lv_obj_t *root = ui_screen_root_bare();
-    ui_header(root, "应用列表");
+    ui_theme_header(root, ui_theme_title(SCREEN_APPLIST, "应用列表"));
 
     self.total = ui_backend_applist_count();
 
@@ -237,6 +237,7 @@ lv_obj_t *screen_applist_create(void)
     }
 
     self.back_btn = ui_text_button(root, 23, 574, 316, 51, UI_SEM_DEFAULT, "返回", on_back);
+    add_class(self.back_btn, UI_CLS_BTN_ACTION);
 
     lv_obj_add_event_cb(root, on_load_start, LV_EVENT_SCREEN_LOAD_START, NULL);
     return root;

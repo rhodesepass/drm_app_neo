@@ -29,17 +29,17 @@ lv_obj_t *screen_warning_create(void)
     apply_bg(root);
 
     self.icon = lv_label_create(root);
-    lv_obj_set_pos(self.icon, S(5), S(5));
+    ui_place(self.icon, 5, 5, UI_OF_SLOT_WARN_ICON);
     add_style_fa_label(self.icon);
     lv_label_set_text(self.icon, self.i[0] ? self.i : UI_ICON_TRIANGLE_EXCLAMATION);
 
     self.title = lv_label_create(root);
-    lv_obj_set_pos(self.title, S(76), S(4)); lv_obj_set_width(self.title, S(275));
+    ui_place(self.title, 76, 4, UI_OF_SLOT_WARN_TITLE); lv_obj_set_width(self.title, S(275));
     add_style_label_large(self.title);
     lv_label_set_text(self.title, self.t[0] ? self.t : "警告");
 
     self.desc = lv_label_create(root);
-    lv_obj_set_pos(self.desc, S(76), S(32)); lv_obj_set_size(self.desc, S(275), S(34));
+    ui_place(self.desc, 76, 32, UI_OF_SLOT_WARN_DESC); lv_obj_set_size(self.desc, S(275), S(34));
     add_style_label_small(self.desc);
     lv_label_set_text(self.desc, self.d);
 

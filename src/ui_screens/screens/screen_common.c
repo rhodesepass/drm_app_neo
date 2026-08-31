@@ -22,10 +22,9 @@ lv_obj_t *ui_screen_root(void)
     return root;
 }
 
-void ui_header(lv_obj_t *root, const char *title)
+lv_obj_t *ui_header_logo(lv_obj_t *parent)
 {
-    lv_obj_t *logo = lv_image_create(root);
-    lv_obj_set_pos(logo, S(15), S(10));
+    lv_obj_t *logo = lv_image_create(parent);
 #ifdef LOGO_PRTS_PATH
     lv_image_set_src(logo, LOGO_PRTS_PATH);
 #else
@@ -33,11 +32,20 @@ void ui_header(lv_obj_t *root, const char *title)
 #endif
     lv_image_set_pivot(logo, 0, 0);
     lv_image_set_scale(logo, 128 * UI_SCALE);
+    lv_obj_set_style_bg_opa(logo, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    return logo;
+}
+
+lv_obj_t *ui_header(lv_obj_t *root, const char *title)
+{
+    lv_obj_t *logo = ui_header_logo(root);
+    lv_obj_set_pos(logo, S(15), S(7));
 
     lv_obj_t *t = lv_label_create(root);
-    lv_obj_set_pos(t, S(55), S(14));
+    lv_obj_set_pos(t, S(55), S(10));
     add_style_label_large(t);
     lv_label_set_text(t, title);
+    return t;
 }
 
 lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
@@ -54,6 +62,14 @@ lv_obj_t *ui_text_button(lv_obj_t *root, int x, int y, int w, int h,
     lv_obj_set_style_align(lbl, LV_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(lbl, text);
     return o;
+}
+
+void ui_place(lv_obj_t *obj, int base_x, int base_y, ui_of_slot_t slot)
+{
+    const ui_ofs_t *o = ui_theme_ofs(slot);
+    lv_obj_set_pos(obj, S(base_x + o->dx), S(base_y + o->dy));
+    if (o->w > 0) lv_obj_set_width(obj, S(o->w));
+    if (o->h > 0) lv_obj_set_height(obj, S(o->h));
 }
 
 lv_obj_t *ui_small_text_button(lv_obj_t *root, int x, int y, int w, int h,

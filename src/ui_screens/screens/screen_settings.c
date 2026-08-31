@@ -35,28 +35,34 @@ static void on_sw_mode(lv_event_t *e)   { ui_backend_sw_mode_set(lv_dropdown_get
 static void on_sw_int(lv_event_t *e)    { ui_backend_sw_interval_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 static void on_theme(lv_event_t *e)     { ui_backend_theme_set(lv_dropdown_get_selected(lv_event_get_target(e))); }
 // ---- 按钮 ----
-static void on_clear_cache(lv_event_t *e){ (void)e; /* 占位键: 吸收进设置屏首个 release，避免误触 slider */ }
+static void on_clear_cache(lv_event_t *e){ (void)e; /* 当前无操作: 吸收进设置屏首个 release，避免误触 slider */ }
 static void on_usb_reset(lv_event_t *e)  { (void)e; ui_backend_usb_reset(); }
 static void on_back(lv_event_t *e)       { (void)e; screen_show(SCREEN_MAINMENU); }
 
-static lv_obj_t *make_switch(lv_obj_t *root, int y, const char *text, bool on, lv_event_cb_t cb)
+static lv_obj_t *make_switch(lv_obj_t *root, int y, ui_of_slot_t slot, const char *text, bool on, lv_event_cb_t cb)
 {
     lv_obj_t *lbl = lv_label_create(root);
-    lv_obj_set_pos(lbl, S(22), S(y)); add_style_label_large(lbl); lv_label_set_text(lbl, text);
+    ui_place(lbl, 22, y, slot); add_style_label_large(lbl);
+    lv_obj_set_style_text_color(lbl, ui_color(UI_C_TEXT), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(lbl, text);
     lv_obj_t *sw = lv_switch_create(root);
-    lv_obj_set_pos(sw, S(279), S(y)); lv_obj_set_size(sw, S(60), S(29));
+    ui_place(sw, 279, y, slot); lv_obj_set_size(sw, S(60), S(29));
+    add_style_switch(sw);
     if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, NULL);
     return sw;
 }
 
-static lv_obj_t *make_dropdown(lv_obj_t *root, int x, int y, int w, int lbl_y,
+static lv_obj_t *make_dropdown(lv_obj_t *root, int x, int y, int w, int lbl_y, ui_of_slot_t slot,
                                const char *title, const char *opts, int sel, lv_event_cb_t cb)
 {
     lv_obj_t *t = lv_label_create(root);
-    lv_obj_set_pos(t, S(x), S(lbl_y)); add_style_label_large(t); lv_label_set_text(t, title);
+    ui_place(t, x, lbl_y, slot); add_style_label_large(t);
+    lv_obj_set_style_text_color(t, ui_color(UI_C_TEXT), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(t, title);
     lv_obj_t *dd = lv_dropdown_create(root);
-    lv_obj_set_pos(dd, S(x), S(y)); lv_obj_set_width(dd, S(w));
+    ui_place(dd, x, y, slot); lv_obj_set_width(dd, S(w));
+    add_style_dropdown(dd);
     lv_dropdown_set_options(dd, opts);
     lv_dropdown_set_selected(dd, sel);
     lv_obj_set_style_text_font(dd, font_get(FONT_BODY, 14), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -67,25 +73,30 @@ static lv_obj_t *make_dropdown(lv_obj_t *root, int x, int y, int w, int lbl_y,
 lv_obj_t *screen_settings_create(void)
 {
     lv_obj_t *root = ui_screen_root();
-    ui_header(root, "设备参数定值");
+    ui_theme_header(root, ui_theme_title(SCREEN_SETTINGS, "设备参数定值"));
 
-    ui_small_text_button(root, 205, 8, 82, 32, UI_SEM_DEFAULT, "清除缓存", on_clear_cache);
+    lv_obj_t *b = ui_small_text_button(root, 205, 8, 82, 32, UI_SEM_DEFAULT, "清除缓存", on_clear_cache);
+    add_class(b, UI_CLS_BTN_ACTION);
+    ui_place(b, 205, 8, UI_OF_SLOT_SET_BTN_CACHE);
 
-    make_switch(root, 49,  "低电量自动关机",        ui_backend_lowbat_trip_get(),  on_lowbat);
-    make_switch(root, 93,  "(切换时)跳过入场动画",   ui_backend_no_intro_get(),     on_no_intro);
-    make_switch(root, 136, "(切换时)不显示信息层",   ui_backend_no_overlay_get(),   on_no_overlay);
+    make_switch(root, 49,  UI_OF_SLOT_SET_SW_ROW1, "低电量自动关机",        ui_backend_lowbat_trip_get(),  on_lowbat);
+    make_switch(root, 93,  UI_OF_SLOT_SET_SW_ROW2, "(切换时)跳过入场动画",   ui_backend_no_intro_get(),     on_no_intro);
+    make_switch(root, 136, UI_OF_SLOT_SET_SW_ROW3, "(切换时)不显示信息层",   ui_backend_no_overlay_get(),   on_no_overlay);
 
-    self.sw_mode = make_dropdown(root, 23, 211, 151, 175, "切换模式",
+    self.sw_mode = make_dropdown(root, 23, 211, 151, 175, UI_OF_SLOT_SET_DD_MODE, "切换模式",
                                  "顺序播放\n随机播放\n手动切换", ui_backend_sw_mode_get(), on_sw_mode);
-    self.sw_int  = make_dropdown(root, 195, 210, 144, 175, "自动切换间隔",
+    self.sw_int  = make_dropdown(root, 195, 210, 144, 175, UI_OF_SLOT_SET_DD_INTERVAL, "自动切换间隔",
                                  "1分钟\n3分钟\n5分钟\n10分钟\n30分钟", ui_backend_sw_interval_get(), on_sw_int);
     // USB 模式下拉已废弃：插入时由 usb_aio_handler 弹选择屏（greeter 流程）
-    self.theme   = make_dropdown(root, 23, 292, 151, 263, "主题",
+    self.theme   = make_dropdown(root, 23, 292, 151, 263, UI_OF_SLOT_SET_DD_THEME, "主题",
                                  theme_options(), ui_backend_theme_get(), on_theme);
 
-
-    ui_text_button(root, 23, 513, 316, 52, UI_SEM_DANGER, "重置USB模式", on_usb_reset);
-    ui_text_button(root, 23, 574, 316, 51, UI_SEM_DEFAULT, "返回", on_back);
+    lv_obj_t *b2 = ui_text_button(root, 23, 513, 316, 52, UI_SEM_DANGER, "重置USB模式", on_usb_reset);
+    add_class(b2, UI_CLS_BTN_ACTION);
+    ui_place(b2, 23, 513, UI_OF_SLOT_SET_BTN_RESET);
+    lv_obj_t *b3 = ui_text_button(root, 23, 574, 316, 51, UI_SEM_DEFAULT, "返回", on_back);
+    add_class(b3, UI_CLS_BTN_ACTION);
+    ui_place(b3, 23, 574, UI_OF_SLOT_SET_BTN_BACK);
 
     return root;
 }
