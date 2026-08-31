@@ -9,3 +9,5 @@
 #include "ui/ui_theme.h"              // 核心：类型 / preset / API / 注册表声明
 #include "ui/ui_theme/theme_default.h" // 默认类表 (advanced=false 主题的回退)
 #include "ui/ui_theme/theme_old.h"     // Old（修改前 main 分支深色外观）
+#include "ui/ui_theme/theme_rhode.h"     // 罗德岛
+#include "ui/ui_theme/theme_lonetrail.h"     // 孤星
