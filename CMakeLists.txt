@@ -260,6 +260,7 @@ function(add_epass_target name screen_define)
     # 设备后端：libdrm atomic + cedrus V4L2 + evdev
     src/driver/drm_warpper.c
     src/driver/key_enc_evdev.c
+    src/driver/input_gestures.c
     src/render/mediaplayer.c
   )
   target_include_directories(${name} PRIVATE
@@ -350,6 +351,7 @@ if(TARGET_PC)
       # PC 后端：SDL 合成 + ffmpeg 解码 + SDL 键盘
       src/driver/drm_warpper_sdl.c
       src/driver/key_sdl.c
+      src/driver/input_gestures.c
       src/render/mediaplayer_ffmpeg.c
     )
     # 平台相关：Windows 换 win32 定时器后端并剔除 IPC(unix socket)；Linux PC 同设备

@@ -38,6 +38,7 @@ static lv_group_t    *s_group;
 __attribute__((weak)) void ui_hook_shutdown_request(void)
 {
     log_debug("[nav] shutdown request (no platform handler)");
+    screen_confirm_show_shutdown(NULL, NULL);
 }
 // 过渡动画期间静音/解禁按键,平台侧覆盖(设备接 key_enc_evdev)。默认空实现。
 __attribute__((weak)) void ui_hook_input_mute(bool mute)
@@ -267,6 +268,7 @@ void screen_show(screen_id_t id)
     if (id == s_current) {
         return;
     }
+    if (s_current == SCREEN_OPLIST) screen_oplist_exit_reorder(true);
 
     // 导航按钮用 LV_EVENT_PRESSED 触发切屏，切走后该按钮收不到 RELEASED，
     // pressed(黑)态会残留到这屏下次显示(屏对象缓存复用不销毁)。切屏前手动把
@@ -327,11 +329,30 @@ void screens_rebuild(screen_id_t id)
 // 平台无关的导航策略；屏切换统一走 screen_show，平台服务走 ui_hook_*。
 // 注: WARNING / CONFIRM 在新架构里按"模态服务"处理，铺到那步再补对应分支。
 
+void screens_power_short(void)
+{
+    if (screen_confirm_is_shutdown()) return;
+    if (s_current == SCREEN_FILEMANAGER) ui_hook_filemanager_leave();
+    screen_show(s_current == SCREEN_SPINNER ? SCREEN_MAINMENU : SCREEN_SPINNER);
+}
+
+void screens_power_double(void)
+{
+    if (screen_confirm_is_shutdown()) return;
+    if (s_current == SCREEN_FILEMANAGER) ui_hook_filemanager_leave();
+    screen_show(SCREEN_DISPLAYIMG);
+}
+
+void screens_power_long(void)
+{
+    if (screen_confirm_is_shutdown()) return;
+    if (s_current == SCREEN_OPLIST) screen_oplist_exit_reorder(true);
+    ui_hook_shutdown_request();
+}
+
 void screens_handle_key(uint32_t key)
 {
-    if (key == LV_KEY_END) {
-        ui_hook_shutdown_request();
-    }
+    if (key == LV_KEY_END || screen_confirm_is_shutdown()) return;
 
     // 扩列图：3/4 键(ESC/ENTER)关闭回 spinner，其余键交给扩列图自身
     if (s_current == SCREEN_DISPLAYIMG) {

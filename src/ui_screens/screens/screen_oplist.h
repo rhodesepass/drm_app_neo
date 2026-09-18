@@ -9,3 +9,4 @@ bool screen_oplist_is_reordering(void);
 void screen_oplist_exit_reorder(bool save);
 // 排序模式下方向键移动被拎干员(LV_KEY_LEFT 上移 / LV_KEY_RIGHT 下移)。
 void screen_oplist_reorder_move(uint32_t key);
+bool screen_oplist_touch_longpress(void);

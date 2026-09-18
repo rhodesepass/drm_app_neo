@@ -11,3 +11,8 @@ void screen_confirm_show_uix(const char *head, const char *desc,
                              void (*proceed)(void), void (*cancel)(void));
 // ESC / 退回：等同点"取消"，收屏回 spinner。
 void screen_confirm_escape(void);
+void screen_confirm_show_shutdown(void (*proceed)(void), void (*cancel)(void));
+bool screen_confirm_is_shutdown(void);
+void screen_confirm_shutdown_proceed(void);
+void screen_confirm_shutdown_cancel(void);
+void screen_confirm_set_input_sources(bool touch, bool buttons);

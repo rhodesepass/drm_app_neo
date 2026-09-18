@@ -13,6 +13,7 @@ typedef struct {
     char dev_path[128];
     int evdev_fds[KEY_ENC_EVDEV_MAX_FDS];
     int evdev_fd_count;
+    void *backend;
 } key_enc_evdev_t;
 
 

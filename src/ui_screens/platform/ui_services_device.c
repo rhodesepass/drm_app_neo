@@ -18,6 +18,7 @@
 #include "utils/log.h"
 
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 
 extern int g_running;
@@ -234,12 +235,16 @@ static void warn_timer_cb(lv_timer_t *t)
 static lv_timer_t *s_confirm_timer;
 
 static void proceed_format_sd(void) { ui_hook_format_sd(); }
+static atomic_bool s_shutdown_pending;
 static void proceed_shutdown(void)  { g_running = 0; g_exitcode = EXITCODE_SHUTDOWN; }
+static void cancel_shutdown(void) { atomic_store(&s_shutdown_pending, false); }
 
 void ui_confirm(ui_confirm_type_t type)
 {
     if (!s_inited) return;
-    spsc_bq_push(&s_confirm_q, (void *)(intptr_t)type);
+    if (type == UI_CONFIRM_TYPE_SHUTDOWN && atomic_exchange(&s_shutdown_pending, true)) return;
+    if (spsc_bq_push(&s_confirm_q, (void *)(intptr_t)type) != 0 && type == UI_CONFIRM_TYPE_SHUTDOWN)
+        atomic_store(&s_shutdown_pending, false);
 }
 
 static void confirm_timer_cb(lv_timer_t *t)
@@ -252,7 +257,7 @@ static void confirm_timer_cb(lv_timer_t *t)
     if (type == UI_CONFIRM_TYPE_FORMAT_SD_CARD)
         screen_confirm_show("确定格式化数据盘吗？", proceed_format_sd);
     else if (type == UI_CONFIRM_TYPE_SHUTDOWN)
-        screen_confirm_show("确定要关机吗？", proceed_shutdown);
+        screen_confirm_show_shutdown(proceed_shutdown, cancel_shutdown);
 }
 
 // ================= 切屏 / 显图 / 查询 (供 IPC) =================

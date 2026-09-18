@@ -96,6 +96,23 @@ static void reorder_exit(bool save)
 bool screen_oplist_is_reordering(void) { return s_reorder_active; }
 void screen_oplist_exit_reorder(bool save) { if (s_reorder_active) reorder_exit(save); }
 
+bool screen_oplist_touch_longpress(void)
+{
+    if (screens_current() != SCREEN_OPLIST) return false;
+    if (s_reorder_active) {
+        reorder_exit(true);
+        return true;
+    }
+    lv_obj_t *focused = lv_group_get_focused(screens_group());
+    for (int i = 0; i < UI_OPLIST_VISIBLE_SLOTS; i++) {
+        if (self.slots[i].btn == focused && self.slots[i].op_index >= 0) {
+            reorder_enter(self.slots[i].op_index);
+            return true;
+        }
+    }
+    return false;
+}
+
 // 排序模式下方向键：把被拎干员上移(LEFT)/下移(RIGHT)一格。由 screen_manager 调用。
 void screen_oplist_reorder_move(uint32_t key)
 {

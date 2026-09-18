@@ -48,6 +48,9 @@ void screens_rebuild(screen_id_t id);
 // 编码器/按键导航状态机 (原 scr_transition.c 的 screen_key_event_cb)。
 // 设备侧把硬件按键喂进来即可；sim 当前不驱动它 (维持鼠标点按 + group)。
 void screens_handle_key(uint32_t key);
+void screens_power_short(void);
+void screens_power_double(void);
+void screens_power_long(void);
 
 // ---- 平台服务钩子 (弱符号默认空实现，设备侧用强符号覆盖) ----
 // 关机确认 (设备 -> ui_confirm(SHUTDOWN))
