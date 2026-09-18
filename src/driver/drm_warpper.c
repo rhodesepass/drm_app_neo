@@ -1,6 +1,7 @@
 #include <drm_fourcc.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <glob.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -447,14 +448,49 @@ int drm_warpper_flush_layer(drm_warpper_t *drm_warpper,int layer_id){
     return ret;
 }
 
+static int drm_warpper_open_device(void){
+    glob_t cards = {0};
+    int selected = -1;
+
+    if (glob("/dev/dri/card[0-9]*", 0, NULL, &cards) != 0) {
+        globfree(&cards);
+        return -1;
+    }
+    for (size_t i = 0; i < cards.gl_pathc; i++) {
+        int fd = open(cards.gl_pathv[i], O_RDWR | O_CLOEXEC);
+        if (fd < 0)
+            continue;
+        drmVersionPtr version = drmGetVersion(fd);
+        bool native = version && version->name &&
+                      strcmp(version->name, "simpledrm") != 0;
+        bool sun4i = native && strcmp(version->name, "sun4i-drm") == 0;
+        drmModeRes *res = native ? drmModeGetResources(fd) : NULL;
+        bool usable = res && res->count_crtcs > 0 && res->count_connectors > 0;
+        if (usable && (sun4i || selected < 0)) {
+            if (selected >= 0)
+                close(selected);
+            selected = fd;
+            log_info("DRM device: %s (%s)", cards.gl_pathv[i], version->name);
+        } else {
+            close(fd);
+        }
+        drmModeFreeResources(res);
+        drmFreeVersion(version);
+        if (usable && sun4i)
+            break;
+    }
+    globfree(&cards);
+    return selected;
+}
+
 int drm_warpper_init(drm_warpper_t *drm_warpper){
     int ret;
 
     memset(drm_warpper, 0, sizeof(drm_warpper_t));
 
-    drm_warpper->fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+    drm_warpper->fd = drm_warpper_open_device();
     if (drm_warpper->fd < 0) {
-        log_error("open /dev/dri/card0 failed");
+        log_error("no native DRM modesetting device available");
         return -1;
     }
 
@@ -512,8 +548,9 @@ int drm_warpper_init(drm_warpper_t *drm_warpper){
     }
 
     drm_warpper->conn = drmModeGetConnector(drm_warpper->fd, drm_warpper->conn_id);
-    if (!drm_warpper->conn) {
-        log_error("drmModeGetConnector failed");
+    if (!drm_warpper->conn || drm_warpper->conn->count_modes == 0) {
+        log_error("DRM connector has no usable modes");
+        drmModeFreeConnector(drm_warpper->conn);
         drmModeFreePlaneResources(drm_warpper->plane_res);
         drmModeFreeResources(drm_warpper->res);
         close(drm_warpper->fd);

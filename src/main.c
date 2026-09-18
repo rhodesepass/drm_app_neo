@@ -153,7 +153,10 @@ int main(int argc, char *argv[]){
     respath_init();
 
     // ============ DRM Warpper 初始化 ===============
-    drm_warpper_init(&g_drm_warpper);
+    if (drm_warpper_init(&g_drm_warpper) != 0) {
+        log_error("failed to initialize DRM; aborting before creating display layers");
+        return 1;
+    }
 
     // ============ PRTS 计时器 初始化 ===============
     prts_timer_init(&g_prts_timer);
